@@ -576,3 +576,78 @@ async def mock_opensearch_logs(request: Request):
             }
         }
     return {"hits": {"hits": []}}
+
+# --- ENDPOINT TEST ANOMALY MACHINE LEARNING (ISOLATION FOREST) ---
+class MetricPayload(BaseModel):
+    service: str
+    rps: float
+    cpu_usage: float
+    memory_usage: float
+    latency_p90: float
+    error_rate: float
+
+@app.post("/anomaly/predict")
+async def predict_metric_anomaly(payload: MetricPayload):
+    service = payload.service
+    if service not in detector.models:
+        return {
+            "status": "error",
+            "message": f"No Isolation Forest model loaded for service: {service}. Available: {list(detector.models.keys())}"
+        }
+    
+    # 1. Tạo baseline 12 mẫu normal để làm nền tính toán rolling features
+    baseline_rows = []
+    base_time = datetime.datetime.now() - datetime.timedelta(hours=1)
+    
+    for i in range(12):
+        baseline_rows.append({
+            "timestamp": base_time + datetime.timedelta(minutes=5 * i),
+            "service": service,
+            "rps": 80.0,
+            "cpu_usage": 0.35,
+            "memory_usage": 0.50,
+            "latency_p90": 0.05,
+            "error_rate": 0.001
+        })
+        
+    # Thêm payload hiện tại vào dòng thứ 13
+    baseline_rows.append({
+        "timestamp": datetime.datetime.now(),
+        "service": service,
+        "rps": payload.rps,
+        "cpu_usage": payload.cpu_usage,
+        "memory_usage": payload.memory_usage,
+        "latency_p90": payload.latency_p90,
+        "error_rate": payload.error_rate
+    })
+    
+    import pandas as pd
+    df_raw = pd.DataFrame(baseline_rows)
+    
+    # 2. Áp dụng feature engineering (14 đặc trưng)
+    from train_anomaly_model_local import feature_engineering as local_fe
+    df_features = local_fe(df_raw)
+    
+    feature_cols = [
+        "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate",
+        "error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth",
+        "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
+    ]
+    
+    # Lấy vector hàng cuối cùng đại diện cho payload
+    X_t = df_features[feature_cols].iloc[-1].values.reshape(1, -1)
+    
+    # 3. Dự đoán trực tiếp bằng model
+    model = detector.models[service]
+    prediction = int(model.predict(X_t)[0])
+    score = float(model.decision_function(X_t)[0])
+    
+    return {
+        "status": "success",
+        "service": service,
+        "prediction": prediction, # 1: Normal, -1: Anomaly
+        "anomaly_detected": True if prediction == -1 else False,
+        "anomaly_score": score,
+        "features": df_features[feature_cols].iloc[-1].to_dict()
+    }
+
