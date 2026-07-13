@@ -159,7 +159,15 @@ class AnomalyDetector:
             from config import SIMULATION_STATE
             scenario = SIMULATION_STATE["scenario"]
             remediated = SIMULATION_STATE["remediated"]
-            if scenario in ["inc1", "inc2", "inc3", "inc4", "inc5", "inc6", "inc7", "inc8", "incnew"] and not remediated:
+            if scenario in ["inc1", "inc2", "inc3", "inc4", "inc5", "inc6", "inc7", "inc8", "incnew", "ml_proactive"] and not remediated:
+                # Nếu là ml_proactive, chỉ báo lỗi cho frontend để chạy chẩn đoán sớm
+                if scenario == "ml_proactive" and service != "frontend":
+                    return {
+                        "prediction": 1,
+                        "score": 0.15,
+                        "confidence": "HIGH",
+                        "fallback": False
+                    }
                 logger.info(f"[SIMULATION] Anomaly check for {service}: anomalous (score=-0.35) due to scenario {scenario}")
                 return {
                     "prediction": -1,
