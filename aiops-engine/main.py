@@ -589,7 +589,7 @@ from fastapi import HTTPException
 
 @app.post("/simulate/inject")
 async def simulate_inject(scenario: str):
-    if scenario not in ["stable", "inc1", "inc2", "inc3", "inc4", "inc5", "inc6", "inc7", "inc8", "incnew"]:
+    if scenario not in ["stable", "inc1", "inc2", "inc3", "inc4", "inc5", "inc6", "inc7", "inc8", "incnew", "ml_proactive"]:
         raise HTTPException(status_code=400, detail="Invalid scenario")
     simulation_state["scenario"] = scenario
     simulation_state["start_time"] = time.time()
