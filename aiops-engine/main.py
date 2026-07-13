@@ -46,13 +46,15 @@ async def active_metrics_polling_loop():
     await asyncio.sleep(5)  # Đợi uvicorn khởi tạo xong cổng kết nối
     while ACTIVE_POLLING_ENABLED:
         try:
+            if active_incidents:
+                logger.info("Active incident exists. Skipping duplicate polling run.")
+                await asyncio.sleep(POLLING_INTERVAL_SECONDS)
+                continue
+
             logger.info("Active Polling Check: checking system SLO via Prometheus...")
             is_breached = detector.check_slo_burn_rate()
+            
             if is_breached:
-                if active_incidents:
-                    logger.info("Active incident exists. Skipping duplicate diagnostic run to save API costs.")
-                    await asyncio.sleep(POLLING_INTERVAL_SECONDS)
-                    continue
                 logger.warning("SLO Burn Rate breach detected via Active Polling!")
                 incident_id = f"INC-{int(time.time())}"
                 
@@ -95,7 +97,40 @@ async def active_metrics_polling_loop():
                     time.time()
                 )
             else:
-                logger.info("Active Polling Check: system is stable.")
+                # Lớp 2: Quét máy học (Isolation Forest) cho từng dịch vụ chủ động
+                logger.info("SLO is stable. Running ML Isolation Forest proactive scans on core services...")
+                
+                SERVICES = ["frontend", "checkout", "payment", "product-catalog", "product-reviews", "shipping", "recommendation"]
+                detected_culprit = None
+                
+                for service in SERVICES:
+                    res = detector.check_service_anomaly(service)
+                    if res.get("prediction") == -1:
+                        logger.warning(f"ML Isolation Forest proactively detected ANOMALY on service: {service} (Score: {res.get('score'):.4f})!")
+                        detected_culprit = service
+                        break  # Kích hoạt sự cố cho dịch vụ đầu tiên phát hiện lỗi
+                        
+                if detected_culprit:
+                    incident_id = f"INC-ML-{int(time.time())}"
+                    
+                    if simulation_state["scenario"].startswith("inc"):
+                        trace_id = f"mock-{simulation_state['scenario']}"
+                    else:
+                        trace_id = rca_engine.fetch_latest_trace_id(detected_culprit)
+                        
+                    logger.info(f"Triggering PROACTIVE CMDR Pipeline for {incident_id} (Culprit: {detected_culprit}, Trace ID: {trace_id})")
+                    
+                    loop = asyncio.get_running_loop()
+                    loop.run_in_executor(
+                        None,
+                        process_incident_background,
+                        incident_id,
+                        detected_culprit,
+                        trace_id,
+                        time.time()
+                    )
+                else:
+                    logger.info("Active Polling Check: All services are healthy under ML Isolation Forest scans.")
         except Exception as e:
             logger.error(f"Error in active metrics polling loop: {str(e)}")
             
