@@ -311,26 +311,56 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
 
 def process_proactive_anomaly_background(incident_id: str, culprit_service: str, trace_id: str, alert_time: float):
     """
-    Chạy chẩn đoán sớm cho máy học: Chỉ chạy RCA định vị nguyên nhân và gom bằng chứng.
-    Không gọi LLM Bedrock và không gửi Slack cảnh báo để tiết kiệm chi phí và tránh spam.
+    Chạy chẩn đoán sớm cho máy học: Chạy RCA, chẩn đoán qua Bedrock và gửi cảnh báo sớm về Slack.
     """
     logger.info(f"--- [PROACTIVE ML WARNING] Processing early anomaly for {culprit_service} ({incident_id}) ---")
     
-    # 1. Thu thập bằng chứng (RCA, OpenSearch logs)
+    # 1. Thu thập bằng chứng
     logger.info("[PROACTIVE] Step 1: Generating Evidence Pack...")
     evidence = evidence_collector.build_evidence_pack(culprit_service, alert_time, trace_id)
     
-    # 2. Lưu lại hồ sơ bằng chứng trong active_incidents với trạng thái 'proactive_warning'
-    active_incidents[incident_id] = {
-        "status": "proactive_warning",
-        "incident_id": incident_id,
-        "culprit_service": culprit_service,
-        "trace_id": trace_id,
-        "evidence": evidence,
-        "alert_time": alert_time,
-        "timestamp": time.time()
+    # 2. Gọi Bedrock chẩn đoán
+    logger.info("[PROACTIVE] Step 2: Invoking LLM Bedrock Diagnostician...")
+    diagnosis = diagnostician.diagnose(evidence)
+    diagnosis["incident_id"] = incident_id
+    diagnosis["culprit_service"] = culprit_service
+    
+    # 3. Phân loại rủi ro & whitelist commands
+    proposed_action = diagnosis.get("proposed_action", "none")
+    COMMAND_TEMPLATES = {
+        "scale":       "kubectl -n techx-tf3 scale deploy/{service} --replicas=2",
+        "restart":     "kubectl -n techx-tf3 rollout restart deployment/{service}",
+        "cache-flush": "kubectl -n techx-tf3 scale deploy/{service} --replicas=1",
+        "breaker-force": "kubectl -n techx-tf3 scale deploy/{service} --replicas=1",
+        "none": ""
     }
-    logger.info(f"💾 [PROACTIVE] Pre-compiled RCA & Evidence Pack cached for {culprit_service}. Skipping LLM and Slack notification.")
+    ROLLBACK_TEMPLATES = {
+        "scale":       "kubectl -n techx-tf3 scale deploy/{service} --replicas=1",
+        "restart":     "kubectl -n techx-tf3 rollout undo deployment/{service}",
+        "cache-flush": "kubectl -n techx-tf3 scale deploy/{service} --replicas=2",
+        "breaker-force": "kubectl -n techx-tf3 scale deploy/{service} --replicas=2",
+        "none": ""
+    }
+    
+    if proposed_action in COMMAND_TEMPLATES:
+        action_command = COMMAND_TEMPLATES[proposed_action].format(service=culprit_service)
+        rollback_command = ROLLBACK_TEMPLATES[proposed_action].format(service=culprit_service)
+    else:
+        action_command = diagnosis.get("action_command", "")
+        rollback_command = diagnosis.get("rollback_command", "")
+        
+    diagnosis["action_command"] = action_command
+    diagnosis["rollback_command"] = rollback_command
+    diagnosis["status"] = "proactive_warning"
+    diagnosis["evidence"] = evidence
+    diagnosis["alert_time"] = alert_time
+    diagnosis["trace_id"] = trace_id
+    
+    active_incidents[incident_id] = diagnosis
+    
+    # 4. Gửi Slack cảnh báo sớm (Proactive Alert Card)
+    logger.info(f"[PROACTIVE] Sending early warning Slack card for {incident_id}...")
+    notifier.send_incident_notification(incident_id, diagnosis)
 
 def process_incident_promotion_background(incident_id: str):
     """

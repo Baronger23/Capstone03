@@ -66,7 +66,7 @@ class SlackNotifier:
                     "type": "header",
                     "text": {
                         "type": "plain_text",
-                        "text": f"🚨 AIOps Incident Alert: {incident_id}",
+                        "text": f"⚠️ Proactive ML Warning: {incident_id} (SLO Stable)" if incident_id.startswith("INC-ML-") else f"🚨 AIOps Incident Alert: {incident_id}",
                         "emoji": True
                     }
                 },
