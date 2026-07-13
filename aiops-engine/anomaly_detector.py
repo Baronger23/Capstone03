@@ -143,6 +143,9 @@ class AnomalyDetector:
         df["day_of_week"] = df["timestamp"].dt.weekday
         df["is_business_hours"] = ((df["hour_of_day"] >= 8) & (df["hour_of_day"] <= 18) & (df["day_of_week"] < 5)).astype(int)
         
+        df["rolling_median_rps_1h"] = df["rps"].rolling(window=12, min_periods=1).median()
+        df["is_high_traffic_period"] = ((df["rps"] > 100) & (df["rps"] > 1.5 * df["rolling_median_rps_1h"])).astype(int)
+        
         df = df.fillna(0)
         return df
 
@@ -201,7 +204,7 @@ class AnomalyDetector:
         feature_cols = [
             "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate",
             "error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth",
-            "hour_of_day", "day_of_week", "is_business_hours"
+            "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
         ]
         X_t = df_features[feature_cols].iloc[-1].values.reshape(1, -1)
         

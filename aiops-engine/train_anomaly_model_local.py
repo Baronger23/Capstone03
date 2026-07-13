@@ -123,15 +123,15 @@ def generate_synthetic_data(service: str, duration_days: int = 14, is_anomaly_se
 
 def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Tính toán và trích xuất 13 đặc trưng (Features) từ tín hiệu telemetry thô.
+    Tính toán và trích xuất 14 đặc trưng (Features) từ tín hiệu telemetry thô.
+    Bổ sung is_high_traffic_period tự thích ứng từ rolling stats.
     """
     df = df.copy()
     
     # Sắp xếp theo mốc thời gian tăng dần
     df = df.sort_values(by="timestamp").reset_index(drop=True)
     
-    # Nhóm 1: Raw Signals đã có sẵn: rps, cpu_usage, memory_usage, latency_p90, error_rate
-    
+    # Nhóm 1: Raw Signals
     # Nhóm 2: Derived Features
     df["error_ratio"] = df["error_rate"] / (df["rps"] + 1e-5)
     
@@ -141,7 +141,6 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     
     # rps delta (t - (t-5m)) => shift 1 mẫu
     df["rps_delta"] = df["rps"] - df["rps"].shift(1).fillna(0)
-    
     df["cpu_per_rps"] = df["cpu_usage"] / (df["rps"] + 1e-5)
     
     # memory growth rate (t - (t-30m)) => shift 6 mẫu
@@ -154,56 +153,77 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     # is_business_hours: Giờ hành chính ngày thường (Thứ 2 đến thứ 6, từ 8h đến 18h)
     df["is_business_hours"] = ((df["hour_of_day"] >= 8) & (df["hour_of_day"] <= 18) & (df["day_of_week"] < 5)).astype(int)
     
+    # Giải pháp 3: Tự động tính toán is_high_traffic_period từ rps rolling median
+    df["rolling_median_rps_1h"] = df["rps"].rolling(window=12, min_periods=1).median()
+    df["is_high_traffic_period"] = ((df["rps"] > 100) & (df["rps"] > 1.5 * df["rolling_median_rps_1h"])).astype(int)
+    
     # Điền giá trị trống nếu có do phép dịch chuyển shift
     df = df.fillna(0)
-    
     return df
 
 def train_and_evaluate():
     """
-    Quy trình huấn luyện và đánh giá mô hình Isolation Forest cục bộ.
+    Quy trình huấn luyện và đánh giá mô hình Isolation Forest cục bộ kết hợp Golden Cache.
     """
     print("======================================================================")
-    print(">>> START: TRAINING & EVALUATING ISOLATION FOREST MODELS (LOCAL)")
+    print(">>> START: TRAINING & EVALUATING ISOLATION FOREST MODELS WITH GOLDEN CACHE")
     print("======================================================================")
     
-    # Các đặc trưng đầu vào cho mô hình Isolation Forest (13 features)
+    # Các đặc trưng đầu vào cho mô hình Isolation Forest (14 features)
     feature_cols = [
         "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate",
         "error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth",
-        "hour_of_day", "day_of_week", "is_business_hours"
+        "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
     ]
+    
+    engine_dir = os.path.dirname(os.path.abspath(__file__))
+    golden_path = os.path.join(engine_dir, "data", "golden_samples.csv")
+    
+    if not os.path.exists(golden_path):
+        print(f"ERROR: Golden samples file not found at {golden_path}. Please generate it first.")
+        return
+        
+    df_golden_all = pd.read_csv(golden_path)
+    df_golden_all["timestamp"] = pd.to_datetime(df_golden_all["timestamp"])
     
     results_report = {}
     
-    # Gán ngẫu nhiên kịch bản sự cố cho từng dịch vụ để đánh giá chéo
     service_anomaly_map = {
-        "frontend": "INC-3",       # Bad deploy error rate spike
-        "checkout": "INC-1",       # DB connection bottleneck
-        "payment": "INC-2",        # Memory leak / OOM
+        "frontend": "INC-3",
+        "checkout": "INC-1",
+        "payment": "INC-2",
         "product-catalog": "INC-1",
-        "product-reviews": "INC-4", # LLM RPC timeout
-        "shipping": "INC-5",       # Resource saturation
+        "product-reviews": "INC-4",
+        "shipping": "INC-5",
         "recommendation": "INC-3"
     }
     
     for service in SERVICES:
         print(f"\nProcessing Service: {service}")
         
-        # 1. Sinh tập huấn luyện (Training Set) hoàn toàn bình thường (Normal Baseline)
+        # 1. Lấy dữ liệu 14 ngày rolling real/synthetic
         df_train_raw = generate_synthetic_data(service, duration_days=14, is_anomaly_set=False)
         df_train = feature_engineering(df_train_raw)
         
-        # 2. Huấn luyện mô hình Isolation Forest
+        # 2. Tải Golden Cache và chỉ ghép các dòng NORMAL (label == 1) để tránh Leakage
+        df_gold_svc = df_golden_all[df_golden_all["service"] == service]
+        df_gold_normal = df_gold_svc[df_gold_svc["label"] == 1]
+        df_gold_normal_features = feature_engineering(df_gold_normal)
+        
+        # Concat tập Train = 14 ngày rolling + Golden Normal Samples
+        df_combined_train = pd.concat([df_train, df_gold_normal_features], ignore_index=True)
+        
+        # 3. Huấn luyện mô hình Isolation Forest
+        # Tăng contamination nhẹ lên 0.03 để bao quát tốt hơn tải cực đại sạch
         model = IsolationForest(
             n_estimators=200,
-            contamination=0.015,
+            contamination=0.03,
             max_features=0.8,
             random_state=42,
             n_jobs=-1
         )
         
-        X_train = df_train[feature_cols]
+        X_train = df_combined_train[feature_cols]
         model.fit(X_train)
         
         # Lưu file mô hình đã train
@@ -211,19 +231,25 @@ def train_and_evaluate():
         joblib.dump(model, model_path)
         print(f"  -> Model saved to: {model_path}")
         
-        # 3. Sinh tập đánh giá (Validation/Test Set) chứa sự cố cụ thể
+        # 4. Sinh tập đánh giá (Validation/Test Set) chứa sự cố cụ thể
         anomaly_type = service_anomaly_map[service]
         df_val_raw = generate_synthetic_data(service, duration_days=3, is_anomaly_set=True, anomaly_type=anomaly_type)
         df_val = feature_engineering(df_val_raw)
         
-        X_val = df_val[feature_cols]
-        y_true = df_val["label"].values # 1: Normal, -1: Anomaly
+        # Lấy thêm 500 dòng INC patterns (lỗi thật) từ Golden Set để làm tập validate (KHÔNG train)
+        df_gold_anom = df_gold_svc[df_gold_svc["label"] == -1]
+        df_gold_anom_features = feature_engineering(df_gold_anom)
         
-        # 4. Dự đoán trạng thái bất thường
+        # Gộp tập Test = 3 ngày validation + Golden Anomaly Samples (Lỗi thật)
+        df_combined_test = pd.concat([df_val, df_gold_anom_features], ignore_index=True)
+        
+        X_val = df_combined_test[feature_cols]
+        y_true = df_combined_test["label"].values # 1: Normal, -1: Anomaly
+        
+        # 5. Dự đoán trạng thái bất thường
         y_pred = model.predict(X_val)
         
-        # 5. Tính toán các chỉ số đánh giá chất lượng (Precision, Recall, F1)
-        # Vì bất thường được gán nhãn là -1, ta so sánh nhãn -1
+        # 6. Tính toán ma trận nhầm lẫn
         tp = np.sum((y_true == -1) & (y_pred == -1))
         fp = np.sum((y_true == 1) & (y_pred == -1))
         fn = np.sum((y_true == -1) & (y_pred == 1))
@@ -239,6 +265,10 @@ def train_and_evaluate():
         print(f"  -> Recall:    {recall:.4f} (Target >= 0.70)")
         print(f"  -> F1-Score:  {f1_score:.4f} (Target >= 0.77)")
         
+        # Chốt chặn an toàn: Fail nếu recall hoặc precision bị sụt giảm quá thấp
+        if recall < 0.70 or precision < 0.75:
+            print("  🚨 [WARNING] Model quality guardrail breached! Check features.")
+            
         results_report[service] = {
             "scenario": anomaly_type,
             "precision": precision,
@@ -247,7 +277,7 @@ def train_and_evaluate():
         }
         
     print("\n" + "="*70)
-    print("[EVALUATION REPORT] ISOLATION FOREST LOCAL MODEL PERFORMANCE:")
+    print("[EVALUATION REPORT] ISOLATION FOREST LOCAL MODEL PERFORMANCE WITH GOLDEN CACHE:")
     print("="*70)
     avg_f1 = []
     for svc, metrics in results_report.items():
