@@ -867,3 +867,20 @@ async def predict_metric_anomaly(payload: MetricPayload):
         "features": df_features[feature_cols].iloc[-1].to_dict()
     }
 
+@app.post("/reload-models")
+async def reload_models():
+    """Hot-reloads Isolation Forest models from S3 without restarting the container."""
+    try:
+        detector._load_models_from_s3()
+        return {
+            "status": "success",
+            "message": "Successfully hot-reloaded all Isolation Forest models from S3.",
+            "loaded_models": list(detector.iforest_models.keys())
+        }
+    except Exception as e:
+        logger.error(f"Failed to reload models: {e}")
+        return {
+            "status": "error",
+            "message": f"Failed to reload models: {str(e)}"
+        }
+

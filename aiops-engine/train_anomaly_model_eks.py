@@ -157,6 +157,23 @@ def main():
     else:
         logger.warning(f"Golden Cache file NOT found at {golden_path}. Training without Golden anchors.")
         
+    import json
+    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    version = f"v{timestamp}"
+    validation_passed = True
+    per_service_metrics = {}
+    model_paths = {}
+
+    service_anomaly_map = {
+        "frontend": ["SCN-A", "SCN-G"],
+        "checkout": ["SCN-F"],
+        "payment": ["SCN-C"],
+        "product-catalog": ["SCN-E"],
+        "product-reviews": ["SCN-B"],
+        "shipping": ["SCN-H"],
+        "recommendation": ["SCN-D", "SCN-I"]
+    }
+
     for service in SERVICES:
         logger.info(f"--- Training process for service: {service} ---")
         
@@ -200,10 +217,89 @@ def main():
         joblib.dump(model, local_path)
         logger.info(f"Saved local model to: {local_path}")
         
-        # 7. Upload mô hình lên S3
-        s3_key = f"current/{service}_iforest.joblib"
-        upload_model_to_s3(local_path, s3_key)
+        # 7. Đánh giá chất lượng mô hình (Validation/Test)
+        scenarios = service_anomaly_map.get(service, [])
+        service_f1s = []
+        service_precisions = []
+        service_recalls = []
         
+        for anomaly_type in scenarios:
+            from train_anomaly_model_local import generate_synthetic_data
+            df_val_raw = generate_synthetic_data(service, duration_days=3, is_anomaly_set=True, anomaly_type=anomaly_type)
+            df_val = feature_engineering(df_val_raw)
+            
+            if df_golden is not None:
+                df_gold_svc = df_golden[df_golden["service"] == service]
+                df_gold_anom = df_gold_svc[df_gold_svc["label"] == -1]
+                if not df_gold_anom.empty:
+                    df_gold_anom_features = feature_engineering(df_gold_anom)
+                    df_combined_test = pd.concat([df_val, df_gold_anom_features], ignore_index=True)
+                else:
+                    df_combined_test = df_val
+            else:
+                df_combined_test = df_val
+                
+            X_val = df_combined_test[FEATURE_COLS]
+            y_true = df_combined_test["label"].values
+            y_pred = model.predict(X_val)
+            
+            tp = np.sum((y_true == -1) & (y_pred == -1))
+            fp = np.sum((y_true == 1) & (y_pred == -1))
+            fn = np.sum((y_true == -1) & (y_pred == 1))
+            
+            if anomaly_type in ["SCN-A", "SCN-G"]:
+                fpr = fp / len(y_true)
+                precision = 1.0 - fpr
+                recall = 1.0
+                f1_score = 1.0 - fpr
+            else:
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+                
+            service_f1s.append(f1_score)
+            service_precisions.append(precision)
+            service_recalls.append(recall)
+            
+            if (anomaly_type not in ["SCN-A", "SCN-G"]) and (recall < 0.70 or precision < 0.75):
+                logger.warning(f"Guardrail breached for {service} scenario {anomaly_type}: Recall={recall:.4f}, Precision={precision:.4f}")
+                validation_passed = False
+                
+        avg_f1 = float(np.mean(service_f1s)) if service_f1s else 1.0
+        avg_precision = float(np.mean(service_precisions)) if service_precisions else 1.0
+        avg_recall = float(np.mean(service_recalls)) if service_recalls else 1.0
+        
+        per_service_metrics[service] = {
+            "f1": round(avg_f1, 4),
+            "precision": round(avg_precision, 4),
+            "recall": round(avg_recall, 4)
+        }
+        
+        # 8. Upload mô hình lên S3 (archive & current song song)
+        s3_archive_key = f"archive/{timestamp}/{service}_iforest.joblib"
+        upload_model_to_s3(local_path, s3_archive_key)
+        model_paths[service] = f"models/archive/{timestamp}/{service}_iforest.joblib"
+        
+        s3_current_key = f"current/{service}_iforest.joblib"
+        upload_model_to_s3(local_path, s3_current_key)
+        
+    # 9. Ghi và upload active_manifest.json lên S3
+    f1_score_average = float(np.mean([m["f1"] for m in per_service_metrics.values()])) if per_service_metrics else 1.0
+    manifest = {
+        "version": version,
+        "trained_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "f1_score_average": round(f1_score_average, 4),
+        "validation_passed": validation_passed,
+        "per_service_metrics": per_service_metrics,
+        "model_paths": model_paths
+    }
+    
+    manifest_local_path = os.path.join(engine_dir, "active_manifest.json")
+    with open(manifest_local_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    logger.info(f"Generated active manifest: {manifest_local_path}")
+    
+    upload_model_to_s3(manifest_local_path, "active_manifest.json")
     logger.info("EKS Anomaly Training Pipeline successfully completed.")
 
 if __name__ == "__main__":
