@@ -17,12 +17,11 @@ class AnomalyDetector:
         self.s3_bucket = S3_BUCKET_NAME
         self.models_dir = os.path.join(os.path.dirname(__file__), "models")
         os.makedirs(self.models_dir, exist_ok=True)
-        self.models = {}
+        self.iforest_models = {}
+        self.models = self.iforest_models # Backwards compatibility
         
-        # 1. Thử tải model mới nhất từ S3
-        self.download_models_from_s3()
-        # 2. Nạp model cục bộ vào RAM
-        self.load_local_models()
+        # Nạp các model Isolation Forest từ S3/local cache
+        self._load_models_from_s3()
 
     def download_models_from_s3(self):
         """Tải các model Isolation Forest từ S3 về models/ nếu có."""
@@ -323,10 +322,40 @@ class AnomalyDetector:
         return 0.0
 
     def _load_models_from_s3(self):
-        """Wrapper/Alias to download and load latest models from S3."""
-        self.download_models_from_s3()
-        self.load_local_models()
+        """Đọc *.joblib từ S3 vào self.iforest_models dict."""
+        try:
+            self.download_models_from_s3()
+            if not os.path.exists(self.models_dir):
+                return
+            for file in os.listdir(self.models_dir):
+                if file.endswith("_iforest.joblib"):
+                    service_name = file.replace("_iforest.joblib", "")
+                    model_path = os.path.join(self.models_dir, file)
+                    self.iforest_models[service_name] = joblib.load(model_path)
+            logger.info(f"Loaded {len(self.iforest_models)} Isolation Forest models from S3/local cache.")
+        except Exception as e:
+            logger.error(f"Error in _load_models_from_s3: {e}")
 
-    def check_infra_anomaly(self, service: str) -> dict:
-        """Wrapper/Alias to run Isolation Forest inference on a service."""
-        return self.check_service_anomaly(service)
+    def check_infra_anomaly(self, service: str, features: list) -> bool:
+        """Dùng IF nếu có model, fallback Z-Score nếu không."""
+        if service in self.iforest_models:
+            try:
+                feature_cols = [
+                    "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "client_error_rate", "kafka_lag",
+                    "error_ratio", "client_error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth",
+                    "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
+                ]
+                df_t = pd.DataFrame([features], columns=feature_cols)
+                prediction = int(self.iforest_models[service].predict(df_t)[0])
+                logger.info(f"IF prediction for {service}: {prediction} (1: Normal, -1: Anomaly)")
+                return prediction == -1
+            except Exception as e:
+                logger.error(f"Failed to run IF inference for {service}: {e}. Falling back to Z-Score.")
+                
+        # Fallback Z-Score nếu không có model
+        try:
+            cpu_z = self.check_infra_z_score(f'sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m]))')
+            return abs(cpu_z) >= 3.0
+        except Exception as e:
+            logger.error(f"Failed to run Z-Score fallback for {service}: {e}")
+            return False
