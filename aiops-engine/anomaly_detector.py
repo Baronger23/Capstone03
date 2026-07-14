@@ -112,6 +112,7 @@ class AnomalyDetector:
         queries = {
             "rps": f'sum(rate(http_server_duration_milliseconds_count{{service_name="{service}"}}[5m]))',
             "error_rate": f'sum(rate(http_server_duration_milliseconds_count{{service_name="{service}", http_status_code=~"5.."}}[5m]))',
+            "client_error_rate": f'(sum(rate(http_server_duration_milliseconds_count{{service_name="{service}", http_status_code=~"4.."}}[5m])) or vector(0))',
             "latency_p90": f'histogram_quantile(0.90, sum(rate(http_server_duration_milliseconds_bucket{{service_name="{service}"}}[5m])) by (le))',
             "cpu_usage": f'sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m]))',
             "memory_usage": f'sum(container_memory_working_set_bytes{{container="{service}"}}) / sum(container_spec_memory_limit_bytes{{container="{service}"}})',
@@ -134,6 +135,7 @@ class AnomalyDetector:
         
         # Tính toán features y hệt training script
         df["error_ratio"] = df["error_rate"] / (df["rps"] + 1e-5)
+        df["client_error_ratio"] = df["client_error_rate"] / (df["rps"] + 1e-5)
         df["rolling_median_1h"] = df["latency_p90"].rolling(window=12, min_periods=1).median()
         df["latency_deviation"] = df["latency_p90"] / (df["rolling_median_1h"] + 1e-5)
         df["rps_delta"] = df["rps"] - df["rps"].shift(1).fillna(0)
@@ -212,8 +214,8 @@ class AnomalyDetector:
 
         # Lấy vector hàng cuối cùng (thời điểm hiện tại)
         feature_cols = [
-            "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "kafka_lag",
-            "error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth",
+            "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "client_error_rate", "kafka_lag",
+            "error_ratio", "client_error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth",
             "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
         ]
         X_t = df_features[feature_cols].iloc[-1].values.reshape(1, -1)
