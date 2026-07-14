@@ -122,9 +122,22 @@ async def active_metrics_polling_loop():
                 detected_culprit = None
                 
                 for service in SERVICES:
-                    res = detector.check_service_anomaly(service)
-                    if res.get("prediction") == -1:
-                        logger.warning(f"ML Isolation Forest proactively detected ANOMALY on service: {service} (Score: {res.get('score'):.4f})!")
+                    # 1. Trích xuất đặc trưng thời gian thực
+                    df_features = detector.extract_features_realtime(service)
+                    if df_features.empty or len(df_features) < 1:
+                        # Fallback Z-Score nếu thiếu dữ liệu ngữ cảnh
+                        is_anomalous = detector.check_infra_anomaly(service, [])
+                    else:
+                        feature_cols = [
+                            "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "client_error_rate", "kafka_lag",
+                            "error_ratio", "client_error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth",
+                            "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
+                        ]
+                        features_list = df_features[feature_cols].iloc[-1].tolist()
+                        is_anomalous = detector.check_infra_anomaly(service, features_list)
+                    
+                    if is_anomalous:
+                        logger.warning(f"ML Isolation Forest proactively detected ANOMALY on service: {service}!")
                         detected_culprit = service
                         break  # Báo cảnh báo sớm cho dịch vụ đầu tiên phát hiện lỗi
                         

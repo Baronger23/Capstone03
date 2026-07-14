@@ -338,6 +338,18 @@ class AnomalyDetector:
 
     def check_infra_anomaly(self, service: str, features: list) -> bool:
         """Dùng IF nếu có model, fallback Z-Score nếu không."""
+        # 1. Chế độ giả lập Sandbox
+        if os.getenv("AIOPS_SIMULATION_MODE") == "true":
+            from config import SIMULATION_STATE
+            scenario = SIMULATION_STATE["scenario"]
+            remediated = SIMULATION_STATE["remediated"]
+            if scenario in ["inc1", "inc2", "inc3", "inc4", "inc5", "inc6", "inc7", "inc8", "incnew", "ml_proactive"] and not remediated:
+                if scenario == "ml_proactive" and service != "frontend":
+                    return False
+                logger.info(f"[SIMULATION] Anomaly check (IF) for {service}: anomalous due to scenario {scenario}")
+                return True
+            return False
+
         if service in self.iforest_models:
             try:
                 feature_cols = [
