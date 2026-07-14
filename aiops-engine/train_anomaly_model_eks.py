@@ -1,5 +1,7 @@
 import os
 import sys
+# sys.path guard to allow stable local module imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import logging
 import requests
 import numpy as np
@@ -116,12 +118,20 @@ def check_data_sufficiency(df: pd.DataFrame) -> bool:
 
 def upload_model_to_s3(local_file: str, s3_key: str):
     """Tải tệp mô hình lên AWS S3."""
+    s3 = boto3.client("s3")
     try:
-        s3 = boto3.client("s3")
+        # Check bucket existence and permission
+        s3.head_bucket(Bucket=S3_BUCKET_NAME)
+    except Exception as e:
+        logger.error(f"S3 bucket '{S3_BUCKET_NAME}' not found or permission denied. Please create it or fix IAM policies.")
+        raise e
+
+    try:
         s3.upload_file(local_file, S3_BUCKET_NAME, s3_key)
         logger.info(f"Successfully uploaded model {local_file} to S3: s3://{S3_BUCKET_NAME}/{s3_key}")
     except Exception as e:
-        logger.error(f"Failed to upload model to S3: {e}. Model remains saved locally.")
+        logger.error(f"Failed to upload model file to S3: {e}")
+        raise e
 
 def main():
     logger.info("======================================================================")

@@ -321,3 +321,12 @@ class AnomalyDetector:
         except (IndexError, KeyError, ValueError, TypeError):
             pass
         return 0.0
+
+    def _load_models_from_s3(self):
+        """Wrapper/Alias to download and load latest models from S3."""
+        self.download_models_from_s3()
+        self.load_local_models()
+
+    def check_infra_anomaly(self, service: str) -> dict:
+        """Wrapper/Alias to run Isolation Forest inference on a service."""
+        return self.check_service_anomaly(service)

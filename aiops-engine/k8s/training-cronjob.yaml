@@ -13,11 +13,19 @@ spec:
     spec:
       template:
         spec:
+          priorityClassName: low-priority
           containers:
           - name: trainer
             image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/tf-2-ai-engine:IF
             imagePullPolicy: Always
             command: ["python", "train_anomaly_model_eks.py"]
+            resources:
+              requests:
+                cpu: "500m"
+                memory: "512Mi"
+              limits:
+                cpu: "1000m"
+                memory: "1Gi"
             env:
             - name: PROMETHEUS_URL
               value: "http://prometheus-server.techx-tf3.svc.cluster.local"
