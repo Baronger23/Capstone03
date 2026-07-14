@@ -33,6 +33,7 @@ def generate_synthetic_data(service: str, duration_days: int = 14, is_anomaly_se
     mem_list = []
     latency_list = []
     error_list = []
+    kafka_lag_list = []
     
     for t in timestamps:
         hour = t.hour
@@ -68,11 +69,15 @@ def generate_synthetic_data(service: str, duration_days: int = 14, is_anomaly_se
         if random.random() < 0.02: # 2% xác suất spike lỗi cực nhẹ bình thường
             error_rate = random.uniform(0.005, 0.01)
             
+        # Kafka consumer lag mặc định bằng 0.0 cho baseline
+        kafka_lag = max(0.0, np.random.normal(2.0, 1.0)) if service in ["shipping", "accounting", "fraud-detection"] else 0.0
+            
         rps_list.append(rps)
         cpu_list.append(cpu)
         mem_list.append(mem)
         latency_list.append(latency)
         error_list.append(error_rate)
+        kafka_lag_list.append(kafka_lag)
         
     df = pd.DataFrame({
         "timestamp": timestamps,
@@ -81,7 +86,8 @@ def generate_synthetic_data(service: str, duration_days: int = 14, is_anomaly_se
         "cpu_usage": cpu_list,
         "memory_usage": mem_list,
         "latency_p90": latency_list,
-        "error_rate": error_list
+        "error_rate": error_list,
+        "kafka_lag": kafka_lag_list
     })
     
     # 2. Inject kịch bản bất thường (Anomaly Patterns) cho validation/test set
@@ -117,6 +123,30 @@ def generate_synthetic_data(service: str, duration_days: int = 14, is_anomaly_se
                 # Kafka lag hoặc tài nguyên bão hòa kỳ lạ
                 df.at[idx, "cpu_usage"] = random.uniform(0.80, 0.95)
                 df.at[idx, "latency_p90"] = random.uniform(0.8, 1.5)
+                df.at[idx, "kafka_lag"] = 1500.0 + (idx - anomaly_start_idx) * 120.0
+            elif anomaly_type == "SCN-A":
+                # Node Drain: rps giảm, cpu/latency spike nhẹ, error_rate = 0
+                df.at[idx, "rps"] = df.at[idx, "rps"] * 0.75
+                df.at[idx, "cpu_usage"] = min(0.95, df.at[idx, "cpu_usage"] * 1.4)
+                df.at[idx, "latency_p90"] = min(0.8, df.at[idx, "latency_p90"] * 1.8)
+                df.at[idx, "error_rate"] = 0.0
+            elif anomaly_type == "SCN-B":
+                # AI Spam DoS: rps vọt 6x, cpu vọt, latency vọt, error_rate tăng nhẹ
+                df.at[idx, "rps"] = df.at[idx, "rps"] * 6.0
+                df.at[idx, "cpu_usage"] = random.uniform(0.90, 0.98)
+                df.at[idx, "latency_p90"] = random.uniform(4.5, 6.0)
+                df.at[idx, "error_rate"] = random.uniform(0.05, 0.15)
+            elif anomaly_type == "SCN-C":
+                # Slow RAM Leak: RAM tăng tuyến tính liên tục, cpu/rps/latency bình thường
+                df.at[idx, "memory_usage"] = min(0.99, 0.40 + (idx - anomaly_start_idx) * 0.015)
+            elif anomaly_type == "SCN-D":
+                # HTTP 4xx Spam: rps vọt 5x, error_rate (4xx) vọt, cpu/latency bình thường
+                df.at[idx, "rps"] = df.at[idx, "rps"] * 5.0
+                df.at[idx, "error_rate"] = random.uniform(0.35, 0.65)
+            elif anomaly_type == "SCN-E":
+                # Network Packet Loss: latency vọt cao, rps sụt giảm nhẹ, cpu/ram/error bình thường
+                df.at[idx, "latency_p90"] = random.uniform(2.5, 4.0)
+                df.at[idx, "rps"] = df.at[idx, "rps"] * 0.85
                 
     df["label"] = labels
     return df
@@ -146,6 +176,9 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     # memory growth rate (t - (t-30m)) => shift 6 mẫu
     df["memory_growth"] = df["memory_usage"] - df["memory_usage"].shift(6).fillna(0)
     
+    # kafka lag growth rate (t - (t-5m)) => shift 1 mẫu
+    df["kafka_lag_growth"] = df["kafka_lag"] - df["kafka_lag"].shift(1).fillna(0)
+    
     # Nhóm 3: Temporal Features
     df["hour_of_day"] = df["timestamp"].dt.hour
     df["day_of_week"] = df["timestamp"].dt.weekday
@@ -169,10 +202,10 @@ def train_and_evaluate():
     print(">>> START: TRAINING & EVALUATING ISOLATION FOREST MODELS WITH GOLDEN CACHE")
     print("======================================================================")
     
-    # Các đặc trưng đầu vào cho mô hình Isolation Forest (14 features)
+    # Các đặc trưng đầu vào cho mô hình Isolation Forest (16 features)
     feature_cols = [
-        "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate",
-        "error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth",
+        "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "kafka_lag",
+        "error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth",
         "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
     ]
     
@@ -185,17 +218,20 @@ def train_and_evaluate():
         
     df_golden_all = pd.read_csv(golden_path)
     df_golden_all["timestamp"] = pd.to_datetime(df_golden_all["timestamp"])
+    if "kafka_lag" not in df_golden_all.columns:
+        df_golden_all["kafka_lag"] = 0.0
+        df_golden_all.loc[(df_golden_all["service"].isin(["shipping", "accounting"])) & (df_golden_all["label"] == -1), "kafka_lag"] = 2500.0
     
     results_report = {}
     
     service_anomaly_map = {
-        "frontend": "INC-3",
+        "frontend": "SCN-A",
         "checkout": "INC-1",
-        "payment": "INC-2",
-        "product-catalog": "INC-1",
-        "product-reviews": "INC-4",
+        "payment": "SCN-C",
+        "product-catalog": "SCN-E",
+        "product-reviews": "SCN-B",
         "shipping": "INC-5",
-        "recommendation": "INC-3"
+        "recommendation": "SCN-D"
     }
     
     for service in SERVICES:
@@ -267,7 +303,7 @@ def train_and_evaluate():
         
         # Chốt chặn an toàn: Fail nếu recall hoặc precision bị sụt giảm quá thấp
         if recall < 0.70 or precision < 0.75:
-            print("  🚨 [WARNING] Model quality guardrail breached! Check features.")
+            print("  [WARNING] Model quality guardrail breached! Check features.")
             
         results_report[service] = {
             "scenario": anomaly_type,

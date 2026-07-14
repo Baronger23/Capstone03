@@ -114,7 +114,8 @@ class AnomalyDetector:
             "error_rate": f'sum(rate(http_server_duration_milliseconds_count{{service_name="{service}", http_status_code=~"5.."}}[5m]))',
             "latency_p90": f'histogram_quantile(0.90, sum(rate(http_server_duration_milliseconds_bucket{{service_name="{service}"}}[5m])) by (le))',
             "cpu_usage": f'sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m]))',
-            "memory_usage": f'sum(container_memory_working_set_bytes{{container="{service}"}}) / sum(container_spec_memory_limit_bytes{{container="{service}"}})'
+            "memory_usage": f'sum(container_memory_working_set_bytes{{container="{service}"}}) / sum(container_spec_memory_limit_bytes{{container="{service}"}})',
+            "kafka_lag": f'(sum(kafka_consumer_records_lag{{service_name="{service}"}}) or vector(0))'
         }
         
         data_dict = {}
@@ -138,6 +139,7 @@ class AnomalyDetector:
         df["rps_delta"] = df["rps"] - df["rps"].shift(1).fillna(0)
         df["cpu_per_rps"] = df["cpu_usage"] / (df["rps"] + 1e-5)
         df["memory_growth"] = df["memory_usage"] - df["memory_usage"].shift(6).fillna(0)
+        df["kafka_lag_growth"] = df["kafka_lag"] - df["kafka_lag"].shift(1).fillna(0)
         
         df["hour_of_day"] = df["timestamp"].dt.hour
         df["day_of_week"] = df["timestamp"].dt.weekday
@@ -210,8 +212,8 @@ class AnomalyDetector:
 
         # Lấy vector hàng cuối cùng (thời điểm hiện tại)
         feature_cols = [
-            "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate",
-            "error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth",
+            "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "kafka_lag",
+            "error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth",
             "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
         ]
         X_t = df_features[feature_cols].iloc[-1].values.reshape(1, -1)
