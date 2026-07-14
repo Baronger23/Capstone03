@@ -59,9 +59,9 @@ def fetch_metrics_from_prometheus(service: str, duration_days: int = 7) -> pd.Da
     start_time = end_time - timedelta(days=duration_days)
     
     queries = {
-        "rps": f'sum(rate(http_server_duration_milliseconds_count{{service="{service}"}}[5m]))',
-        "error_rate": f'sum(rate(http_server_duration_milliseconds_count{{service="{service}", http_status_code=~"5.."}}[5m]))',
-        "latency_p90": f'histogram_quantile(0.90, sum(rate(http_server_duration_milliseconds_bucket{{service="{service}"}}[5m])) by (le))',
+        "rps": f'sum(rate(http_server_duration_milliseconds_count{{service_name="{service}"}}[5m]))',
+        "error_rate": f'sum(rate(http_server_duration_milliseconds_count{{service_name="{service}", http_status_code=~"5.."}}[5m]))',
+        "latency_p90": f'histogram_quantile(0.90, sum(rate(http_server_duration_milliseconds_bucket{{service_name="{service}"}}[5m])) by (le))',
         "cpu_usage": f'sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m]))',
         "memory_usage": f'sum(container_memory_working_set_bytes{{container="{service}"}}) / sum(container_spec_memory_limit_bytes{{container="{service}"}})'
     }
