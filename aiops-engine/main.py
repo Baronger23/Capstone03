@@ -352,11 +352,12 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
     
     # 2. Phân tích Jaeger Trace RCA & logs lỗi
     logs_summary = []
-    for log in evidence.get("logs", [])[:5]:
-        msg = log.get("message", "")
-        if len(msg) > 100:
-            msg = msg[:100] + "..."
-        logs_summary.append(f"• `[{log.get('severity', 'ERROR')}]` {msg}")
+    for log_t in evidence.get("log_templates", [])[:5]:
+        template = log_t.get("template", "")
+        count = log_t.get("count", 1)
+        if len(template) > 100:
+            template = template[:100] + "..."
+        logs_summary.append(f"• `[Count: {count}]` {template}")
         
     logs_section = "\n".join(logs_summary) if logs_summary else "• *Không tìm thấy logs lỗi liên quan trong OpenSearch.*"
     
