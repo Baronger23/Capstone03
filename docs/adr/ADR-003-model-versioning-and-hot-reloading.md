@@ -48,3 +48,20 @@ Tuy nhiên, cơ chế cũ gặp một số hạn chế:
 
 ### **Đánh đổi**:
 * Tăng số lượng file lưu trữ trên S3 (tuy nhiên kích thước file joblib của Isolation Forest rất nhỏ, chỉ khoảng vài trăm KB nên dung lượng tăng thêm không đáng kể).
+
+---
+
+## 4. Ghi Chú Vận Hành & Khuyến Nghị Bảo Mật (Operational & Security Notes)
+
+### **A. Sử dụng IRSA (IAM Roles for Service Accounts) thay cho Key Tĩnh**
+* **Khuyến nghị bảo mật:** Trong môi trường EKS Production, việc sử dụng các IAM Key tĩnh (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) được coi là anti-pattern và chứa đựng rủi ro rò rỉ thông tin cao.
+* **Giải pháp khuyến nghị:** Nên thiết lập IRSA trên cụm EKS:
+  1. Tạo một IAM Role có chính sách quyền hạn tối thiểu cho S3 và Bedrock.
+  2. Tạo một ServiceAccount trong Kubernetes liên kết với IAM Role qua Annotation (`eks.amazonaws.com/role-arn`).
+  3. Gán ServiceAccount này vào Pod của Engine và CronJob để K8s tự động cấp phát token bảo mật tạm thời (temporary credentials), loại bỏ hoàn toàn các key tĩnh.
+
+### **B. Giới Hạn Của Bộ Nhớ Đệm Trạng Thái (In-Memory State Management)**
+* **Hạn chế:** Trong `main.py`, danh sách các incident đang xử lý (`active_incidents`) được lưu trữ trực tiếp trên bộ nhớ đệm RAM của Pod (In-Memory Dictionary).
+* **Rủi ro:** Khi Pod bị restart (do Deployment mới hoặc Node bị thu hồi), trạng thái các incident đang chờ phản hồi từ Slack sẽ bị mất. SRE/Operator sẽ không thể thực thi hành động remediate qua nút bấm trên Slack Card do ID incident không còn tồn tại trên RAM.
+* **Khắc phục dài hạn:** Cần chuyển đổi cơ chế quản lý trạng thái từ RAM sang một cơ sở dữ liệu phân tán bền vững (ví dụ: Redis hoặc OpenSearch) để duy trì trạng thái incident xuyên suốt vòng đời Pod.
+

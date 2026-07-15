@@ -11,6 +11,7 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 3600
       template:
         spec:
           priorityClassName: low-priority
