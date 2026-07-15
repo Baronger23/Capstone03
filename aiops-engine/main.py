@@ -30,6 +30,7 @@ correlator = AlertCorrelator()
 # Bộ đếm số lần chạy hành động chống chạy lặp vô hạn (C6 Invariant 4)
 action_counters = {}  # {incident_id: count}
 active_incidents = {}  # {incident_id: diagnosis_dict}
+last_proactive_alert_time = {}  # {service_name: timestamp} (Chống alert fatigue)
 
 # Cấu hình Sandbox Giả lập (Local Chaos Sandbox)
 import datetime
@@ -120,6 +121,7 @@ async def active_metrics_polling_loop():
                 
                 SERVICES = ["frontend", "checkout", "payment", "product-catalog", "product-reviews", "shipping", "recommendation"]
                 detected_culprit = None
+                anomalous_services = set()
                 
                 for service in SERVICES:
                     # 1. Trích xuất đặc trưng thời gian thực
@@ -138,28 +140,44 @@ async def active_metrics_polling_loop():
                     
                     if is_anomalous:
                         logger.warning(f"ML Isolation Forest proactively detected ANOMALY on service: {service}!")
-                        detected_culprit = service
-                        break  # Báo cảnh báo sớm cho dịch vụ đầu tiên phát hiện lỗi
+                        anomalous_services.add(service)
+                        if not detected_culprit:
+                            detected_culprit = service  # Báo cảnh báo sớm cho dịch vụ đầu tiên phát hiện lỗi
+                            
+                # Dọn dẹp các proactive warning cũ của các service đã trở lại bình thường
+                for inc_id, inc_data in list(active_incidents.items()):
+                    if inc_data.get("status") == "proactive_warning":
+                        svc = inc_data.get("culprit_service")
+                        if svc not in anomalous_services:
+                            logger.info(f"Proactive anomaly resolved for service {svc}. Removing {inc_id} from cache.")
+                            active_incidents.pop(inc_id, None)
                         
                 if detected_culprit:
-                    incident_id = f"INC-ML-{int(time.time())}"
-                    
-                    if simulation_state["scenario"].startswith("inc"):
-                        trace_id = f"mock-{simulation_state['scenario']}"
+                    # Chống alert fatigue: Kiểm tra thời gian cooldown (300 giây = 5 phút)
+                    now_ts = time.time()
+                    last_alert_ts = last_proactive_alert_time.get(detected_culprit, 0)
+                    if now_ts - last_alert_ts < 300:
+                        logger.info(f"Proactive warning for {detected_culprit} was sent recently. Throttling to prevent alert fatigue (cooldown remaining: {300 - (now_ts - last_alert_ts):.1f}s).")
                     else:
-                        trace_id = rca_engine.fetch_latest_trace_id(detected_culprit)
+                        last_proactive_alert_time[detected_culprit] = now_ts
+                        incident_id = f"INC-ML-{int(now_ts)}"
                         
-                    logger.info(f"Triggering PROACTIVE CMDR Pipeline for {incident_id} (Culprit: {detected_culprit}, Trace ID: {trace_id})")
-                    
-                    loop = asyncio.get_running_loop()
-                    loop.run_in_executor(
-                        None,
-                        process_proactive_anomaly_background, # Gọi hàm chẩn đoán rút gọn (chỉ RCA, không LLM/Slack)
-                        incident_id,
-                        detected_culprit,
-                        trace_id,
-                        time.time()
-                    )
+                        if simulation_state["scenario"].startswith("inc"):
+                            trace_id = f"mock-{simulation_state['scenario']}"
+                        else:
+                            trace_id = rca_engine.fetch_latest_trace_id(detected_culprit)
+                            
+                        logger.info(f"Triggering PROACTIVE CMDR Pipeline for {incident_id} (Culprit: {detected_culprit}, Trace ID: {trace_id})")
+                        
+                        loop = asyncio.get_running_loop()
+                        loop.run_in_executor(
+                            None,
+                            process_proactive_anomaly_background,
+                            incident_id,
+                            detected_culprit,
+                            trace_id,
+                            now_ts
+                        )
                 else:
                     logger.info("Active Polling Check: All services are healthy under ML Isolation Forest scans.")
         except Exception as e:
