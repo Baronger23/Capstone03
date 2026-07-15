@@ -80,6 +80,12 @@ def fetch_metrics_from_prometheus(service: str, duration_days: int = 7) -> pd.Da
     if len(data_dict) < 3:
         return pd.DataFrame()
         
+    # Tự động bù đắp các metrics bị thiếu (như error_rate khi không có lỗi) bằng Series 0.0 cùng index
+    sample_index = next(iter(data_dict.values())).index
+    for name in queries.keys():
+        if name not in data_dict:
+            data_dict[name] = pd.Series(0.0, index=sample_index)
+            
     df = pd.DataFrame(data_dict)
     df = df.interpolate(method="time").ffill().bfill()
     df = df.reset_index().rename(columns={"index": "timestamp"})
