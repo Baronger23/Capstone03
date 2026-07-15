@@ -79,29 +79,60 @@ class RemediationHandler:
 
     def verify_remediation(self, culprit_service: str) -> bool:
         """
-        Quét Telemetry kiểm chứng của dịch vụ thủ phạm (culprit_service) trong vòng 5 phút (C6 §50).
-        Yêu cầu chỉ số lỗi (gRPC/HTTP) quay lại mức bình thường trong 3 chu kỳ liên tiếp (Dampening Window).
+        Quét Telemetry kiểm chứng lai (Hybrid Verification) trong vòng 5 phút (C6 §50).
+        Yêu cầu cả hai điều kiện sau đồng thời vượt qua liên tục trong 5 chu kỳ quét (2.5 phút):
+          1. Z-score tỷ lệ lỗi dịch vụ trở lại bình thường (|Z| < 2.0).
+          2. Isolation Forest dự đoán trạng thái bình thường (prediction == 1, không có tác dụng phụ về tài nguyên/độ trễ).
         """
         metric_to_watch = f'sum(rate(traces_span_metrics_calls_total{{service_name="{culprit_service}", status_code="STATUS_CODE_ERROR"}}[1m])) or vector(0)'
-        logger.info(f"Starting SRE 5-minute verification window for {culprit_service} watching metric: {metric_to_watch}")
+        logger.info(f"Starting SRE 5-minute Hybrid Verification for {culprit_service}...")
+        logger.info(f"  - Gate 1 (Z-Score): watching error metric: {metric_to_watch}")
+        logger.info(f"  - Gate 2 (ML Isolation Forest): watching multi-dimensional service health")
         
         start_time = time.time()
         consecutive_passes = 0
         
+        feature_cols = [
+            "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "client_error_rate", "kafka_lag",
+            "error_ratio", "client_error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth",
+            "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
+        ]
+        
         while time.time() - start_time < VERIFICATION_PERIOD_SECONDS:
             time.sleep(30)
             
-            # Kiểm tra xem Z-score đã về mức bình thường (|Z| < 2.0) chưa
+            # 1. Kiểm tra Gate 1: Z-score của tỷ lệ lỗi
             z_score = self.detector.check_infra_z_score(metric_to_watch)
-            if abs(z_score) < 2.0:
+            z_passed = abs(z_score) < 2.0
+            
+            # 2. Kiểm tra Gate 2: ML Isolation Forest
+            if_passed = False
+            try:
+                df_features = self.detector.extract_features_realtime(culprit_service)
+                if not df_features.empty and len(df_features) >= 1:
+                    latest_row = df_features.tail(1).to_dict("records")[0]
+                    features_list = [latest_row[col] for col in feature_cols]
+                    # check_infra_anomaly trả về True nếu bất thường, False nếu bình thường
+                    is_anomalous = self.detector.check_infra_anomaly(culprit_service, features_list)
+                    if_passed = not is_anomalous
+                    logger.info(f"ML check for {culprit_service} - Anomaly flag: {is_anomalous}")
+                else:
+                    logger.warning(f"No real-time features returned for {culprit_service} during verify poll. Falling back to Z-score only.")
+                    if_passed = True
+            except Exception as e:
+                logger.error(f"Error checking ML anomaly flag during verify: {e}")
+                if_passed = True
+                
+            # Đánh giá kết quả chu kỳ quét hiện tại
+            if z_passed and if_passed:
                 consecutive_passes += 1
-                logger.info(f"Verification check passed ({consecutive_passes}/3). Z-score: {z_score:.2f}")
-                if consecutive_passes >= 3:
-                    logger.info(f"Verification Success! Service {culprit_service} error rate returned to normal for 3 consecutive checks.")
+                logger.info(f"Verification cycle passed ({consecutive_passes}/5). Z-score: {z_score:.2f}, ML: Normal")
+                if consecutive_passes >= 5:
+                    logger.info(f"Verification Success! Service {culprit_service} error rate and ML health returned to normal for 5 consecutive checks.")
                     return True
             else:
                 consecutive_passes = 0
-                logger.warning(f"Verification check failed. Service {culprit_service} error rate Z-score is still anomalous: {z_score:.2f}")
+                logger.warning(f"Verification cycle failed. Z-score passed: {z_passed} (Z: {z_score:.2f}), ML passed: {if_passed}")
                 
         logger.warning(f"Verification Timeout! Service {culprit_service} is still anomalous after 5 minutes.")
         return False
