@@ -77,23 +77,33 @@ class RemediationHandler:
             logger.error(f"Error executing command: {str(e)}")
         return False
 
-    def verify_remediation(self, metric_to_watch: str) -> bool:
+    def verify_remediation(self, culprit_service: str) -> bool:
         """
-        Quét Telemetry kiểm chứng trong vòng 5 phút (C6 §50).
+        Quét Telemetry kiểm chứng của dịch vụ thủ phạm (culprit_service) trong vòng 5 phút (C6 §50).
+        Yêu cầu chỉ số lỗi (gRPC/HTTP) quay lại mức bình thường trong 3 chu kỳ liên tiếp (Dampening Window).
         """
-        logger.info(f"Starting 5-minute verification window watching {metric_to_watch}...")
-        start_time = time.time()
+        metric_to_watch = f'sum(rate(traces_span_metrics_calls_total{{service_name="{culprit_service}", status_code="STATUS_CODE_ERROR"}}[1m])) or vector(0)'
+        logger.info(f"Starting SRE 5-minute verification window for {culprit_service} watching metric: {metric_to_watch}")
         
-        # Quét cứ mỗi 30 giây
+        start_time = time.time()
+        consecutive_passes = 0
+        
         while time.time() - start_time < VERIFICATION_PERIOD_SECONDS:
             time.sleep(30)
+            
             # Kiểm tra xem Z-score đã về mức bình thường (|Z| < 2.0) chưa
             z_score = self.detector.check_infra_z_score(metric_to_watch)
             if abs(z_score) < 2.0:
-                logger.info("Verification Success! Telemetry returned to normal.")
-                return True
+                consecutive_passes += 1
+                logger.info(f"Verification check passed ({consecutive_passes}/3). Z-score: {z_score:.2f}")
+                if consecutive_passes >= 3:
+                    logger.info(f"Verification Success! Service {culprit_service} error rate returned to normal for 3 consecutive checks.")
+                    return True
+            else:
+                consecutive_passes = 0
+                logger.warning(f"Verification check failed. Service {culprit_service} error rate Z-score is still anomalous: {z_score:.2f}")
                 
-        logger.warning("Verification Timeout! Telemetry is still anomalous after 5 minutes.")
+        logger.warning(f"Verification Timeout! Service {culprit_service} is still anomalous after 5 minutes.")
         return False
 
     def trigger_rollback(self, rollback_command: str) -> bool:

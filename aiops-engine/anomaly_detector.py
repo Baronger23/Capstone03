@@ -297,10 +297,10 @@ class AnomalyDetector:
         logger.info(f"SLO Burn Rate Check (Max) - 5m: {max_5m_svc[1]:.2f} ({max_5m_svc[0]}), 1h: {max_1h_svc[1]:.2f} ({max_1h_svc[0]})")
         return False
 
-    def check_infra_z_score(self, metric_name: str, window_days: int = 7) -> float:
+    def check_infra_z_score(self, metric_name: str, window_days: int = 1) -> float:
         """
         Lớp 2 - ML-based Saturation & Lag Monitor
-        Tính toán chỉ số Z-Score dựa trên baseline cửa sổ trượt window_days (mặc định 7 ngày)
+        Tính toán chỉ số Z-Score dựa trên baseline cửa sổ trượt window_days (mặc định 1 ngày)
         để phát hiện bất thường sớm của hệ thống (như CPU, Memory, Kafka lag).
         """
         import os
@@ -337,7 +337,10 @@ class AnomalyDetector:
         current = self.parse_query_value(current_res)
         
         if stddev == 0:
-            return 0.0
+            if current == 0:
+                return 0.0
+            logger.warning(f"Zero standard deviation in baseline history but current value is non-zero ({current:.2f}) for {metric_name}. Flagging anomaly (Z = 999.0).")
+            return 999.0
             
         z_score = (current - mean) / stddev
         logger.info(f"Z-Score for {metric_name} - Current: {current:.2f}, Mean: {mean:.2f}, Stddev: {stddev:.2f}, Z: {z_score:.2f}")

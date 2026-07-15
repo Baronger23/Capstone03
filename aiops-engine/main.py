@@ -331,7 +331,7 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
         if success:
             logger.info("Low risk action executed successfully.")
             # Verify 5 phút
-            is_resolved = handler.verify_remediation("http_server_active_requests")
+            is_resolved = handler.verify_remediation(culprit_service)
             if is_resolved:
                 active_incidents.pop(incident_id, None)
         else:
@@ -495,7 +495,7 @@ def process_incident_promotion_background(incident_id: str):
         success = handler.execute_k8s_command(action_command)
         if success:
             logger.info("Low risk action executed successfully.")
-            is_resolved = handler.verify_remediation("http_server_active_requests")
+            is_resolved = handler.verify_remediation(culprit_service)
             if is_resolved:
                 active_incidents.pop(incident_id, None)
         else:
@@ -616,7 +616,7 @@ async def process_approval_action(incident_id: str, value: str) -> dict:
         
         if success:
             # 2. Chạy quét xác minh trong 5 phút
-            is_resolved = handler.verify_remediation("http_server_active_requests")
+            is_resolved = handler.verify_remediation(culprit_service)
             if not is_resolved:
                 # 3. Xác minh thất bại -> Tự động Rollback
                 logger.warning(f"Remediation verification failed. Triggering rollback for {incident_id}...")
