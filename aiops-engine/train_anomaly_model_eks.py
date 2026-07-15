@@ -184,7 +184,7 @@ def main():
         logger.info(f"--- Training process for service: {service} ---")
         
         # 1. Thu thập dữ liệu rolling (Prometheus hoặc fallback)
-        df_raw = fetch_metrics_from_prometheus(service, duration_days=7)
+        df_raw = fetch_metrics_from_prometheus(service, duration_days=1)
         if df_raw.empty:
             df_raw = generate_fallback_synthetic_data(service, duration_days=14)
             
