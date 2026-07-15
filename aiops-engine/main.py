@@ -151,8 +151,26 @@ async def active_metrics_polling_loop():
                             active_incidents.pop(inc_id, None)
                         
                 if anomalous_services:
+                    # Chuyển đổi anomalous_services thành danh sách mock alerts để chạy qua correlator
+                    mock_alerts = []
                     for service in anomalous_services:
-                        # Chống alert fatigue: Kiểm tra thời gian cooldown (300 giây = 5 phút) cho từng service
+                        if simulation_state["scenario"].startswith("inc"):
+                            trace_id = f"mock-{simulation_state['scenario']}"
+                        else:
+                            trace_id = rca_engine.fetch_latest_trace_id(service)
+                        mock_alerts.append({
+                            "labels": {"service": service, "alertname": "MLProactiveAnomaly", "severity": "warning"},
+                            "annotations": {"trace_id": trace_id}
+                        })
+                    
+                    # Sử dụng Union-Find & Topology Correlation để gom nhóm và xác định culprit gốc
+                    clusters = correlator.correlate_alerts(mock_alerts)
+                    
+                    for cluster in clusters:
+                        service = cluster["culprit_service"]
+                        trace_id = cluster["trace_id"]
+                        
+                        # Chống alert fatigue: Kiểm tra thời gian cooldown (300 giây = 5 phút) cho culprit
                         now_ts = time.time()
                         last_alert_ts = last_proactive_alert_time.get(service, 0)
                         if now_ts - last_alert_ts < 300:
@@ -161,12 +179,7 @@ async def active_metrics_polling_loop():
                             last_proactive_alert_time[service] = now_ts
                             incident_id = f"INC-ML-{int(now_ts)}"
                             
-                            if simulation_state["scenario"].startswith("inc"):
-                                trace_id = f"mock-{simulation_state['scenario']}"
-                            else:
-                                trace_id = rca_engine.fetch_latest_trace_id(service)
-                                
-                            logger.info(f"Triggering PROACTIVE CMDR Pipeline for {incident_id} (Culprit: {service}, Trace ID: {trace_id})")
+                            logger.info(f"Triggering PROACTIVE CMDR Pipeline for {incident_id} (Culprit: {service}, Clustered Services: {cluster['services']}, Trace ID: {trace_id})")
                             
                             loop = asyncio.get_running_loop()
                             loop.run_in_executor(
@@ -352,7 +365,17 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
     
     # 2. Phân tích Jaeger Trace RCA & logs lỗi
     logs_summary = []
-    for log_t in evidence.get("log_templates", [])[:5]:
+    templates = evidence.get("log_templates", [])
+    error_keywords = ["error", "fail", "warn", "exception", "deadline", "out of order", "epoch"]
+    
+    def priority_score(t_dict):
+        text = t_dict.get("template", "").lower()
+        if any(kw in text for kw in error_keywords):
+            return 0
+        return 1
+        
+    sorted_templates = sorted(templates, key=priority_score)
+    for log_t in sorted_templates[:5]:
         template = log_t.get("template", "")
         count = log_t.get("count", 1)
         if len(template) > 100:
