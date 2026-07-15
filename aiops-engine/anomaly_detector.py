@@ -109,10 +109,10 @@ class AnomalyDetector:
         
         # PromQL
         queries = {
-            "rps": f'sum(rate(http_server_duration_milliseconds_count{{service_name="{service}"}}[5m]))',
-            "error_rate": f'sum(rate(http_server_duration_milliseconds_count{{service_name="{service}", http_status_code=~"5.."}}[5m]))',
-            "client_error_rate": f'(sum(rate(http_server_duration_milliseconds_count{{service_name="{service}", http_status_code=~"4.."}}[5m])) or vector(0))',
-            "latency_p90": f'histogram_quantile(0.90, sum(rate(http_server_duration_milliseconds_bucket{{service_name="{service}"}}[5m])) by (le))',
+            "rps": f'sum(rate(traces_span_metrics_calls_total{{service_name="{service}", span_kind="SPAN_KIND_SERVER"}}[5m]))',
+            "error_rate": f'(sum(rate(traces_span_metrics_calls_total{{service_name="{service}", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}}[5m])) or vector(0))',
+            "client_error_rate": f'vector(0)',
+            "latency_p90": f'(histogram_quantile(0.90, sum(rate(traces_span_metrics_duration_milliseconds_bucket{{service_name="{service}", span_kind="SPAN_KIND_SERVER"}}[5m])) by (le)) or vector(0))',
             "cpu_usage": f'sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m]))',
             "memory_usage": f'sum(container_memory_working_set_bytes{{container="{service}"}}) / sum(container_spec_memory_limit_bytes{{container="{service}"}})',
             "kafka_lag": f'(sum(kafka_consumer_records_lag{{service_name="{service}"}}) or vector(0))'
@@ -292,8 +292,12 @@ class AnomalyDetector:
             logger.info(f"[SIMULATION] Z-Score for {metric_name}: healthy (Z-Score = 0.0)")
             return 0.0
 
-        query_mean = f"avg_over_time({metric_name}[{window_days}d])"
-        query_stddev = f"stddev_over_time({metric_name}[{window_days}d])"
+        if "(" in metric_name or "}" in metric_name:
+            query_mean = f"avg_over_time(({metric_name})[{window_days}d:5m])"
+            query_stddev = f"stddev_over_time(({metric_name})[{window_days}d:5m])"
+        else:
+            query_mean = f"avg_over_time({metric_name}[{window_days}d])"
+            query_stddev = f"stddev_over_time({metric_name}[{window_days}d])"
         query_current = f"{metric_name}"
         
         mean_res = self.query_prometheus(query_mean)
