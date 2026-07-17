@@ -267,6 +267,8 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
     # Bổ sung thông tin bổ sung vào diagnosis trước khi phân loại rủi ro
     diagnosis["incident_id"] = incident_id
     diagnosis["culprit_service"] = culprit_service
+    diagnosis["trace_id"] = trace_id
+    diagnosis["trace_analysis"] = evidence.get("trace_analysis", culprit_service)
     
     # 3. Giai đoạn 5.1 & 5.2: Bộ lọc an toàn & Phân loại rủi ro (Risk Assessment)
     proposed_action = diagnosis.get("proposed_action", "none")
@@ -374,6 +376,7 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
     diagnosis["status"] = "proactive_warning"
     diagnosis["alert_time"] = alert_time
     diagnosis["trace_id"] = trace_id
+    diagnosis["trace_analysis"] = evidence.get("trace_analysis", culprit_service)
     
     proposed_action = diagnosis.get("proposed_action", "none")
     
@@ -436,6 +439,8 @@ def process_incident_promotion_background(incident_id: str):
     
     diagnosis["incident_id"] = incident_id
     diagnosis["culprit_service"] = culprit_service
+    diagnosis["trace_id"] = evidence.get("trace_id", "unknown-trace-id")
+    diagnosis["trace_analysis"] = evidence.get("trace_analysis", culprit_service)
     
     # 3. Giai đoạn 5.1 & 5.2: Bộ lọc an toàn & Phân loại rủi ro (Risk Assessment)
     proposed_action = diagnosis.get("proposed_action", "none")

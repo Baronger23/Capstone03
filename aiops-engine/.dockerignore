@@ -6,3 +6,5 @@ __pycache__/
 scratch/
 data/*.csv
 models/*.joblib
+# Exclude fake simulation files - never bake into image
+datametric/fake_*.csv
