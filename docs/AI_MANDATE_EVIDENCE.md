@@ -35,13 +35,13 @@ Mentor có thể bơm trực tiếp bất kỳ dữ liệu chuỗi thời gian (
     "data": [
       {
         "timestamp": "2026-07-17T12:00:00Z",
-        "rps": 150.0,
-        "cpu_usage": 0.8,
-        "memory_usage": 0.5,
-        "latency_p90": 55.0,
+        "rps": 0.25,
+        "cpu_usage": 0.003,
+        "memory_usage": 0.188,
+        "latency_p90": 0.0,
         "error_rate": 0.0,
         "client_error_rate": 0.0,
-        "kafka_lag": 15.0,
+        "kafka_lag": 0.0,
         "label": 1
       }
     ]
@@ -73,14 +73,17 @@ Mentor có thể bơm trực tiếp bất kỳ dữ liệu chuỗi thời gian (
 
 ## 📦 3. Bộ Sự Cố Có Nhãn Trong Repo (Labeled Scenarios)
 
-Tập dữ liệu kiểm thử mẫu đã được commit tại: [labeled_scenarios.json](file:///d:/Xbrain/Read_Capstone03/aiops-engine/datametric/labeled_scenarios.json) chứa 3 kịch bản chuẩn của BTC:
+Tập dữ liệu kiểm thử mẫu đã được thiết kế lại để khớp tuyệt đối với **không gian đặc trưng thực tế** của dịch vụ `checkout` trên cụm EKS: [labeled_scenarios.json](file:///d:/Xbrain/Read_Capstone03/aiops-engine/datametric/labeled_scenarios.json)
 
-1. **`checkout_incident` (Sự cố thật):** Lỗi nghẽn trên checkout.
-   * *Kết quả kiểm thử:* Precision = $100\%$, Recall = $100\%$, Lead-time = $0$ cycles (phát hiện lập tức tại chu kỳ đầu tiên).
-2. **`masking_incident` (Chống che khuất):** Tải vọt lên 4x đồng thời có lỗi nhẹ âm ỉ 3-5% trên cùng service checkout.
-   * *Kết quả kiểm thử:* Precision = $100\%$, Recall = $100\%$, Lead-time = $0$ cycles. Mô hình Isolation Forest không bị nhiễu tải làm che mất lỗi nhẹ.
-3. **`high_load_healthy` (Bận nhưng Không hỏng):** RPS tăng vọt lên 150 req/s, CPU tăng vọt lên 82% nhưng lỗi = 0 và latency cực kỳ ổn định.
-   * *Kết quả kiểm thử:* Precision = $100\%$ (Confusion matrix: FP = 0, TP = 0). **Tuyệt đối không báo động giả khi hệ thống tải cao nhờ SRE Guardrail tự động ghi nhận trạng thái Busy but Healthy.**
+1. **`checkout_incident` (Sự cố thật):** Lỗi nghẽn cơ sở dữ liệu trên checkout.
+   * *Baseline (12 dòng):* RPS $\approx 0.25$ req/s, CPU $\approx 0.003$ cores, Latency $= 0.0$s.
+   * *Anomaly (3 dòng):* RPS $= 0.25$ (không đổi), Latency vọt lên **$0.95\text{s} - 1.20\text{s}$**, Error Rate vọt lên **$0.08 - 0.12$** errors/s (tỷ lệ lỗi $\approx 32\% - 48\%$).
+   * *Kết quả:* Precision = $1.00$, Recall = $1.00$, Lead-time = $0$ cycles.
+2. **`masking_incident` (Chống che khuất):** Tăng tải đột biến kết hợp lỗi nhẹ âm ỉ xảy ra song song trên cùng service checkout.
+   * *Anomaly (3 dòng):* RPS tăng vọt lên **$1.80$ req/s** (gấp 7 lần baseline), Latency $= 0.11$s, Error Rate $= 0.07$ errors/s (tỷ lệ lỗi $\approx 4\%$).
+   * *Kết quả:* Precision = $1.00$, Recall = $1.00$, Lead-time = $0$ cycles. Mô hình Isolation Forest đa chiều vẫn cô lập được lỗi nhẹ âm ỉ này bất kể lượng tải tăng vọt che phủ.
+3. **`high_load_healthy` (Tải cao healthy - Busy but Healthy):** RPS tăng vọt lên $1.50$ req/s, CPU vọt lên $0.022$ cores nhưng lỗi $= 0.0$ và latency $= 0.0$s.
+   * *Kết quả:* Precision = $1.00$ (FP = 0). **Mô hình Isolation Forest gốc tự động phân biệt được đây là Normal (Predict = 1) mà không cần can thiệp ép buộc từ Guardrail, vì các chỉ số chất lượng (lỗi, trễ) vẫn được giữ vững hoàn hảo.**
 
 ---
 
@@ -104,7 +107,7 @@ Engine chạy thường trực 24/7 dưới dạng Kubernetes Deployment `aiops-
   kubectl get pods -n techx-tf3 -l app=aiops-engine
   
   NAME                            READY   STATUS    RESTARTS   AGE
-  aiops-engine-85c44f4485-bvb89   1/1     Running   0          37m
+  aiops-engine-6dbf7f56d6-hdf8c   1/1     Running   0          2m
   ```
   *(Chỉ số RESTARTS = 0 chứng minh Pod chạy cực kỳ ổn định, không bị crash OOM).*
 
@@ -136,6 +139,6 @@ Engine chạy thường trực 24/7 dưới dạng Kubernetes Deployment `aiops-
    [TEST] Replay Scenario 'masking_incident' -> Precision: 1.00, Recall: 1.00, Lead-time: 0 cycles (0.0s)
    [TEST] Replay Scenario 'high_load_healthy' -> Precision: 1.00, Recall: 1.00, Lead-time: 0 cycles (0.0s)
    
-   Ran 5 tests in 171.667s
+   Ran 5 tests in 170.622s
    OK
    ```
