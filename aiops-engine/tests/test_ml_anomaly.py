@@ -76,5 +76,51 @@ class TestMLAnomalyDetection(unittest.TestCase):
         res = self.detector.check_infra_anomaly("frontend", features)
         self.assertIsInstance(res, bool, "check_infra_anomaly must return a boolean value")
 
+    def test_replay_endpoint_scenarios(self):
+        """Kiểm định chất lượng phát hiện lỗi của Replay API qua 3 kịch bản mẫu."""
+        from fastapi.testclient import TestClient
+        from main import app
+        import json
+        
+        client = TestClient(app)
+        
+        # Load labeled_scenarios.json
+        scenarios_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datametric", "labeled_scenarios.json")
+        with open(scenarios_path, "r", encoding="utf-8") as f:
+            scenarios_data = json.load(f)
+            
+        for scenario in scenarios_data["scenarios"]:
+            name = scenario["scenario_name"]
+            service = scenario["service"]
+            data = scenario["data"]
+            
+            # Post payload
+            response = client.post("/simulate/replay", json={
+                "service": service,
+                "data": data
+            })
+            
+            self.assertEqual(response.status_code, 200, f"Scenario {name} failed with code {response.status_code}")
+            res_json = response.json()
+            
+            metrics = res_json["metrics"]
+            precision = metrics["precision"]
+            recall = metrics["recall"]
+            
+            print(f"\n[TEST] Replay Scenario '{name}' -> Precision: {precision:.2f}, Recall: {recall:.2f}, Lead-time: {metrics['lead_time_cycles']} cycles ({metrics['lead_time_seconds']}s)")
+            
+            # Assertions based on scenario properties
+            if name == "checkout_incident":
+                self.assertGreater(recall, 0.8, "Recall for checkout incident should be high")
+                self.assertGreater(precision, 0.8, "Precision for checkout incident should be high")
+                self.assertLessEqual(metrics["lead_time_cycles"], 1, "Lead-time should be <= 1 cycle")
+            elif name == "masking_incident":
+                # Must detect the anomaly despite high load spike masking
+                self.assertGreater(recall, 0.5, "Should catch anomaly during masking scenario")
+            elif name == "high_load_healthy":
+                # Absolute zero false positives!
+                self.assertEqual(metrics["confusion_matrix"]["true_positives"], 0, "No anomalies should be predicted for high load healthy scenario")
+                self.assertEqual(metrics["confusion_matrix"]["false_positives"], 0, "No false positives should be predicted for high load healthy scenario")
+
 if __name__ == "__main__":
     unittest.main()

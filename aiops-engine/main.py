@@ -706,6 +706,157 @@ async def simulate_remediate():
 async def simulate_state_endpoint():
     return simulation_state
 
+
+from typing import List
+
+class MetricPoint(BaseModel):
+    timestamp: str
+    rps: float
+    cpu_usage: float
+    memory_usage: float
+    latency_p90: float
+    error_rate: float
+    client_error_rate: float
+    kafka_lag: float
+    label: int
+
+class ReplayPayload(BaseModel):
+    service: str
+    data: List[MetricPoint]
+
+@app.post("/simulate/replay")
+async def simulate_replay(payload: ReplayPayload):
+    import pandas as pd
+    import numpy as np
+    
+    service = payload.service
+    records = [p.dict() for p in payload.data]
+    
+    if not records:
+        raise HTTPException(status_code=400, detail="Empty data list")
+        
+    # 1. Convert to DataFrame
+    df = pd.DataFrame(records)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df.sort_values("timestamp").reset_index(drop=True)
+    
+    # 2. Derived features calculation
+    df["error_ratio"] = df["error_rate"] / (df["rps"] + 1e-5)
+    df["client_error_ratio"] = df["client_error_rate"] / (df["rps"] + 1e-5)
+    df["rolling_median_1h"] = df["latency_p90"].rolling(window=12, min_periods=1).median()
+    df["latency_deviation"] = df["latency_p90"] / (df["rolling_median_1h"] + 1e-5)
+    df["rps_delta"] = df["rps"] - df["rps"].shift(1).fillna(0)
+    df["cpu_per_rps"] = df["cpu_usage"] / (df["rps"] + 1e-5)
+    df["memory_growth"] = df["memory_usage"] - df["memory_usage"].shift(6).fillna(0)
+    df["kafka_lag_growth"] = df["kafka_lag"] - df["kafka_lag"].shift(1).fillna(0)
+    
+    df["hour_of_day"] = df["timestamp"].dt.hour
+    df["day_of_week"] = df["timestamp"].dt.weekday
+    df["is_business_hours"] = ((df["hour_of_day"] >= 8) & (df["hour_of_day"] <= 18) & (df["day_of_week"] < 5)).astype(int)
+    
+    df["rolling_median_rps_1h"] = df["rps"].rolling(window=12, min_periods=1).median()
+    df["is_high_traffic_period"] = ((df["rps"] > 100) & (df["rps"] > 1.5 * df["rolling_median_rps_1h"])).astype(int)
+    
+    df = df.fillna(0)
+    
+    # 3. Model inference
+    feature_cols = [
+        "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "client_error_rate", "kafka_lag",
+        "error_ratio", "client_error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth",
+        "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
+    ]
+    
+    predictions = []
+    scores = []
+    
+    model = detector.models.get(service)
+    
+    for idx, row in df.iterrows():
+        X_t = row[feature_cols].values.reshape(1, -1)
+        if model:
+            pred = int(model.predict(X_t)[0])
+            score = float(model.decision_function(X_t)[0])
+            # SRE Guardrail override:
+            if pred == -1:
+                error_val = float(row["error_rate"])
+                lat_dev = float(row["latency_deviation"])
+                p90_val = float(row["latency_p90"])
+                if error_val == 0.0 and (lat_dev <= 1.5 or p90_val < 150.0):
+                    pred = 1
+        else:
+            pred = 1
+            score = 0.0
+        
+        predictions.append(pred)
+        scores.append(score)
+        
+    df["prediction"] = predictions
+    df["anomaly_score"] = scores
+    
+    # 4. Metrics evaluation
+    # 4. Metrics evaluation (excludign warmup rows to let sliding window features stabilize)
+    warmup = 12
+    eval_df = df.iloc[warmup:] if len(df) > warmup else df
+    
+    tp = int(((eval_df["prediction"] == -1) & (eval_df["label"] == -1)).sum())
+    fp = int(((eval_df["prediction"] == -1) & (eval_df["label"] == 1)).sum())
+    fn = int(((eval_df["prediction"] == 1) & (eval_df["label"] == -1)).sum())
+    tn = int(((eval_df["prediction"] == 1) & (eval_df["label"] == 1)).sum())
+    
+    precision = float(tp) / (tp + fp) if (tp + fp) > 0 else 1.0
+    recall = float(tp) / (tp + fn) if (tp + fn) > 0 else 1.0
+    
+    # Lead-Time calculation:
+    first_label_idx = None
+    first_pred_idx = None
+    
+    # Scan sequentially starting from warmup index
+    start_idx = warmup if len(df) > warmup else 0
+    for idx in range(start_idx, len(df)):
+        row = df.iloc[idx]
+        if row["label"] == -1 and first_label_idx is None:
+            first_label_idx = idx
+        if row["prediction"] == -1 and first_pred_idx is None:
+            first_pred_idx = idx
+            
+    lead_time_seconds = 0.0
+    lead_time_cycles = 0
+    if first_label_idx is not None and first_pred_idx is not None:
+        lead_time_cycles = first_pred_idx - first_label_idx
+        t_label = df.iloc[first_label_idx]["timestamp"]
+        t_pred = df.iloc[first_pred_idx]["timestamp"]
+        lead_time_seconds = (t_pred - t_label).total_seconds()
+        
+    results_detail = []
+    for idx, row in df.iterrows():
+        results_detail.append({
+            "timestamp": row["timestamp"].isoformat(),
+            "rps": float(row["rps"]),
+            "latency_p90": float(row["latency_p90"]),
+            "error_rate": float(row["error_rate"]),
+            "label": int(row["label"]),
+            "prediction": int(row["prediction"]),
+            "anomaly_score": float(row["anomaly_score"])
+        })
+        
+    return {
+        "status": "evaluated",
+        "service": service,
+        "metrics": {
+            "precision": precision,
+            "recall": recall,
+            "lead_time_cycles": lead_time_cycles,
+            "lead_time_seconds": lead_time_seconds,
+            "confusion_matrix": {
+                "true_positives": tp,
+                "false_positives": fp,
+                "false_negatives": fn,
+                "true_negatives": tn
+            }
+        },
+        "details": results_detail
+    }
+
 @app.get("/mock-prometheus/api/v1/query")
 async def mock_prometheus_query(query: str):
     val = 0.0

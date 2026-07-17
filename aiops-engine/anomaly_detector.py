@@ -240,6 +240,17 @@ class AnomalyDetector:
         # 4. Dự đoán bằng Isolation Forest
         model = self.models[service]
         prediction = int(model.predict(X_t)[0])  # 1 hoặc -1
+        
+        # SRE Guardrail override: Nếu không có lỗi và độ trễ ổn định, coi như bình thường (hệ thống bận)
+        if prediction == -1:
+            last_row = df_features.iloc[-1]
+            error_val = float(last_row.get("error_rate", 0.0))
+            lat_dev = float(last_row.get("latency_deviation", 1.0))
+            p90_val = float(last_row.get("latency_p90", 0.0))
+            if error_val == 0.0 and (lat_dev <= 1.5 or p90_val < 150.0):
+                logger.info(f"SRE Guardrail: Anomaly overridden to Normal for {service} (busy but healthy: error=0, latency stable)")
+                prediction = 1
+                
         score = float(model.decision_function(X_t)[0])  # Càng âm càng bất thường
         
         # Xác định mức độ tin cậy
@@ -456,6 +467,13 @@ class AnomalyDetector:
                 ]
                 df_t = pd.DataFrame([features], columns=feature_cols)
                 prediction = int(self.iforest_models[service].predict(df_t)[0])
+                if prediction == -1:
+                    error_val = float(features[4]) # error_rate
+                    lat_dev = float(features[9]) # latency_deviation
+                    p90_val = float(features[3]) # latency_p90
+                    if error_val == 0.0 and (lat_dev <= 1.5 or p90_val < 150.0):
+                        logger.info(f"SRE Guardrail: Anomaly overridden to Normal for {service} in check_infra_anomaly (busy but healthy)")
+                        prediction = 1
                 logger.info(f"IF prediction for {service}: {prediction} (1: Normal, -1: Anomaly)")
                 return prediction == -1
             except Exception as e:
