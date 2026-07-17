@@ -776,13 +776,6 @@ async def simulate_replay(payload: ReplayPayload):
         if model:
             pred = int(model.predict(X_t)[0])
             score = float(model.decision_function(X_t)[0])
-            # SRE Guardrail override:
-            if pred == -1:
-                error_val = float(row["error_rate"])
-                lat_dev = float(row["latency_deviation"])
-                p90_val = float(row["latency_p90"])
-                if error_val == 0.0 and (lat_dev <= 1.5 or p90_val < 150.0):
-                    pred = 1
         else:
             pred = 1
             score = 0.0
