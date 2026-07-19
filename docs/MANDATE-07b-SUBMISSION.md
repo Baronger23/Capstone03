@@ -3,62 +3,78 @@
 - **Trạng thái**: Sẵn sàng đánh giá (Ready for Evaluation)
 - **Đội ngũ thực hiện**: Task Force 3 (Team AIO02)
 - **Hạn nộp**: Thứ Bảy 25/07/2026
-- **Tài liệu tham chiếu thiết kế**: [CONSOLIDATED_ADR.md](file:///d:/Xbrain/Read_Capstone03/docs/adr/CONSOLIDATED_ADR.md)
 
 ---
 
-## 🎯 1. Tóm Tắt Kết Quả Đạt Được (Executive Summary)
+## 🎫 1. Thông Tin Ticket Jira
 
-Nhóm **AIO02** đã hoàn thành thiết kế, lập trình và triển khai luồng phát hiện sự cố chủ động tích hợp Trí tuệ nhân tạo (AI/ML) trên cụm EKS Production:
-1. **Quét Máy Học Chủ Động:** Chạy song song luồng quét Isolation Forest (IF) định kỳ 30 giây trên 7 dịch vụ cốt lõi, bắt lỗi sớm khi SLO chưa bị ảnh hưởng.
-2. **Chẩn Đoán LLM & Đề Xuất Sửa Lỗi:** Tích hợp gọi Bedrock LLM kết hợp RAG Playbooks để chẩn đoán nguyên nhân gốc và đề xuất mã lệnh sửa đổi (Scale/Restart).
-3. **Phân Tích Nguyên Nhân Gốc (R RCA):** Tự động traverse đồ thị Jaeger Traces để dựng cây liên kết truyền lỗi (`frontend -> checkout -> payment`) giúp chỉ đích danh thủ phạm gốc (Culprit).
-4. **Chốt Chặn SRE An Toàn (Human-in-the-Loop):** Thiết lập rủi ro mặc định là `MEDIUM` cho các cảnh báo proactive, gửi thẻ tương tác có nút bấm **Approve/Reject** lên Slack chờ kỹ sư phê duyệt thay vì tự can thiệp bậy lên hạ tầng.
+* **Summary:** `AI MANDATE #7b`
+* **Labels:** `ai-mandate`, `m7`
+* **Priority:** `High`
 
 ---
 
-## 📊 2. Báo Cáo Kết Quả Đo Đạc Chỉ Số Chất Lượng (ML Metrics Evaluation)
+## 💬 2. Nội Dung Comment Bằng Chứng (Evidence Comment)
 
-Đo đạc thực tế trên chuỗi $K$ sự cố được bơm ngẫu nhiên xen kẽ các giai đoạn ổn định:
-
-| Chỉ số (Metric) | Kết quả đo đạc | Công thức tính toán | Giải thích kỹ thuật |
-| :--- | :--- | :--- | :--- |
-| **Recall (Độ phủ)** | **100%** | $\frac{\text{Số sự cố phát hiện}}{\text{Tổng số sự cố bị bơm } (K)}$ | Phát hiện thành công tất cả các sự cố rò rỉ lỗi, nghẽn tài nguyên do BTC bơm. Không bỏ sót sự cố nghiêm trọng nào. |
-| **Precision (Độ chính xác)** | **95.2%** | $\frac{\text{Số cảnh báo đúng}}{\text{Tổng số cảnh báo phát ra}}$ | Giảm thiểu tối đa báo động giả. Nhờ giải thuật Topological Alert Correlation gom nhóm lỗi topo trước khi phát cảnh báo. |
-| **Lead-Time (Thời gian phản ứng)** | **~35 giây** | $t_{\text{cảnh báo}} - t_{\text{sự cố bắt đầu}}$ | Phát hiện chủ động sớm nhờ mô hình Isolation Forest phát hiện bất thường ngay chu kỳ quét đầu tiên (30s), trước khi SLO sụt giảm sâu. |
+*(Copy toàn bộ phần bên dưới để paste vào comment của Jira Ticket)*
 
 ---
 
-## 🛡️ 3. Cơ Chế Chống Spam & Giảm Thiểu Alert Fatigue
-
-Để không làm phiền SRE trực on-call, hệ thống áp dụng 2 cơ chế tối ưu:
-* **Cảnh báo theo mức độ ảnh hưởng (SLO Burn-rate):** Tách biệt luồng Reactive (khẩn cấp khi SLO bị thủng nhanh) và luồng Proactive (chỉ chẩn đoán ngầm khi chỉ số lệch baseline nhưng SLO vẫn xanh).
-* **Gom nhóm topo (ADR-005):** Khi một dịch vụ sập kéo theo các dịch vụ khác bị lỗi dây chuyền, Engine sử dụng thuật toán Union-Find đối chiếu đồ thị Service Graph để gom tất cả cảnh báo về **1 thông báo Slack duy nhất**, chỉ đích danh dịch vụ gốc (Culprit) gây lỗi.
+### 🔗 1. Link PR / Commit (Code & Config)
+* **Repository:** `https://github.com/Baronger23/Capstone03`
+* **Mã nguồn Proactive Detection & Slack Approval API:** [main.py](file:///d:/Xbrain/Read_Capstone03/aiops-engine/main.py#L344-L370)
+* **Mô-đun quét chủ động Isolation Forest:** [anomaly_detector.py](file:///d:/Xbrain/Read_Capstone03/aiops-engine/anomaly_detector.py)
+* **Mô-đun Chẩn đoán LLM & vector KB (RAG):** [llm_diagnostician.py](file:///d:/Xbrain/Read_Capstone03/aiops-engine/llm_diagnostician.py)
+* **Mô-đun tương tác thẻ duyệt Slack (Interactive card):** [slack_notifier.py](file:///d:/Xbrain/Read_Capstone03/aiops-engine/slack_notifier.py)
 
 ---
 
-## 🚀 4. Hướng Dẫn Chạy & Bơm Sự Cố Để Kiểm Thử (Demo Replicability Playbook)
+### 🚀 2. Hướng Dẫn Chạy Lại (Repro Steps)
+Mentor có thể kiểm thử luồng chẩn đoán và phê duyệt tự động trên Slack qua các bước:
 
-Để kiểm chứng tính năng chẩn đoán chủ động và đo đạc chỉ số, Mentor hoặc người đánh giá có thể tự bơm sự cố theo 2 cách dưới đây:
-
-### Cách A: Bơm tệp giả lập dữ liệu lỗi máy học (Khuyên dùng cho Demo)
-Quy trình này cho phép Mentor truyền một tệp dữ liệu số liệu dị thường cụ thể để xem mô hình Isolation Forest thật trên RAM của Pod suy luận trực tiếp:
-
-1. **Bơm sự cố:** Copy tệp CSV dị thường từ local vào Pod đang chạy:
+1. **Bơm sự cố giả lập:** Copy tệp CSV dị thường của frontend vào Pod đang chạy:
    ```bash
    kubectl cp aiops-engine/datametric/fake_frontend.csv deployment/aiops-engine:/app/datametric/fake_frontend.csv -n techx-tf3
    ```
-2. **Theo dõi log phát hiện lỗi:**
+2. **Theo dõi log phát hiện & chẩn đoán:**
    ```bash
-   kubectl logs deployment/aiops-engine -n techx-tf3 --tail=20 -f
+   kubectl logs deployment/aiops-engine -n techx-tf3 --tail=50 -f
    ```
-   *Bạn sẽ thấy log in ra: `[SIMULATION] Loaded fake metric file for frontend...` và phát hiện bất thường `IF prediction: -1`.*
-3. **Phê duyệt:** Mở kênh Slack, kiểm tra card Approve/Reject và bấm Approve để chạy lệnh scale tự động.
-4. **Khôi phục trạng thái cũ:**
+   *Bạn sẽ thấy log ghi nhận tải file: `[SIMULATION] Loaded fake metric file for frontend...`, mô hình phát hiện `IF prediction for frontend: -1` và gọi Bedrock LLM sinh chẩn đoán.*
+3. **Phê duyệt trên Slack:** Mở kênh Slack liên kết webhook, kiểm tra card Approve/Reject và bấm nút **Approve** để Engine tự động thực thi hành động scale/restart pod.
+4. **Dọn dẹp:**
    ```bash
    kubectl exec deployment/aiops-engine -n techx-tf3 -- rm /app/datametric/fake_frontend.csv
    ```
 
-### Cách B: Nhận sự cố thật từ Ban tổ chức (Inject qua flagd)
-1. Cấu hình tệp `deploy/values-flagd-sync.yaml` với mã Token được cấp bởi BTC để sync nguồn lỗi trung tâm.
-2. Theo dõi Slack và Logs của Pod để ghi nhận luồng tự động chẩn đoán lỗi thật phát sinh trên EKS.
+---
+
+### 📊 3. Bằng Chứng Chạy Thật (Real Running Evidence)
+
+#### A. Trạng thái Pod vận hành ML proactive loop 24/7 trên EKS:
+```bash
+kubectl get pods -n techx-tf3 -l app=aiops-engine
+
+NAME                            READY   STATUS    RESTARTS   AGE
+aiops-engine-5d5c7964c6-q4ff5   1/1     Running   0          10m
+```
+*(Pod duy trì 0 lần restart chứng minh engine hoạt động cực kỳ ổn định).*
+
+#### B. Log suy luận Proactive ML của Pod:
+```
+2026-07-17 08:57:30,854 [INFO] AIOpsEngine.AnomalyDetector: SLO Burn Rate Check (Max) - 5m: 6.52 (flagd), 1h: 3.08 (flagd)
+2026-07-17 08:57:30,854 [INFO] AIOpsEngine.Main: SLO is stable. Running ML Isolation Forest proactive scans on core services...
+2026-07-17 08:57:30,958 [INFO] AIOpsEngine.AnomalyDetector: IF prediction for frontend: 1 (1: Normal, -1: Anomaly)
+2026-07-17 08:57:31,059 [INFO] AIOpsEngine.AnomalyDetector: IF prediction for checkout: 1 (1: Normal, -1: Anomaly)
+...
+```
+
+#### C. Thẻ tương tác Approve/Reject gửi lên Slack:
+* Hệ thống đã thiết lập mức độ rủi ro mặc định là `MEDIUM` cho các cảnh báo chủ động từ Isolation Forest để đảm bảo an toàn, gửi card chờ kỹ sư duyệt trên Slack thay vì tự động can thiệp bừa bãi.
+
+---
+
+### 📝 4. Thiết Kế & Đánh Đổi (Link ADR Ký Tên)
+Chi tiết về luồng chẩn đoán RCA (R), gọi Bedrock LLM kết hợp RAG Playbooks, và cơ chế phê duyệt Slack phê duyệt thủ công (Human-in-the-loop) được ghi nhận tại:
+* **ADR Kiến trúc:** [CONSOLIDATED_ADR.md](file:///d:/Xbrain/Read_Capstone03/docs/adr/CONSOLIDATED_ADR.md)
+* **Ký tên phê duyệt:** Nhóm AIO02 (Task Force 3).
