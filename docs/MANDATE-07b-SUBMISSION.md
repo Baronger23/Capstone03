@@ -34,40 +34,50 @@
 
 ### 🚀 2. Hướng Dẫn Chạy Lại (Repro Steps)
 
-Mentor có thể kiểm thử toàn bộ luồng End-to-End theo 2 cách sau:
+> **Yêu cầu:** Cần SSM Tunnel đang chạy (Port 8443 mở) để kết nối vào EKS private cluster.
 
-#### Cách A: Đo Precision/Recall/Lead-time qua Replay API (Khuyên dùng)
+#### Bước 0 — Mở SSM Tunnel (giữ terminal này mở suốt quá trình test)
 
-Gọi API Replay trực tiếp trong Pod đang chạy trên EKS, truyền bộ kịch bản có nhãn K sự cố:
+```bash
+aws ssm start-session --target i-02a8d3e39b87180ce \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters "{\"host\":[\"10.0.35.59\"],\"portNumber\":[\"443\"],\"localPortNumber\":[\"8443\"]}"
+```
+
+#### Bước 1 — Forward port Pod ra localhost (mở terminal mới, giữ nguyên)
 
 ```bash
 kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
-  exec deployment/aiops-engine -n techx-tf3 -- \
-  curl -s -X POST http://localhost:8000/simulate/replay \
-    -H "Content-Type: application/json" \
-    -d @/app/datametric/labeled_scenarios.json
+  port-forward deployment/aiops-engine 8000:8000 -n techx-tf3
 ```
 
-API trả về JSON chứa `precision`, `recall`, `lead_time_cycles`, `slo_breaches_detected` và chi tiết từng mốc thời gian.
+#### Bước 2 — Gọi API Replay để đo Precision/Recall/Lead-time (mở terminal thứ 3)
 
-#### Cách B: Bơm sự cố và xem Slack Card End-to-End
+Tải file payload: [replay_payload.json](https://github.com/Baronger23/Capstone03/blob/main/aiops-engine/datametric/replay_payload.json)
 
-Kích hoạt luồng phát hiện + chẩn đoán LLM + gửi thẻ duyệt Slack:
+**Trên PowerShell (Windows):**
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/simulate/replay" `
+  -Method POST `
+  -ContentType "application/json" `
+  -InFile "aiops-engine/datametric/replay_payload.json"
+```
+
+**Trên Linux/Mac/Git Bash:**
+```bash
+curl -s -X POST http://localhost:8000/simulate/replay \
+  -H "Content-Type: application/json" \
+  -d @aiops-engine/datametric/replay_payload.json | python -m json.tool
+```
+
+API trả về JSON chứa `precision`, `recall`, `lead_time_cycles`, `slo_breaches_detected`.
+
+#### Bước 3 — Xem Log Pod phát hiện sự cố (sau khi gọi API)
 
 ```bash
-# Bước 1: Bơm kịch bản sự cố vào Pod (kích hoạt Isolation Forest phát hiện lỗi)
 kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
-  exec deployment/aiops-engine -n techx-tf3 -- \
-  curl -s -X POST http://localhost:8000/simulate/replay \
-    -H "Content-Type: application/json" \
-    -d @/app/datametric/labeled_scenarios.json
-
-# Bước 2: Xem log phát hiện & gọi Bedrock LLM sinh chẩn đoán
-kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
-  logs deployment/aiops-engine -n techx-tf3 --tail=60 -f
+  logs deployment/aiops-engine -n techx-tf3 --tail=60
 ```
-
-Bước 2 sẽ hiện log luồng chủ động: `SLO is stable → ML scan → IF: -1 → LLM diagnosis → Slack card sent`.
 
 ---
 
@@ -86,19 +96,27 @@ kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
 
 ---
 
-#### 📸 Ảnh 2 — Kết quả JSON Precision/Recall/Lead-time từ Replay API:
+#### 📸 Ảnh 2 — Port-forward đang hoạt động + Kết quả JSON Precision/Recall từ Replay API:
 
-> **[Chụp ảnh terminal sau khi chạy lệnh bên dưới và paste ảnh vào đây]**
+> **[Chụp ảnh 2 terminal: 1 terminal đang chạy port-forward, 1 terminal hiển thị kết quả JSON — paste ảnh vào đây]**
 
-```bash
-kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
-  exec deployment/aiops-engine -n techx-tf3 -- \
-  curl -s -X POST http://localhost:8000/simulate/replay \
-    -H "Content-Type: application/json" \
-    -d @/app/datametric/labeled_scenarios.json
+*(Kết quả mong đợi JSON:)*
+```json
+{
+  "service": "checkout",
+  "scenario": "checkout_incident",
+  "precision": 1.0,
+  "recall": 1.0,
+  "lead_time_cycles": 0,
+  "slo_breaches_detected": 3,
+  "confusion_matrix": {
+    "true_positives": 3,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "true_negatives": 0
+  }
+}
 ```
-
-*(Kết quả mong đợi: JSON chứa `"precision": 1.0, "recall": 1.0, "lead_time_cycles": 0, "slo_breaches_detected": 3`)*
 
 ---
 
