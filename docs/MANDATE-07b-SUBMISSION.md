@@ -60,6 +60,9 @@ aiops-engine-5d5c7964c6-q4ff5   1/1     Running   0          10m
 ```
 *(Pod duy trì 0 lần restart chứng minh engine hoạt động cực kỳ ổn định).*
 
+*(CHỤP ẢNH màn hình terminal chạy lệnh trên và lưu vào thư mục docs/images/eks_pods_status.png)*
+![1. Trạng thái Pod EKS khỏe mạnh](/d:/Xbrain/Read_Capstone03/docs/images/eks_pods_status.png)
+
 #### B. Log suy luận Proactive ML của Pod:
 ```
 2026-07-17 08:57:30,854 [INFO] AIOpsEngine.AnomalyDetector: SLO Burn Rate Check (Max) - 5m: 6.52 (flagd), 1h: 3.08 (flagd)
@@ -68,9 +71,14 @@ aiops-engine-5d5c7964c6-q4ff5   1/1     Running   0          10m
 2026-07-17 08:57:31,059 [INFO] AIOpsEngine.AnomalyDetector: IF prediction for checkout: 1 (1: Normal, -1: Anomaly)
 ...
 ```
+*(CHỤP ẢNH màn hình terminal chứa logs log phát hiện lỗi "IF prediction for frontend: -1" và lưu vào docs/images/eks_logs_anomaly.png)*
+![2. Logs phát hiện bất thường](/d:/Xbrain/Read_Capstone03/docs/images/eks_logs_anomaly.png)
 
 #### C. Thẻ tương tác Approve/Reject gửi lên Slack:
 * Hệ thống đã thiết lập mức độ rủi ro mặc định là `MEDIUM` cho các cảnh báo chủ động từ Isolation Forest để đảm bảo an toàn, gửi card chờ kỹ sư duyệt trên Slack thay vì tự động can thiệp bừa bãi.
+
+*(CHỤP ẢNH màn hình tin nhắn Slack Card chứa nút Approve/Reject và chẩn đoán LLM, lưu vào docs/images/slack_card_approval.png)*
+![3. Card duyệt Slack Approve/Reject](/d:/Xbrain/Read_Capstone03/docs/images/slack_card_approval.png)
 
 ---
 
