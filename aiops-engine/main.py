@@ -782,9 +782,16 @@ async def simulate_replay(payload: ReplayPayload):
         
         predictions.append(pred)
         scores.append(score)
-        
     df["prediction"] = predictions
     df["anomaly_score"] = scores
+    
+    # Calculate SLO Burn Rate metrics for each row
+    df["burn_rate_5m"] = df["error_ratio"] * 1000.0
+    df["rolling_error_rate_1h"] = df["error_rate"].rolling(window=12, min_periods=1).mean()
+    df["rolling_rps_1h"] = df["rps"].rolling(window=12, min_periods=1).mean()
+    df["rolling_error_ratio_1h"] = df["rolling_error_rate_1h"] / (df["rolling_rps_1h"] + 1e-5)
+    df["burn_rate_1h"] = df["rolling_error_ratio_1h"] * 1000.0
+    df["slo_breached"] = (df["burn_rate_5m"] >= 14.4) & (df["burn_rate_1h"] >= 14.4)
     
     # 4. Metrics evaluation
     # 4. Metrics evaluation (excludign warmup rows to let sliding window features stabilize)
@@ -829,7 +836,10 @@ async def simulate_replay(payload: ReplayPayload):
             "error_rate": float(row["error_rate"]),
             "label": int(row["label"]),
             "prediction": int(row["prediction"]),
-            "anomaly_score": float(row["anomaly_score"])
+            "anomaly_score": float(row["anomaly_score"]),
+            "burn_rate_5m": float(row["burn_rate_5m"]),
+            "burn_rate_1h": float(row["burn_rate_1h"]),
+            "slo_breached": bool(row["slo_breached"])
         })
         
     return {
@@ -845,7 +855,8 @@ async def simulate_replay(payload: ReplayPayload):
                 "false_positives": fp,
                 "false_negatives": fn,
                 "true_negatives": tn
-            }
+            },
+            "slo_breaches_detected": int(eval_df["slo_breached"].sum())
         },
         "details": results_detail
     }

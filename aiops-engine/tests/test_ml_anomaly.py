@@ -107,20 +107,23 @@ class TestMLAnomalyDetection(unittest.TestCase):
             precision = metrics["precision"]
             recall = metrics["recall"]
             
-            print(f"\n[TEST] Replay Scenario '{name}' -> Precision: {precision:.2f}, Recall: {recall:.2f}, Lead-time: {metrics['lead_time_cycles']} cycles ({metrics['lead_time_seconds']}s)")
+            print(f"\n[TEST] Replay Scenario '{name}' -> Precision: {precision:.2f}, Recall: {recall:.2f}, Lead-time: {metrics['lead_time_cycles']} cycles ({metrics['lead_time_seconds']}s), SLO Breaches: {metrics['slo_breaches_detected']}")
             
             # Assertions based on scenario properties
             if name == "checkout_incident":
                 self.assertGreater(recall, 0.8, "Recall for checkout incident should be high")
                 self.assertGreater(precision, 0.8, "Precision for checkout incident should be high")
                 self.assertLessEqual(metrics["lead_time_cycles"], 1, "Lead-time should be <= 1 cycle")
+                self.assertEqual(metrics["slo_breaches_detected"], 3, "SLO should be breached for all 3 anomaly rows")
             elif name == "masking_incident":
                 # Must detect the anomaly despite high load spike masking
                 self.assertGreater(recall, 0.5, "Should catch anomaly during masking scenario")
+                self.assertEqual(metrics["slo_breaches_detected"], 3, "SLO should be breached for all 3 anomaly rows despite masking")
             elif name == "high_load_healthy":
                 # Absolute zero false positives!
                 self.assertEqual(metrics["confusion_matrix"]["true_positives"], 0, "No anomalies should be predicted for high load healthy scenario")
                 self.assertEqual(metrics["confusion_matrix"]["false_positives"], 0, "No false positives should be predicted for high load healthy scenario")
+                self.assertEqual(metrics["slo_breaches_detected"], 0, "SLO should NOT be breached for healthy high load scenario")
 
 if __name__ == "__main__":
     unittest.main()
