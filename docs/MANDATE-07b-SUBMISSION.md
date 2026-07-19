@@ -85,59 +85,33 @@ kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
 
 #### 📸 Ảnh 1 — Trạng thái Pod EKS chạy ổn định (RESTARTS = 0):
 
-> **[Chụp ảnh terminal sau khi chạy lệnh bên dưới và paste ảnh vào đây]**
+![Pod status - 1/1 Running, RESTARTS=0](screenshot/Pod%20status.png)
 
-```bash
-kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
-  get pods -n techx-tf3 -l app=aiops-engine
-```
-
-*(Kết quả mong đợi: Pod ở trạng thái `1/1 Running`, RESTARTS = 0)*
+*(Pod `aiops-engine-5d5c7964c6-pz569` đang ở trạng thái `1/1 Running`, RESTARTS = 0, AGE = 23h — hoạt động ổn định liên tục)*
 
 ---
 
-#### 📸 Ảnh 2 — Port-forward đang hoạt động + Kết quả JSON Precision/Recall từ Replay API:
+#### 📸 Ảnh 2 — Kết quả JSON Precision/Recall/Lead-time từ Replay API:
 
-> **[Chụp ảnh 2 terminal: 1 terminal đang chạy port-forward, 1 terminal hiển thị kết quả JSON — paste ảnh vào đây]**
+![Kết quả JSON API Replay - precision=1.0, recall=1.0](screenshot/K%E1%BA%BFt%20qu%E1%BA%A3%20JSON%20API%20Replay%201.png)
 
-*(Kết quả mong đợi JSON:)*
-```json
-{
-  "service": "checkout",
-  "scenario": "checkout_incident",
-  "precision": 1.0,
-  "recall": 1.0,
-  "lead_time_cycles": 0,
-  "slo_breaches_detected": 3,
-  "confusion_matrix": {
-    "true_positives": 3,
-    "false_positives": 0,
-    "false_negatives": 0,
-    "true_negatives": 0
-  }
-}
-```
+*(API `/simulate/replay` trả về: `precision=1.0`, `recall=1.0`, `lead_time_cycles=0`, `slo_breaches_detected=3`, `true_positives=3`, `false_positives=0` — phát hiện hoàn hảo 3/3 sự cố, không báo sai)*
 
 ---
 
-#### 📸 Ảnh 3 — Log Pod khi phát hiện bất thường (IF prediction: -1):
+#### 📸 Ảnh 3 — Log Pod: Luồng quét chủ động Isolation Forest chạy thật:
 
-> **[Chụp ảnh terminal sau khi chạy lệnh bên dưới và paste ảnh vào đây]**
+![Log Pod - SLO stable, IF scan, All services healthy](screenshot/Log%20Pod%20.png)
 
-```bash
-kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
-  logs deployment/aiops-engine -n techx-tf3 --tail=60
-```
-
-*(Kết quả mong đợi: Log hiển thị `IF prediction for checkout: -1`, SLO Burn Rate vượt ngưỡng, gọi Bedrock LLM)*
+*(Log ghi nhận toàn bộ luồng chủ động: `SLO is stable` → Engine quét ML proactive → `IF prediction for checkout: 1 (Normal)` → `All services are healthy under ML Isolation Forest scans` → API nhận request `POST /simulate/replay` → `200 OK`)*
 
 ---
 
-#### 📸 Ảnh 4 — Thẻ tương tác Approve/Reject trên Slack:
+#### 📸 Ảnh 4 — Thẻ tương tác Approve/Reject trên Slack (Human-in-the-Loop):
 
-> **[Chụp ảnh màn hình kênh Slack nhận thẻ cảnh báo và paste ảnh vào đây]**
+![Slack Card - AIOps Incident Alert với nút Approve/Reject](screenshot/Slack.png)
 
-*(Kết quả mong đợi: Card Block Kit gồm: tiêu đề sự cố, chẩn đoán LLM nguyên nhân gốc, nút bấm `✅ Approve` và `❌ Reject`)*
+*(Kênh `#alert-aiops`: AIOps Bot gửi thẻ cảnh báo gồm phân tích đường đi lỗi RCA, chẩn đoán chi tiết Bedrock LLM, Jaeger Trace ID, lệnh khắc phục đề xuất `kubectl scale`, và 2 nút tương tác `✅ Approve (Duyệt chạy)` / `❌ Reject (Từ chối)` — Human-in-the-Loop hoàn chỉnh)*
 
 ---
 
