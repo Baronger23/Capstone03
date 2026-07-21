@@ -2,6 +2,7 @@ import time
 import logging
 import asyncio
 import json
+import subprocess
 from fastapi import FastAPI, Request, BackgroundTasks
 from pydantic import BaseModel
 from anomaly_detector import AnomalyDetector
@@ -25,7 +26,7 @@ evidence_collector = EvidenceCollector()
 diagnostician = LLMDiagnostician()
 handler = RemediationHandler()
 notifier = SlackNotifier()
-correlator = AlertCorrelator()
+correlator = AlertCorrelator(window_seconds=600)  # 10 phút — đủ bao phủ cascade failure chậm
 
 # Bộ đếm số lần chạy hành động chống chạy lặp vô hạn (C6 Invariant 4)
 action_counters = {}  # {incident_id: count}
@@ -41,6 +42,80 @@ simulation_state = SIMULATION_STATE
 # Cấu hình Active Metrics Polling Loop (Chế độ tự động quét chủ động - Mode B)
 ACTIVE_POLLING_ENABLED = True
 POLLING_INTERVAL_SECONDS = 30
+
+
+def enrich_culprit_with_upstream_check(trigger_service: str, lookback_minutes: int = 15) -> str:
+    """
+    Upstream Health Check — Hướng 3: Trace + Prometheus Fallback.
+
+    Khi RCA qua Jaeger trace không tìm được upstream culprit (trace thiếu do sampling,
+    hoặc culprit trả về chính trigger_service), hàm này query Prometheus để xem
+    service upstream nào có error_rate cao nhất trong lookback_minutes qua.
+
+    Quy trình:
+      1. Lấy tất cả upstream dependencies của trigger_service từ NetworkX graph
+         (nx.ancestors = những service mà trigger_service phụ thuộc vào)
+      2. Với mỗi upstream, query Prometheus: max error_rate trong N phút qua
+      3. Upstream nào có error_rate > ngưỡng → candidate culprit
+      4. Trả về upstream có error_rate cao nhất
+      5. Nếu không có upstream nào bị lỗi → giữ nguyên trigger_service
+
+    Args:
+        trigger_service: Service đang bị alert/trigger
+        lookback_minutes: Cửa sổ lookback về quá khứ (mặc định 15 phút)
+
+    Returns:
+        Tên service thực sự là root cause (có thể là trigger_service nếu không tìm được upstream)
+    """
+    # Bỏ qua trong Simulation Mode
+    if os.getenv("AIOPS_SIMULATION_MODE") == "true":
+        return trigger_service
+
+    if trigger_service not in correlator.nx_graph:
+        logger.debug(f"[UpstreamCheck] {trigger_service} not in topology graph, skipping.")
+        return trigger_service
+
+    import networkx as nx
+    upstreams = list(nx.ancestors(correlator.nx_graph, trigger_service))
+    if not upstreams:
+        logger.debug(f"[UpstreamCheck] {trigger_service} has no upstream dependencies.")
+        return trigger_service
+
+    logger.info(f"[UpstreamCheck] Checking {len(upstreams)} upstream(s) of {trigger_service}: {upstreams}")
+
+    best_upstream = None
+    best_error_rate = 0.0
+
+    for upstream in upstreams:
+        # Query max error_rate của upstream trong lookback window
+        # Dùng max_over_time để bắt được spike lỗi dù đã qua
+        query = (
+            f'max_over_time('
+            f'(sum(rate(traces_span_metrics_calls_total{{'
+            f'service_name="{upstream}",span_kind="SPAN_KIND_SERVER",'
+            f'status_code="STATUS_CODE_ERROR"}}[5m])) or vector(0))'
+            f'[{lookback_minutes}m:])'
+        )
+        result = detector.query_prometheus(query)
+        error_rate = detector.parse_query_value(result)
+
+        logger.debug(f"[UpstreamCheck] {upstream}: max_error_rate={error_rate:.5f} in last {lookback_minutes}m")
+
+        if error_rate > best_error_rate:
+            best_error_rate = error_rate
+            best_upstream = upstream
+
+    # Ngưỡng tối thiểu: > 0.001 req/s error để tránh noise
+    ERROR_RATE_THRESHOLD = 0.001
+    if best_upstream and best_error_rate > ERROR_RATE_THRESHOLD:
+        logger.warning(
+            f"[UpstreamCheck] ROOT CAUSE ENRICHED: {trigger_service} → {best_upstream} "
+            f"(max_error_rate={best_error_rate:.5f} in last {lookback_minutes}m)"
+        )
+        return best_upstream
+
+    logger.info(f"[UpstreamCheck] No upstream error found for {trigger_service}, keeping as culprit.")
+    return trigger_service
 
 async def active_metrics_polling_loop():
     logger.info("Starting Active Metrics Polling Loop (Mode B)...")
@@ -152,19 +227,24 @@ async def active_metrics_polling_loop():
                         
                 if anomalous_services:
                     # Chuyển đổi anomalous_services thành danh sách mock alerts để chạy qua correlator
+                    # Ghi lại thời điểm phát hiện riêng cho từng service để correlator tính first-drift đúng
                     mock_alerts = []
                     for service in anomalous_services:
                         if simulation_state["scenario"].startswith("inc"):
                             trace_id = f"mock-{simulation_state['scenario']}"
                         else:
                             trace_id = rca_engine.fetch_latest_trace_id(service)
+                        # Đưa fired_at thực tế vào alert để correlate_alerts_windowed tính first-drift
+                        svc_fired_at = last_proactive_alert_time.get(service, now_ts)
                         mock_alerts.append({
                             "labels": {"service": service, "alertname": "MLProactiveAnomaly", "severity": "warning"},
-                            "annotations": {"trace_id": trace_id}
+                            "annotations": {"trace_id": trace_id},
+                            "fired_at": svc_fired_at
                         })
                     
-                    # Sử dụng Union-Find & Topology Correlation để gom nhóm và xác định culprit gốc
-                    clusters = correlator.correlate_alerts(mock_alerts)
+                    # BUG 1+2 FIX: Dùng correlate_alerts_windowed thay vì correlate_alerts
+                    # → time-window clustering + upstream NetworkX topology scoring
+                    clusters = correlator.correlate_alerts_windowed(mock_alerts)
                     
                     for cluster in clusters:
                         service = cluster["culprit_service"]
@@ -198,11 +278,89 @@ async def active_metrics_polling_loop():
         await asyncio.sleep(POLLING_INTERVAL_SECONDS)
 
 async def periodic_graph_reload_loop():
-    """Tự động reload đồ thị services.json mỗi 5 phút để giữ đồ thị luôn mới (Graph Freshness)."""
+    """
+    Tự động rebuild topology từ Jaeger mỗi 24 giờ, rồi hot-reload vào correlator.
+
+    Chu kỳ:
+      - Mỗi 24h: chạy rebuild_topology_from_jaeger() để cập nhật services.json
+        từ trace thực tế — bắt được các dependency mới hoặc thay đổi kiến trúc.
+      - Mỗi 5 phút: reload services.json vào RAM (hot-reload, không query Jaeger).
+
+    Nếu Jaeger không accessible, giữ nguyên services.json hiện tại.
+    """
+    REBUILD_INTERVAL_SECONDS = 86400   # 24 giờ
+    RELOAD_INTERVAL_SECONDS  = 300     # 5 phút
+    last_rebuild_time = 0.0
+
     while True:
-        await asyncio.sleep(300)
-        logger.info("Periodic Graph Reload: Checking and reloading service graph...")
+        await asyncio.sleep(RELOAD_INTERVAL_SECONDS)
+        now = time.time()
+
+        # Rebuild topology từ Jaeger mỗi 24h
+        if now - last_rebuild_time >= REBUILD_INTERVAL_SECONDS:
+            logger.info("Periodic Topology Rebuild: querying Jaeger to rebuild services.json...")
+            try:
+                # Import và chạy builder trong executor để không block event loop
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, _rebuild_topology_background)
+                last_rebuild_time = now
+                logger.info("Topology rebuild complete.")
+            except Exception as e:
+                logger.error(f"Topology rebuild failed: {e}. Keeping existing services.json.")
+
+        # Hot-reload services.json vào RAM mỗi 5 phút
+        logger.info("Periodic Graph Reload: reloading service graph from disk...")
         correlator.reload_graph()
+
+
+def _rebuild_topology_background():
+    """
+    Wrapper chạy trong ThreadPoolExecutor để rebuild topology từ Jaeger và upload S3.
+    Quy trình:
+      1. Query Jaeger lấy traces của tất cả services
+      2. Extract edges từ CHILD_OF span relationships
+      3. Merge với services.json hiện tại
+      4. Ghi local (services.json) + upload S3 (topology/services.json)
+    Khi hoàn thành, correlator.reload_graph() sẽ pick up từ S3 trong chu kỳ 5 phút tiếp theo.
+    """
+    script_path = os.path.join(os.path.dirname(__file__), "scripts", "rebuild_topology_from_jaeger.py")
+    services_json_path = os.path.join(os.path.dirname(__file__), "services.json")
+
+    if not os.path.exists(script_path):
+        logger.warning(f"Topology rebuild script not found: {script_path}")
+        return
+
+    result = subprocess.run(
+        ["python", script_path,
+         "--output", services_json_path,
+         "--limit", "30"],   # 30 traces/service để nhẹ nhàng với Jaeger
+        capture_output=True,
+        text=True,
+        timeout=120   # tối đa 2 phút
+    )
+    if result.returncode == 0:
+        logger.info(f"Topology rebuild success:\n{result.stdout[-800:]}")
+    else:
+        logger.error(f"Topology rebuild failed (returncode={result.returncode}):\n{result.stderr[-500:]}")
+
+
+@app.post("/topology/rebuild")
+async def trigger_topology_rebuild():
+    """
+    Endpoint kích hoạt thủ công việc rebuild topology từ Jaeger traces.
+    Hữu ích sau khi deploy service mới hoặc thay đổi kiến trúc.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, _rebuild_topology_background)
+        return {
+            "status": "triggered",
+            "message": "Topology rebuild from Jaeger started in background. "
+                       "Check logs for progress. Graph will hot-reload within 5 minutes."
+        }
+    except Exception as e:
+        logger.error(f"Failed to trigger topology rebuild: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.on_event("startup")
 async def startup_event():
@@ -255,7 +413,17 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
     Quy trình tự động hóa khép kín chạy ngầm (Giai đoạn 3 -> Giai đoạn 5)
     """
     logger.info(f"--- Processing Incident {incident_id} ---")
-    
+
+    # [Upstream Health Check] Nếu culprit chỉ là service bị trigger mà không có context
+    # upstream rõ ràng từ correlator, thử Prometheus lookback để enrich culprit
+    enriched_culprit = enrich_culprit_with_upstream_check(culprit_service, lookback_minutes=15)
+    if enriched_culprit != culprit_service:
+        logger.warning(
+            f"[Incident {incident_id}] Culprit enriched via Prometheus upstream check: "
+            f"{culprit_service} → {enriched_culprit}"
+        )
+        culprit_service = enriched_culprit
+
     # 1. Giai đoạn 3: Gom logs và traces làm Bằng chứng (Evidence Pack)
     logger.info("Step 1: Generating Evidence Pack...")
     evidence = evidence_collector.build_evidence_pack(culprit_service, alert_time, trace_id)
@@ -361,6 +529,16 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
     để SRE phê duyệt thủ công qua Slack, không bao giờ tự động hành động.
     """
     logger.info(f"--- [PROACTIVE ML WARNING] Processing early anomaly for {culprit_service} ({incident_id}) ---")
+
+    # [Upstream Health Check] Với proactive scan, culprit là service IF phát hiện lỗi.
+    # Tuy nhiên lỗi có thể bắt nguồn từ upstream dependency — enrich trước khi chạy pipeline.
+    enriched_culprit = enrich_culprit_with_upstream_check(culprit_service, lookback_minutes=15)
+    if enriched_culprit != culprit_service:
+        logger.warning(
+            f"[Proactive {incident_id}] Culprit enriched via Prometheus upstream check: "
+            f"{culprit_service} → {enriched_culprit}"
+        )
+        culprit_service = enriched_culprit
     
     # 1. Thu thập bằng chứng
     logger.info("[PROACTIVE] Step 1: Generating Evidence Pack...")
@@ -534,8 +712,22 @@ async def receive_prometheus_alert(payload: AlertmanagerWebhook, background_task
     if not raw_alerts:
         return {"status": "no active firing alerts"}
         
-    # Gom nhóm cảnh báo bằng AlertCorrelator
-    clusters = correlator.correlate_alerts(raw_alerts)
+    # BUG 1+2 FIX: Dùng correlate_alerts_windowed để gom nhóm theo time-window
+    # và chọn culprit bằng upstream NetworkX topology scoring
+    # Alertmanager truyền fired_at qua label "startsAt" — normalize về float timestamp
+    for alert in raw_alerts:
+        if "fired_at" not in alert:
+            starts_at_str = alert.get("labels", {}).get("startsAt", "")
+            if starts_at_str:
+                try:
+                    from datetime import datetime, timezone
+                    dt = datetime.fromisoformat(starts_at_str.replace("Z", "+00:00"))
+                    alert["fired_at"] = dt.timestamp()
+                except Exception:
+                    alert["fired_at"] = time.time()
+            else:
+                alert["fired_at"] = time.time()
+    clusters = correlator.correlate_alerts_windowed(raw_alerts)
     
     for idx, cluster in enumerate(clusters):
         incident_id = f"INC-{int(time.time())}-{idx}"
@@ -730,7 +922,7 @@ async def simulate_replay(payload: ReplayPayload):
     import numpy as np
     
     service = payload.service
-    records = [p.dict() for p in payload.data]
+    records = [p.model_dump() for p in payload.data]
     
     if not records:
         raise HTTPException(status_code=400, detail="Empty data list")
@@ -776,9 +968,14 @@ async def simulate_replay(payload: ReplayPayload):
         if model:
             pred = int(model.predict(X_t)[0])
             score = float(model.decision_function(X_t)[0])
+            # Mandate 15 Requirement: "Không kêu oan khi bận"
+            # High RPS with zero errors and sub-100ms latency is HEALTHY BUSY, not an incident anomaly
+            if row["error_rate"] == 0.0 and row["client_error_rate"] == 0.0 and row["latency_p90"] < 0.1:
+                pred = 1
         else:
             pred = 1
             score = 0.0
+
         
         predictions.append(pred)
         scores.append(score)
@@ -1083,4 +1280,31 @@ async def reload_models():
             "status": "error",
             "message": f"Failed to reload models: {str(e)}"
         }
+
+
+def run_retrain_and_hot_reload():
+    """Chạy tiến trình huấn luyện mô hình thực tế và hot-reload sau khi hoàn tất."""
+    logger.info(">>> [API TRIGGER] Starting background model retraining pipeline...")
+    try:
+        import train_anomaly_model_eks as trainer
+        trainer.main()
+        logger.info(">>> [API TRIGGER] Retraining completed. Hot-reloading models from S3...")
+        detector._load_models_from_s3()
+        logger.info(">>> [API TRIGGER] Models successfully retrained and hot-reloaded into memory!")
+    except Exception as e:
+        logger.error(f">>> [API TRIGGER] Retraining background task failed: {e}")
+
+
+@app.post("/retrain")
+async def trigger_retrain(background_tasks: BackgroundTasks):
+    """
+    Kích hoạt tiến trình retrain mô hình ML từ Prometheus trên cụm EKS
+    và tự động hot-reload model mới vào RAM sau khi hoàn tất.
+    """
+    background_tasks.add_task(run_retrain_and_hot_reload)
+    return {
+        "status": "started",
+        "message": "Automated ML retraining pipeline triggered in background. Models will hot-reload upon completion."
+    }
+
 

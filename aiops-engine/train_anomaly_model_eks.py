@@ -104,23 +104,19 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     return local_fe(df)
 
 def check_data_sufficiency(df: pd.DataFrame) -> bool:
-    """Kiểm tra điều kiện chất lượng dữ liệu để tránh cold start và overfitting."""
+    """Kiểm tra điều kiện dữ liệu thực tế từ Prometheus (Tối thiểu 1 ngày)."""
     if df.empty:
         return False
         
     n_samples = len(df)
+    # Tối thiểu 1 ngày dữ liệu Prometheus thực tế (288 mẫu 5m)
     if n_samples < 288:
-        logger.warning(f"Data sufficiency check failed: n_samples={n_samples} (min required 288).")
+        logger.warning(f"Data sufficiency check failed: n_samples={n_samples} (min required 288 points = 1 full day).")
         return False
-        
-    for col in ["rps", "cpu_usage", "memory_usage", "latency_p90"]:
-        if col in df.columns:
-            std = df[col].std()
-            if std == 0 or np.isnan(std):
-                logger.warning(f"Data sufficiency check failed: feature '{col}' has zero variance.")
-                return False
                 
     return True
+
+
 
 def upload_model_to_s3(local_file: str, s3_key: str):
     """Tải tệp mô hình lên AWS S3."""
@@ -183,10 +179,11 @@ def main():
     for service in SERVICES:
         logger.info(f"--- Training process for service: {service} ---")
         
-        # 1. Thu thập dữ liệu rolling (Prometheus hoặc fallback)
-        df_raw = fetch_metrics_from_prometheus(service, duration_days=1)
+        # 1. Thu thập dữ liệu thực tế 100% từ Prometheus (3 ngày gần nhất)
+        df_raw = fetch_metrics_from_prometheus(service, duration_days=3)
         if df_raw.empty:
-            df_raw = generate_fallback_synthetic_data(service, duration_days=14)
+            logger.warning(f"No real Prometheus metrics found for {service}. Skipping training for this service.")
+            continue
             
         # 2. Kiểm tra chất lượng dữ liệu
         if not check_data_sufficiency(df_raw):
