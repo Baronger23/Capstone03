@@ -968,13 +968,10 @@ async def simulate_replay(payload: ReplayPayload):
         if model:
             pred = int(model.predict(X_t)[0])
             score = float(model.decision_function(X_t)[0])
-            # Mandate 15 Requirement: "Không kêu oan khi bận"
-            # High RPS with zero errors and sub-100ms latency is HEALTHY BUSY, not an incident anomaly
-            if row["error_rate"] == 0.0 and row["client_error_rate"] == 0.0 and row["latency_p90"] < 0.1:
-                pred = 1
         else:
             pred = 1
             score = 0.0
+
 
         
         predictions.append(pred)

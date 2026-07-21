@@ -24,8 +24,9 @@ spec:
           priorityClassName: low-priority
           containers:
           - name: trainer
-            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/tf-2-ai-engine:IF-v24
+            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/tf-2-ai-engine:IF-v25
             imagePullPolicy: Always
+
 
 
             command: ["python", "train_anomaly_model_eks.py"]
