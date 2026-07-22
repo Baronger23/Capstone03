@@ -24,8 +24,9 @@ spec:
           priorityClassName: low-priority
           containers:
           - name: trainer
-            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/tf-2-ai-engine:IF-v25
+            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/tf-2-ai-engine:IF-v27
             imagePullPolicy: Always
+
 
 
 

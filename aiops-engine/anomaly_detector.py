@@ -159,6 +159,8 @@ class AnomalyDetector:
         df["cpu_per_rps"] = df["cpu_usage"] / (df["rps"] + 1e-5)
         df["memory_growth"] = df["memory_usage"] - df["memory_usage"].shift(6).fillna(0)
         df["kafka_lag_growth"] = df["kafka_lag"] - df["kafka_lag"].shift(1).fillna(0)
+
+
         
         df["hour_of_day"] = df["timestamp"].dt.hour
         df["day_of_week"] = df["timestamp"].dt.weekday
@@ -241,6 +243,8 @@ class AnomalyDetector:
         model = self.models[service]
         prediction = int(model.predict(X_t)[0])  # 1 hoặc -1
         score = float(model.decision_function(X_t)[0])  # Càng âm càng bất thường
+
+
         
         # Xác định mức độ tin cậy
         if score < -0.3:

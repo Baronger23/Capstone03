@@ -224,6 +224,8 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     # rps delta (t - (t-5m)) => shift 1 mẫu
     df["rps_delta"] = df["rps"] - df["rps"].shift(1).fillna(0)
     df["cpu_per_rps"] = df["cpu_usage"] / (df["rps"] + 1e-5)
+
+
     
     # memory growth rate (t - (t-30m)) => shift 6 mẫu
     df["memory_growth"] = df["memory_usage"] - df["memory_usage"].shift(6).fillna(0)

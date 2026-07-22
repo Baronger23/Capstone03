@@ -3,12 +3,17 @@ import json
 import os
 import hashlib
 import time
+import networkx as nx
 from datetime import datetime, timezone
 
 logger = logging.getLogger("AIOpsEngine.AlertCorrelator")
 
+# S3 key cho topology file — dùng chung bucket với models
+TOPOLOGY_S3_KEY = "topology/services.json"
+
+
 class AlertCorrelator:
-    def __init__(self, max_hop=2, config_path="services.json", window_seconds=60):
+    def __init__(self, max_hop=2, config_path="services.json", window_seconds=600):
         self.max_hop = max_hop
         self.window_seconds = window_seconds
 
@@ -18,6 +23,7 @@ class AlertCorrelator:
 
         self.config_path = config_path
         self.service_graph = {}
+        self.nx_graph = nx.DiGraph()
         self.metadata = {
             "graph_version": "none",
             "graph_loaded_at": "none",
@@ -26,49 +32,104 @@ class AlertCorrelator:
             "graph_source": "local-json"
         }
 
-        # Tải đồ thị lần đầu
+        # Tải đồ thị lần đầu: ưu tiên S3 → fallback local file
         self.reload_graph()
 
+    def _try_load_from_s3(self) -> str | None:
+        """
+        Thử tải services.json từ S3.
+        Trả về nội dung JSON string nếu thành công, None nếu không có credential hoặc lỗi.
+        """
+        try:
+            import boto3
+            from config import S3_BUCKET_NAME
+
+            if not os.getenv("AWS_ACCESS_KEY_ID"):
+                return None
+
+            s3 = boto3.client("s3")
+            response = s3.get_object(Bucket=S3_BUCKET_NAME, Key=TOPOLOGY_S3_KEY)
+            content = response["Body"].read().decode("utf-8")
+            logger.info(f"Loaded services.json from s3://{S3_BUCKET_NAME}/{TOPOLOGY_S3_KEY}")
+            return content
+        except Exception as e:
+            logger.debug(f"S3 topology load skipped: {e}")
+            return None
+
     def reload_graph(self) -> bool:
-        """Tải động đồ thị từ services.json và cập nhật version/metadata."""
+        """
+        Tải động đồ thị topology và cập nhật version/metadata.
+
+        Thứ tự ưu tiên:
+          1. S3 (topology/services.json) — luôn mới nhất dù Pod restart
+          2. Local file (services.json) — fallback khi offline/no credentials
+        """
+        # Thử S3 trước
+        s3_content = self._try_load_from_s3()
+        if s3_content:
+            try:
+                data = json.loads(s3_content)
+                self._apply_graph_data(data, s3_content, source="s3")
+                # Sync về local disk để fallback hoạt động khi mất kết nối S3
+                try:
+                    with open(self.config_path, "w", encoding="utf-8") as f:
+                        f.write(s3_content)
+                except Exception:
+                    pass
+                return True
+            except Exception as e:
+                logger.error(f"Failed to parse S3 topology content: {e}. Falling back to local.")
+
+        # Fallback: local file
         if not os.path.exists(self.config_path):
-            logger.error(f"Service graph file not found at {self.config_path}. Using fallback empty graph.")
+            logger.error(f"Service graph file not found at {self.config_path}. Using empty graph.")
             self.service_graph = {}
             return False
-            
+
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 content = f.read()
-                data = json.loads(content)
-                
-            # Tính mã hash md5 đại diện cho phiên bản của đồ thị (Graph Versioning)
-            hasher = hashlib.md5()
-            hasher.update(content.encode("utf-8"))
-            graph_version = f"g-{hasher.hexdigest()[:10]}"
-            
-            self.service_graph = data
-            
-            # Tính toán thống kê đồ thị
-            nodes = set()
-            edges = 0
-            for u, neighbors in data.items():
-                nodes.add(u)
-                for v in neighbors:
-                    nodes.add(v)
-                    edges += 1
-                    
-            self.metadata = {
-                "graph_version": graph_version,
-                "graph_loaded_at": datetime.now(timezone.utc).isoformat(),
-                "graph_node_count": len(nodes),
-                "graph_edge_count": edges,
-                "graph_source": "manual-json"
-            }
-            logger.info(f"Successfully loaded service graph version {graph_version} ({len(nodes)} nodes, {edges} edges)")
+            data = json.loads(content)
+            self._apply_graph_data(data, content, source="local-json")
             return True
         except Exception as e:
             logger.error(f"Failed to load service graph: {e}")
             return False
+
+    def _apply_graph_data(self, data: dict, raw_content: str, source: str):
+        """Áp dụng dữ liệu topology vào graph, tính metadata và build NetworkX DiGraph."""
+        hasher = hashlib.md5()
+        hasher.update(raw_content.encode("utf-8"))
+        graph_version = f"g-{hasher.hexdigest()[:10]}"
+
+        self.service_graph = data
+
+        nodes: set[str] = set()
+        edges = 0
+        for u, neighbors in data.items():
+            nodes.add(u)
+            for v in neighbors:
+                nodes.add(v)
+                edges += 1
+
+        self.metadata = {
+            "graph_version": graph_version,
+            "graph_loaded_at": datetime.now(timezone.utc).isoformat(),
+            "graph_node_count": len(nodes),
+            "graph_edge_count": edges,
+            "graph_source": source
+        }
+
+        # Rebuild NetworkX DiGraph: edge u → v = "u gọi v" (u phụ thuộc v)
+        self.nx_graph = nx.DiGraph()
+        for u, neighbors in data.items():
+            for v in neighbors:
+                self.nx_graph.add_edge(u, v)
+
+        logger.info(
+            f"Service graph loaded [{source}] version={graph_version} "
+            f"({len(nodes)} nodes, {edges} edges)"
+        )
 
     def get_distance(self, s1: str, s2: str) -> int:
         """Tính khoảng cách ngắn nhất vô hướng giữa 2 microservices dựa trên đồ thị hiện tại."""
@@ -126,7 +187,7 @@ class AlertCorrelator:
         return best_service
 
     def _build_reverse_adj(self) -> dict:
-        """Xây dựng đồ thị đảo chiều: edge A→B trở thành B→A (để duyệt upstream)."""
+        """[LEGACY] Kept for internal reference. Prefer nx_graph for traversal."""
         rev = {}
         for u, neighbors in self.service_graph.items():
             for v in neighbors:
@@ -138,8 +199,8 @@ class AlertCorrelator:
         return rev
 
     def _upstream_distance(self, service: str, candidate: str) -> int:
-        """Khoảng cách duyệt ngược upstream từ service đến candidate (BFS trên đồ thị đảo chiều).
-        Trả về số hop ngược dòng, 999 nếu không liên thông."""
+        """[LEGACY] Kept for backward compat. Prefer nx.ancestors() via select_rca_candidate_scored().
+        Trả về số hop ngược dòng từ service đến candidate, 999 nếu không liên thông."""
         if service == candidate:
             return 0
         rev = self._build_reverse_adj()
@@ -160,11 +221,13 @@ class AlertCorrelator:
         services_with_time: list[tuple[str, float]]
     ) -> str:
         """
-        [BUG 2 FIX] Chọn culprit dựa trên 3 tín hiệu theo ADR-007:
-          1. Upstream depth score: candidate là upstream của nhiều victim nhất
-             (upstream score cao = nhiều service downstream bị kéo theo).
-          2. First-drift time: alert nào fired_at sớm nhất → là gốc rễ.
-          3. Alert volume: tie-break bằng vị trí trong services list.
+        [BUG 2 FIX — NetworkX] Chọn culprit dựa trên 3 tín hiệu theo ADR-007:
+          1. Upstream score: đếm số victim service nào mà candidate là ancestor
+             (theo NetworkX DiGraph — edge A→B nghĩa là A gọi B, tức B là downstream của A).
+             candidate là upstream của victim ⟺ candidate ∈ nx.ancestors(G_reversed, victim)
+             ⟺ victim ∈ nx.descendants(G, candidate)
+          2. First-drift time: fired_at sớm nhất là culprit khi upstream_score bằng nhau.
+          3. Tie-break cuối: thứ tự alphabet.
 
         Args:
             services_with_time: list of (service_name, fired_at_timestamp)
@@ -178,31 +241,40 @@ class AlertCorrelator:
 
         services = [s for s, _ in services_with_time]
         fired_at = {s: t for s, t in services_with_time}
+        services_set = set(services)
 
         best_service = services[0]
-        best_score = (-1, float("inf"))  # (upstream_score DESC, first_drift ASC)
+        best_upstream = -1
+        best_drift = float("inf")
 
         for candidate in services:
-            # Đếm số service khác mà candidate là upstream của họ
-            upstream_score = 0
-            for victim in services:
-                if victim == candidate:
-                    continue
-                dist = self._upstream_distance(victim, candidate)
-                if dist < 999:
-                    upstream_score += 1
+            # Ngữ nghĩa graph: u -> v nghĩa là u gọi v (u phụ thuộc v).
+            # nx.ancestors(G, candidate) trả về tất cả node có đường đến candidate
+            # tức là tất cả service phụ thuộc (gọi) candidate → candidate là upstream của chúng.
+            # Candidate nào có nhiều callers/dependents bị lỗi cùng lúc nhất là Root Cause.
+            if candidate in self.nx_graph:
+                dependents = nx.ancestors(self.nx_graph, candidate)
+            else:
+                dependents = set()
+            upstream_score = len(dependents & services_set)
 
             first_drift = fired_at.get(candidate, float("inf"))
-            score = (upstream_score, -first_drift)  # maximize upstream, minimize time
 
-            if score > best_score:
-                best_score = score
+            # Ưu tiên: (1) upstream_score cao hơn thắng,
+            #          (2) nếu bằng nhau → fired_at sớm hơn thắng,
+            #          (3) tie-break cuối: tên alphabet nhỏ hơn thắng
+            if (upstream_score > best_upstream
+                    or (upstream_score == best_upstream and first_drift < best_drift)
+                    or (upstream_score == best_upstream and first_drift == best_drift
+                        and candidate < best_service)):
+                best_upstream = upstream_score
+                best_drift = first_drift
                 best_service = candidate
 
         logger.info(
-            f"RCA scored candidates {[(s, fired_at[s]) for s, _ in services_with_time]} "
-            f"→ culprit: {best_service} (upstream_score={best_score[0]}, "
-            f"first_drift=-{best_score[1]:.2f})"
+            f"[NetworkX RCA] candidates={[(s, fired_at[s]) for s, _ in services_with_time]} "
+            f"→ culprit={best_service} "
+            f"(upstream_score={best_upstream}, first_drift={best_drift:.3f})"
         )
         return best_service
 

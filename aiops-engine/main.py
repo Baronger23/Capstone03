@@ -33,6 +33,13 @@ action_counters = {}  # {incident_id: count}
 active_incidents = {}  # {incident_id: diagnosis_dict}
 last_proactive_alert_time = {}  # {service_name: timestamp} (Chống alert fatigue)
 
+# Rolling Alert Buffer — lưu trữ các ML anomaly alert trong 15 phút trượt
+# Mỗi entry: {"service": str, "fired_at": float, "trace_id": str, "alertname": str, "severity": str}
+# Mục đích: giải quyết vấn đề mock_alerts = [] bị reset mỗi chu kỳ 30s
+# → correlator nhìn thấy đủ context 15 phút để gom cluster đúng
+ROLLING_ALERT_BUFFER_SECONDS = 900  # 15 phút
+rolling_alert_buffer: list[dict] = []
+
 # Cấu hình Sandbox Giả lập (Local Chaos Sandbox)
 import datetime
 import os
@@ -216,6 +223,8 @@ async def active_metrics_polling_loop():
                     if is_anomalous:
                         logger.warning(f"ML Isolation Forest proactively detected ANOMALY on service: {service}!")
                         anomalous_services.add(service)
+
+
                             
                 # Dọn dẹp các proactive warning cũ của các service đã trở lại bình thường
                 for inc_id, inc_data in list(active_incidents.items()):
@@ -224,27 +233,62 @@ async def active_metrics_polling_loop():
                         if svc not in anomalous_services:
                             logger.info(f"Proactive anomaly resolved for service {svc}. Removing {inc_id} from cache.")
                             active_incidents.pop(inc_id, None)
+
+                # Xóa service đã hồi phục khỏi rolling buffer
+                resolved_services = {
+                    e["service"] for e in rolling_alert_buffer
+                    if e["service"] not in anomalous_services
+                }
+                if resolved_services:
+                    rolling_alert_buffer[:] = [
+                        e for e in rolling_alert_buffer
+                        if e["service"] not in resolved_services
+                    ]
+                    logger.info(f"[RollingBuffer] Removed resolved services: {resolved_services}")
                         
                 if anomalous_services:
-                    # Chuyển đổi anomalous_services thành danh sách mock alerts để chạy qua correlator
-                    # Ghi lại thời điểm phát hiện riêng cho từng service để correlator tính first-drift đúng
-                    mock_alerts = []
+                    now_ts = time.time()
+
+                    # === ROLLING ALERT BUFFER ===
+                    # Push các service vừa phát hiện vào buffer với fired_at thực tế
                     for service in anomalous_services:
                         if simulation_state["scenario"].startswith("inc"):
                             trace_id = f"mock-{simulation_state['scenario']}"
                         else:
                             trace_id = rca_engine.fetch_latest_trace_id(service)
-                        # Đưa fired_at thực tế vào alert để correlate_alerts_windowed tính first-drift
-                        svc_fired_at = last_proactive_alert_time.get(service, now_ts)
-                        mock_alerts.append({
-                            "labels": {"service": service, "alertname": "MLProactiveAnomaly", "severity": "warning"},
-                            "annotations": {"trace_id": trace_id},
-                            "fired_at": svc_fired_at
-                        })
-                    
-                    # BUG 1+2 FIX: Dùng correlate_alerts_windowed thay vì correlate_alerts
-                    # → time-window clustering + upstream NetworkX topology scoring
-                    clusters = correlator.correlate_alerts_windowed(mock_alerts)
+
+                        # Chỉ thêm vào buffer nếu service chưa có entry trong 30s gần nhất
+                        # (tránh duplicate cùng service qua nhiều chu kỳ liên tiếp)
+                        already_recent = any(
+                            e["service"] == service and (now_ts - e["fired_at"]) < POLLING_INTERVAL_SECONDS
+                            for e in rolling_alert_buffer
+                        )
+                        if not already_recent:
+                            rolling_alert_buffer.append({
+                                "labels": {"service": service, "alertname": "MLProactiveAnomaly", "severity": "warning"},
+                                "annotations": {"trace_id": trace_id},
+                                "service": service,
+                                "fired_at": last_proactive_alert_time.get(service, now_ts),
+                                "trace_id": trace_id,
+                                "alertname": "MLProactiveAnomaly",
+                                "severity": "warning"
+                            })
+                            logger.info(f"[RollingBuffer] Added {service} to buffer (total={len(rolling_alert_buffer)})")
+
+                    # Prune entries cũ hơn ROLLING_ALERT_BUFFER_SECONDS (15 phút)
+                    rolling_alert_buffer[:] = [
+                        e for e in rolling_alert_buffer
+                        if now_ts - e["fired_at"] <= ROLLING_ALERT_BUFFER_SECONDS
+                    ]
+                    logger.info(
+                        f"[RollingBuffer] After prune: {len(rolling_alert_buffer)} entries "
+                        f"covering services: {sorted({e['service'] for e in rolling_alert_buffer})}"
+                    )
+
+                    # Truyền TOÀN BỘ buffer (15 phút) cho correlator thay vì chỉ chu kỳ hiện tại
+                    # → correlator nhìn thấy recommendation (10:12) + frontend-proxy (10:13)
+                    #   trong cùng 1 window → gom đúng 1 cluster, bắn đúng 1 Slack
+                    clusters = correlator.correlate_alerts_windowed(rolling_alert_buffer)
                     
                     for cluster in clusters:
                         service = cluster["culprit_service"]
@@ -973,6 +1017,8 @@ async def simulate_replay(payload: ReplayPayload):
             score = 0.0
 
 
+
+
         
         predictions.append(pred)
         scores.append(score)
@@ -986,16 +1032,24 @@ async def simulate_replay(payload: ReplayPayload):
     df["rolling_error_ratio_1h"] = df["rolling_error_rate_1h"] / (df["rolling_rps_1h"] + 1e-5)
     df["burn_rate_1h"] = df["rolling_error_ratio_1h"] * 1000.0
     df["slo_breached"] = (df["burn_rate_5m"] >= 14.4) & (df["burn_rate_1h"] >= 14.4)
-    
-    # 4. Metrics evaluation
-    # 4. Metrics evaluation (excludign warmup rows to let sliding window features stabilize)
+    # 2-Layer AIOps Incident Classifier:
+    # Layer 1: ML Isolation Forest Anomaly Detection (prediction == -1)
+    # Layer 2: Multi-Window Multi-Burn-Rate SLO Breached OR High Latency/Kafka Lag (slo_breached | latency_p90 > 0.05 | kafka_lag > 10)
+    # Combined: Incident Alert is triggered when ML Anomaly aligns with SLO Burn Rate breach or latency degradation
+    df["has_health_degradation"] = df["slo_breached"] | (df["latency_p90"] > 0.05) | (df["kafka_lag"] > 10)
+    df["incident_alert"] = ((df["prediction"] == -1) & df["has_health_degradation"]).map({True: -1, False: 1})
+
+
+
+    # 4. Metrics evaluation (excluding warmup rows to let sliding window features stabilize)
     warmup = 12
     eval_df = df.iloc[warmup:] if len(df) > warmup else df
     
-    tp = int(((eval_df["prediction"] == -1) & (eval_df["label"] == -1)).sum())
-    fp = int(((eval_df["prediction"] == -1) & (eval_df["label"] == 1)).sum())
-    fn = int(((eval_df["prediction"] == 1) & (eval_df["label"] == -1)).sum())
-    tn = int(((eval_df["prediction"] == 1) & (eval_df["label"] == 1)).sum())
+    tp = int(((eval_df["incident_alert"] == -1) & (eval_df["label"] == -1)).sum())
+    fp = int(((eval_df["incident_alert"] == -1) & (eval_df["label"] == 1)).sum())
+    fn = int(((eval_df["incident_alert"] == 1) & (eval_df["label"] == -1)).sum())
+    tn = int(((eval_df["incident_alert"] == 1) & (eval_df["label"] == 1)).sum())
+
     
     precision = float(tp) / (tp + fp) if (tp + fp) > 0 else 1.0
     recall = float(tp) / (tp + fn) if (tp + fn) > 0 else 1.0
@@ -1010,8 +1064,9 @@ async def simulate_replay(payload: ReplayPayload):
         row = df.iloc[idx]
         if row["label"] == -1 and first_label_idx is None:
             first_label_idx = idx
-        if row["prediction"] == -1 and first_pred_idx is None:
+        if row["incident_alert"] == -1 and first_pred_idx is None:
             first_pred_idx = idx
+
             
     lead_time_seconds = 0.0
     lead_time_cycles = 0
