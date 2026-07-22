@@ -84,8 +84,14 @@ class RemediationHandler:
           1. Z-score tỷ lệ lỗi dịch vụ trở lại bình thường (|Z| < 2.0).
           2. Isolation Forest dự đoán trạng thái bình thường (prediction == 1, không có tác dụng phụ về tài nguyên/độ trễ).
         """
+        import os
+        if os.getenv("AIOPS_SIMULATION_MODE") == "true":
+            logger.info(f"[SIMULATION] Bypassing actual 5-minute verification loop for {culprit_service}")
+            return True
+
         metric_to_watch = f'sum(rate(traces_span_metrics_calls_total{{service_name="{culprit_service}", status_code="STATUS_CODE_ERROR"}}[1m])) or vector(0)'
         logger.info(f"Starting SRE 5-minute Hybrid Verification for {culprit_service}...")
+
         logger.info(f"  - Gate 1 (Z-Score): watching error metric: {metric_to_watch}")
         logger.info(f"  - Gate 2 (ML Isolation Forest): watching multi-dimensional service health")
         
