@@ -3,11 +3,16 @@
 Bộ kịch bản để AIO02 chấm điểm AIOps engine bằng **lỗi thật trên cụm thật**, thay vì
 dữ liệu giả. Hạ tầng do CDO02 dựng; việc chạy và chấm là của AIO02.
 
-| Scenario | File | Cơ chế | Tự chạy được? |
+| Scenario | File | Cơ chế | Thời lượng |
 |---|---|---|---|
-| 1. Bắt đúng | [`experiments/scenario-1-payment-latency.yaml`](experiments/scenario-1-payment-latency.yaml) | NetworkChaos (tc netem) | ✅ |
-| 2. Không bị che | [`experiments/scenario-2-noise-vs-real.yaml`](experiments/scenario-2-noise-vs-real.yaml) | StressChaos + NetworkChaos | ✅ |
-| 3. Không kêu oan | [`experiments/scenario-3-flash-sale-load.md`](experiments/scenario-3-flash-sale-load.md) | Locust ramp (không phải CRD) | ✅ |
+| 1. Bắt đúng | [`scenario-1-payment-latency.yaml`](experiments/scenario-1-payment-latency.yaml) | NetworkChaos (tc netem) | 10m |
+| 2A. Không bị che — sự cố thật | [`scenario-2a-payment-real-issue.yaml`](experiments/scenario-2a-payment-real-issue.yaml) | NetworkChaos | 10m |
+| 2B. Không bị che — nhiễu | [`scenario-2b-recommendation-noise.yaml`](experiments/scenario-2b-recommendation-noise.yaml) | StressChaos | 5m |
+| 3. Không kêu oan | [`scenario-3-flash-sale-load.md`](experiments/scenario-3-flash-sale-load.md) | Locust ramp (không phải CRD) | giữ tải 10m |
+
+> **Scenario 2: apply CẢ HAI file cùng lúc ở T+0.** Nhiễu sống T+0→T+5 (chấm tách
+> cluster khi cả hai cùng anomaly), rồi T+5→T+10 chỉ còn payment (chấm không bỏ sót sau
+> khi nhiễu tắt). Engine chạy liên tục nên luôn warm — không cần canh lệch giờ.
 
 ## Vì sao không dùng flagd
 
