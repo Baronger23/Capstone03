@@ -77,7 +77,8 @@ ADR 0002 (12/07) quyết định **hoãn MSK** vì "phá ngân sách". Hai cơ s
 1. **Giả định EKS ngốn ~$500/mo extended support** → thực tế **EKS đang ở 1.35** (standard support).
    Khoản phạt đó không tồn tại; ngân sách rộng hơn hẳn so với lúc viết ADR 0002.
 2. **Con số "MSK ~$540/mo"** trong ADR 0002 là giá **MSK Serverless**. **MSK provisioned** với
-   `kafka.t3.small` rẻ hơn nhiều lần.
+   `kafka.m7g.large` (~$390/mo, xem §Cost — bản nháp dùng t3.small nhưng 3.9.x không hỗ trợ) vẫn
+   **rẻ hơn Serverless**, dù không còn "rẻ hơn nhiều lần" như ước tính t3.small ban đầu.
 
 Ngoài ra ADR 0002 đã tự ghi điều kiện: *"Nếu BTC ra mandate migrate datastore theo cách khác (VD bắt
 buộc MSK) → thực thi theo mandate"*. Directive #8 chính là trường hợp đó. ADR 0009 này thực thi
@@ -91,37 +92,76 @@ buộc MSK) → thực thi theo mandate"*. Directive #8 chính là trường h�
 |---|---|---|---|---|
 | **RDS PostgreSQL 17.6** | `db.t4g.micro` | **CÓ** | Dữ liệu **tài chính** (`order` 29k, `orderitem` 53k). Durability giá trị cao nhất; **+$19/mo** so với Single-AZ là rẻ so với mất đơn. Graviton (t4g) rẻ hơn t3 cùng hiệu năng. | **$37.23/mo** + storage |
 | **ElastiCache Valkey 9.0** | `cache.t4g.micro`, 1 primary + **1 replica** | **CÓ** | Giỏ hàng là dữ liệu "mềm" (khách thêm lại được) **nhưng `cart` nằm TRÊN luồng đồng bộ** browse→cart→checkout — mất cache = vỡ SLO browse/cart, không chỉ mất data. Replica cho auto-failover. Engine Valkey rẻ hơn Redis 20%. | **$28.04/mo** (2 node) |
-| **MSK Kafka 3.9.x KRaft** | **3× `kafka.t3.small`** / 3 AZ, **RF=3, min.insync.replicas=2** | **CÓ** (3 AZ) | `checkout` dùng `acks=all`: cần ISR ≥ min.insync. RF=3/min.insync=2 → **chịu mất 1 broker mà vẫn produce được**, mỗi ack đảm bảo ≥2 bản sao. Phương án 2 broker rẻ hơn $42/mo nhưng buộc phải chọn giữa "mất 1 broker ⇒ checkout fail" và "ack chỉ 1 bản sao ⇒ mất đơn" — xem §Đánh đổi. | **$126.57/mo** + storage |
+| **MSK Kafka 3.9.x KRaft** | **3× `kafka.m7g.large`** / 3 AZ, **RF=3, min.insync.replicas=2** (t3.small bị loại — xem §Cost) | **CÓ** (3 AZ) | `checkout` dùng `acks=all`: cần ISR ≥ min.insync. RF=3/min.insync=2 → **chịu mất 1 broker mà vẫn produce được**, mỗi ack đảm bảo ≥2 bản sao. Phương án 2 broker rẻ hơn ~$130/mo nhưng buộc phải chọn giữa "mất 1 broker ⇒ checkout fail" và "ack chỉ 1 bản sao ⇒ mất đơn" — xem §Đánh đổi. | **~$390/mo** + storage |
 
-### Cost đã VERIFY qua AWS Pricing API
+### Cost (cập nhật 18/07 sau khi apply thật)
 
-Truy vấn `aws pricing get-products`, region **ap-southeast-1**, on-demand, 16/07/2026:
+⚠️ **Đính chính lớn về MSK:** bảng cost cũ dùng `kafka.t3.small` ($126.57/mo). Khi apply thật (18/07),
+`CreateCluster` trả `BadRequestException: Unsupported InstanceType` — **MSK 3.9.x KHÔNG còn hỗ trợ
+t3.small**; instance nhỏ nhất hợp lệ là `kafka.m5.large` / `kafka.m7g.large` / `express.m7g.large`.
+Đã đổi sang **`kafka.m7g.large`** (Graviton, rẻ nhất nhóm hợp lệ). Đây là sai sót trong bản nháp:
+không kiểm compat instance↔version trước. Con số MSK bên dưới đội lên đáng kể.
 
-| Khoản | Đơn giá thật | $/tháng |
+| Khoản | Đơn giá | $/tháng |
 |---|---|---|
-| RDS `db.t4g.micro` **Multi-AZ** | $0.0510/hr | **37.23** |
+| RDS `db.t4g.micro` **Multi-AZ** | $0.0510/hr (verify Pricing API) | **37.23** |
 | RDS gp3 storage 20 GB Multi-AZ | $0.276/GB-mo | **5.52** |
 | ElastiCache **Valkey** `cache.t4g.micro` × 2 | $0.0192/hr/node | **28.04** |
-| MSK `kafka.t3.small` × 3 broker | $0.0578/hr/broker | **126.57** |
+| MSK **`kafka.m7g.large`** × 3 broker | **$0.2550/hr/broker** (Pricing API `APS1-Kafka.m7g.large`, xác nhận 22/07) | **558.45** |
 | MSK storage GP2 10 GB × 3 | $0.12/GB-mo | **3.60** |
-| Secrets Manager × 3 (postgres / elasticache-auth / MSK-scram) | $0.40/secret-mo | **1.20** |
+| Secrets Manager × 3 (RDS-managed / elasticache-auth / MSK-scram) | $0.40/secret-mo | **1.20** |
 | KMS customer-managed key (bắt buộc cho MSK SCRAM secret, §3) | ~$1/key-mo | **1.00** |
-| **TỔNG** | | **≈ $202.16/mo ≈ $46.7/tuần** |
+| **TỔNG** | | **≈ $635/mo ≈ $146/tuần** |
 
-Chi hiện tại ước ~$100/tuần → **tổng ≈ $147/tuần so với trần $300/tuần** → còn ~50% dư địa. ✅
+#### Đính chính lần 2 (22/07) — con số thật thay cho ước lượng
 
-**Đính chính so với bản nháp:** ước lượng ban đầu $180/mo **sai ở MSK** — tôi dùng $0.0456/hr/broker,
-giá thật là **$0.0578/hr/broker** (+27%). Con số đúng là **$202/mo**. Vẫn trong ngân sách.
+Ước lượng ~$0.178/hr/broker ở bản 18/07 **thấp hơn thực tế 43%**. Đã lấy giá chính thức từ AWS Pricing
+API (`get-products --service-code AmazonMSK`, location `Asia Pacific (Singapore)`) và đối chiếu với Cost
+Explorer: MSK tiêu **$18.36/ngày** đúng bằng `3 × $0.2550 × 24`. Cảnh báo "phải xác nhận sau vài ngày"
+ở bản trước là đúng chỗ, và kết quả xác nhận là **đội hơn ước lượng**, không phải ít hơn.
 
-**Phương án 2 broker** (RF=2/min.insync=1): MSK $86.78 → tổng **$162/mo ≈ $37/tuần**, rẻ hơn $40/mo.
-Đã cân nhắc và loại — xem §Đánh đổi.
+**Hệ quả với ràng buộc ngân sách:** tổng chi toàn TF3 đo ngày 21/07 là **$426/tuần so với trần $300** →
+**đang vượt 42%**. Nhưng phân rã cho thấy Mandate #8 không phải nguyên nhân duy nhất: $96.7/tuần thuộc
+tầng AI (riêng **$80.6/tuần là 2 OCU OpenSearch Serverless mồ côi**, KB kẹt `DELETE_UNSUCCESSFUL`) và
+$23.2/tuần thuộc stack `thermal-power-plant-*` ở Tokyo **không thuộc Phase 3**. Kế hoạch đưa về
+**$269.7/tuần mà không đảo ngược quyết định nào của ADR này** — xem `docs/cost-breakdown-2026-07-22.md`
+và mục G.3 của báo cáo nghiệm thu.
+
+#### Đã kiểm chứng: $558/mo là giá sàn tuyệt đối của MSK KRaft
+
+Ngày 22/07 thử lại có hệ thống để chắc chắn không bỏ sót phương án rẻ hơn:
+
+| Phép thử | Kết quả |
+|---|---|
+| `t3.small` + `3.9.x.kraft` | ❌ `BadRequestException: Unsupported InstanceType` |
+| `t3.small` + `3.8.x.kraft` | ❌ `BadRequestException` |
+| `t3.small` + `3.8.x` (ZooKeeper) | ✅ tạo được — **rào cản là KRaft mode, không phải version** |
+
+Đính chính bản 18/07: lý do t3.small bị loại **không phải "3.9.x không hỗ trợ"** mà là **chế độ KRaft**
+không hỗ trợ. Danh sách hợp lệ cho mọi version KRaft chỉ gồm `express.m7g.*` / `kafka.m5.*` /
+`kafka.m7g.*`, trong đó `m7g.large` ($0.2550) rẻ hơn `m5.large` ($0.2630) — lựa chọn hiện tại **đã là
+đáy nhóm hợp lệ**. Ngoài ra: `update-broker-count` chỉ tăng không giảm; MSK không có API stop/start;
+PublicAccess/PrivateLink/provisioned-throughput/replicator/tiered-storage đều đã tắt.
+
+**MSK Serverless** (Pricing API): $0.9375/hr/cụm = **$684/mo** chưa kể partition-hour và bytes → **đắt
+hơn provisioned**. Kết luận "hoãn Serverless" của ADR 0002 đúng chiều, chỉ sai độ lớn ($540 → $684).
+
+**Phương án 2 broker** (RF=2/min.insync=1, 2 AZ): MSK **$372/mo** → rẻ hơn $186/mo. Đã cân nhắc và loại
+— xem §Đánh đổi (order data cần RF=3). Nếu áp lực cost tăng, đây là đòn bẩy.
+
+**Phương án `MSK 3.8.x` ZooKeeper + `t3.small` = $127/mo** (tiết kiệm $431/mo) **vẫn tuân thủ directive**
+— directive yêu cầu "Kafka → MSK", không quy định KRaft. Không chọn ở thời điểm này vì: (1) MSK không
+cho chuyển KRaft → ZooKeeper nên phải dựng cụm mới + **cutover Kafka lần 3**, tức đánh đổi yêu cầu 2
+(zero-loss / SLO ≥99%) — đúng chỗ đã sinh ra sự cố 0010; (2) ZooKeeper mode đang bị khai tử (`3.9.x` ZK
+đã `DEPRECATED`, Kafka 4.x bỏ hẳn ZooKeeper) nên sẽ phải migrate lại. **Ghi vào backlog COST**, xem lại
+sau nghiệm thu nếu áp lực ngân sách còn.
 
 **Ghi chú Valkey rẻ hơn Redis:** ElastiCache tính Valkey **$0.0192/hr** vs Redis **$0.0240/hr**
 (−20%). Ta đang chạy Valkey 9.0.1 in-cluster → chọn engine Valkey vừa khớp version vừa rẻ hơn.
 
-> ⚠️ Đơn giá đã verify, nhưng **baseline chi hiện tại (~$100/tuần) vẫn là ƯỚC LƯỢNG từ inventory** —
-> AWS Cost Explorer của account mới (197826770971) báo $0.73/7 ngày, **không dùng được** (account vừa
-> migrate 13-14/07). **Việc cần làm: dựng AWS Budgets + Cost Anomaly Detection** để có baseline thật.
+> ⚠️ Cả **baseline chi hiện tại (~$100/tuần)** lẫn **đơn giá MSK m7g.large** đều là ƯỚC LƯỢNG —
+> AWS Cost Explorer account mới (197826770971) chưa đủ dữ liệu. **Việc cần làm gấp: dựng AWS Budgets +
+> Cost Anomaly Detection** để có số thật (đặc biệt quan trọng giờ MSK đắt hơn dự kiến).
 > Chưa tính data transfer cross-AZ client↔broker MSK (lưu lượng hiện ~0.85 đơn/s, message nhỏ → không đáng kể).
 
 ### 2. TLS + auth gated bằng env — tách "deploy code" khỏi "cutover"
@@ -292,7 +332,7 @@ hành vi thiết kế của ứng dụng, **không phải mất mát do migratio
 
 ## Đánh đổi đã cân
 
-- **MSK 3 broker ($126.57) thay vì 2 ($84.38):** đắt hơn **$42/mo**, đổi lấy RF=3/min.insync=2 →
+- **MSK 3 broker (~$390) thay vì 2 (~$262):** đắt hơn **~$130/mo** (m7g.large, sau khi t3.small bị loại), đổi lấy RF=3/min.insync=2 →
   `acks=all` **vẫn produce được khi mất 1 broker**, và mỗi ack đảm bảo ≥2 bản sao. Với 2 broker phải
   chọn: min.insync=2 (mất 1 broker ⇒ **checkout fail ngay**) hoặc min.insync=1 (ack chỉ 1 bản sao ⇒
   broker đó chết là **mất đơn**). Vì `checkout` **chặn đồng bộ** trên publish, cả hai đều không chấp
@@ -333,7 +373,7 @@ hành vi thiết kế của ứng dụng, **không phải mất mát do migratio
 
 ## Ràng buộc đã tôn trọng
 
-- **Ngân sách:** ≈**$147/tuần** vs trần **$300/tuần** (đơn giá verify qua AWS Pricing API 16/07).
+- **Ngân sách:** ≈**$208/tuần** vs trần **$300/tuần** (MSK m7g.large ước lượng sau khi t3.small bị loại — xem §Cost, cần Budgets xác nhận).
 - **Không đụng flagd.** Storefront vẫn public, cổng vận hành vẫn private (Directive #1) — 3 store
   đều đặt trong **private subnet**, **không public endpoint**. Security group mở tối thiểu: inbound từ
   **SG node group** (app), cộng **SG bastion** cho RDS/ElastiCache (đường vận hành/migration qua SSM
@@ -372,8 +412,8 @@ là đường lui duy nhất. Chỉ gỡ ở bước cuối (yêu cầu #1: "kh�
 
 ## Trạng thái thực thi
 
-- [x] Verify đơn giá qua AWS Pricing API (16/07) — **$202.16/mo ≈ $46.7/tuần** (đã gồm 3 secret + CMK)
-- [ ] Dựng AWS Budgets + Cost Anomaly Detection (để có baseline chi thật, thay cho ước lượng)
+- [x] Cost (chốt 22/07 bằng Pricing API + Cost Explorer) — **≈$635/mo ≈ $146/tuần**; MSK dùng `m7g.large` vì **KRaft mode** loại t3.small (đã kiểm chứng, không phải do số version); $558/mo là giá sàn tuyệt đối
+- [ ] Dựng AWS Budgets **theo tuần** + Cost Anomaly Detection — budget hiện có tên `Phase2-Cost-300` chu kỳ **MONTHLY**, sai chu kỳ so với trần $300/**tuần** nên không bao giờ cảnh báo đúng
 - [ ] Re-audit "`accounting` là writer Postgres duy nhất" ngay trước khi cutover (điều kiện của chứng minh §5)
 - [ ] Terraform: RDS (Multi-AZ, PG 17.6) + ElastiCache (Valkey 9.0, 1 replica, **auth-token**) + MSK (3 broker, 3.9.x KRaft, **SASL/SCRAM**) — private subnet, SG chỉ từ node group, encryption at rest + in-transit
 - [ ] Terraform: **KMS customer-managed key** + 3 secret (postgres / elasticache-auth / `AmazonMSK_`-prefixed scram) + `batch-associate-scram-secret` gắn secret vào MSK

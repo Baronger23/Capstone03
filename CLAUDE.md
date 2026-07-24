@@ -5,8 +5,21 @@ File này được Claude Code tự động đọc ở đầu mỗi phiên làm 
 là để **không phải giải thích lại bối cảnh dự án từ đầu mỗi lần mở chat mới**. Giữ file này
 cập nhật; nó có giá trị bằng đúng mức nó phản ánh đúng thực tế hiện tại.
 
-> **Cập nhật gần nhất: 16/07/2026** (Mandate #2 + #3 đã demo PASS; AI Bedrock live cho product-reviews;
-> Mandate #8 migrate datastore lên managed đang lên kế hoạch; thêm supply-chain image gate PM-101).
+> **Cập nhật gần nhất: 23/07/2026** (Mandate #2 + #3 demo PASS; AI Bedrock live cho product-reviews;
+> **Mandate #8 HOÀN TẤT + §8 XONG — 3/3 store lên managed, đã TẮT 3 component tự host (PR #324):
+> Valkey→ElastiCache ✅, Postgres→RDS ✅, Kafka→MSK ✅**; Cloudflare Access thêm mail mentor; PM-101.
+> **⚠️ Sự cố 20/07: batch NetworkPolicy Mandate #5 của CDO01 gây outage ~30ph — rollback, postmortem 0012.**)
+>
+> **🔴 NGÂN SÁCH ĐANG VƯỢT TRẦN (đo 21/07, `RECORD_TYPE=Usage`): $426/tuần / trần $300/TF.**
+> Phân rã: CDO $306,5 (MSK $129,4) · AI $96,7 ($80,6 là 2 OCU OpenSearch Serverless mồ côi của AIO02)
+> · ngoài Phase 3 $23,2 (stack `thermal-power-plant-*` Tokyo). Kế hoạch 5 việc về **$269,7/tuần** KHÔNG
+> đụng Mandate #8 — xem [`docs/cost-breakdown-2026-07-22.md`](docs/cost-breakdown-2026-07-22.md).
+>
+> **⚠️ HỒ SƠ MANDATE #8 CHƯA COMMIT** (git status `??`): `docs/mandate-08-nghiem-thu.md` (báo cáo
+> nghiệm thu, 769 dòng, 15 ảnh), `docs/evidence/mandate-08/`, `docs/cost-breakdown-2026-07-22.md`,
+> `docs/docx_cdo02/mandate11-review-feedback.md`, 15 ảnh ở `docs/`, + ADR 0009 (modified). **Việc kế
+> tiếp = gom vào 1 PR để nộp.** Trước khi sửa `nghiem-thu.md` phải xác nhận user đã đóng file (editor
+> đè mất sửa đổi 1 lần rồi).
 
 ## Bối cảnh (không đổi trong suốt 3 tuần)
 
@@ -74,12 +87,20 @@ Auditability là trụ chung. Nếu người dùng nói "trụ của mình"/"tea
 ### Truy cập cluster — 2 đường song song
 - **⚠️ PHẢI dùng `export AWS_PROFILE=techx-new`** cho mọi lệnh AWS/kubectl. Profile `default` trỏ
   account CŨ `012619468490` (không còn dùng) — quên set là truy cập nhầm account, mọi thứ fail.
-- **SSM bastion** (mặc định): bastion `i-02a8d3e39b87180ce`, cluster endpoint
-  `ADA05FFC84146C0AED730F78786EB320.gr7.ap-southeast-1.eks.amazonaws.com`. Mở tunnel:
+- **SSM bastion** (mặc định): bastion ID **không cố định** (Terraform replace là đổi ID — 23/07 id cũ
+  `i-02a8d3e39b87180ce` bị terminate, hiện là `i-0f5959afa0eb31e7c`; luôn tra động theo tag, xem lệnh
+  dưới). Cluster endpoint `ADA05FFC84146C0AED730F78786EB320.gr7.ap-southeast-1.eks.amazonaws.com`. Mở tunnel:
   ```sh
   export AWS_PROFILE=techx-new; export MSYS_NO_PATHCONV=1   # Windows git-bash
-  aws ssm start-session --target i-02a8d3e39b87180ce --document-name AWS-StartPortForwardingSessionToRemoteHost \
-    --parameters host="ADA05FFC84146C0AED730F78786EB320.gr7.ap-southeast-1.eks.amazonaws.com",portNumber="443",localPortNumber="8443" --region ap-southeast-1
+  # KHÔNG hardcode bastion ID — Terraform replace bastion là ID đổi (đã xảy ra 23/07: id cũ
+  # i-02a8d3e39b87180ce bị terminate). Tra động theo tag + endpoint theo tên cluster:
+  BASTION_ID=$(aws ec2 describe-instances --region ap-southeast-1 \
+    --filters "Name=tag:Name,Values=techx-corp-tf3-bastion" "Name=instance-state-name,Values=running" \
+    --query "Reservations[].Instances[].InstanceId" --output text)
+  EKS_HOST=$(aws eks describe-cluster --name techx-corp-tf3 --region ap-southeast-1 \
+    --query "cluster.endpoint" --output text | sed 's~^https://~~')
+  aws ssm start-session --target "$BASTION_ID" --document-name AWS-StartPortForwardingSessionToRemoteHost \
+    --parameters host="$EKS_HOST",portNumber="443",localPortNumber="8443" --region ap-southeast-1
   # terminal khác:
   kubectl config set-cluster arn:aws:eks:ap-southeast-1:197826770971:cluster/techx-corp-tf3 --server=https://localhost:8443 --insecure-skip-tls-verify=true
   ```
@@ -108,12 +129,44 @@ Auditability là trụ chung. Nếu người dùng nói "trụ của mình"/"tea
   single-replica → blip 502 ~1 phút khi drain node chứa nó (monitoring plane, không phải sản phẩm);
   **cloudflared 2 replica đang chung 1 node** → cần anti-affinity (đề xuất). Service phụ trợ
   (ad/recommendation/llm/accounting/fraud/email/image-provider) **cố ý giữ 1 replica**.
-- **Mandate #8 (migrate 3 datastore lên managed)** — 🟡 **Kế hoạch (CDO02), hạn 20/07**. Đưa
-  postgres→RDS, valkey→ElastiCache, kafka→MSK — không mất data, không downtime (checkout ≥99% suốt
-  cutover), TLS + Secrets Manager + endpoint private, trong ngân sách. Audit: version managed khớp
-  in-cluster 1:1 (PG 17.6, Valkey 9.0, Kafka 3.9 KRaft) → rủi ro ở cutover/TLS/credential, không ở
-  tương thích. **Giải quyết dứt điểm residual datastore single-replica.** ADR `docs/adr/0009-mandate-08-managed-migration-cdo02.md`
-  (đảo chiều phần "hoãn MSK" của ADR 0002), runbook `docs/runbooks/mandate-08-managed-cutover.md`.
+- **Mandate #8 (migrate 3 datastore lên managed)** — 🟢🟢🟢 **HOÀN TẤT + §8 XONG (CDO02) — 3/3 store**.
+  - **§8 (22/07, PR #324):** đã TẮT 3 component tự host (`postgresql`/`valkey-cart`/`kafka`, `enabled:false`)
+    → ArgoCD prune → pod techx-tf3 45→38, cart+checkout 0 restart, MSK LAG=0, **không gián đoạn**. Trước
+    đó gỡ mọi phụ thuộc (PR #307/#308: 3 initContainer `wait-for-kafka` + `wait-for-valkey-cart`, credential
+    plaintext, receiver `kafkametrics`). **3 PVC (postgresql-data/kafka-data/valkey-cart) GIỮ CÓ CHỦ ĐÍCH** —
+    cả 3 PV `reclaimPolicy:Delete`, xoá PVC là huỷ EBS vĩnh viễn; directive chỉ đòi "không còn POD" nên đã đạt.
+    **Chỉ xoá 3 PVC + 3 EBS mồ côi (gp2, `available`) SAU khi mentor nghiệm thu.**
+  - **Đường lui (Plan B) sau §8:** snapshot RDS `techx-tf3-postgres-pre-cleanup-20260721-2242` + ElastiCache
+    `techx-tf3-valkey-pre-cleanup-20260721-2243` + PITR 7 ngày + MSK retention 168h + chart store cũ ở commit
+    `6432e49`. Store cũ KHÔNG còn là đường lui thật (dữ liệu đã phân kỳ, rollback về = mất ~128k đơn).
+  - **✅ Valkey → ElastiCache** (`master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com:6379`): cart
+    đọc/ghi ElastiCache (TLS+auth). Cutover bằng dual-write + hội tụ TTL 60ph (827/827 giỏ khớp).
+    Reverse dual-write đã GỠ (PR #307).
+  - **✅ Postgres → RDS** (`techx-tf3-postgres.czwcs2ocww3q.ap-southeast-1.rds.amazonaws.com:5432`,
+    Multi-AZ, managed master password): accounting (người ghi duy nhất) + product-catalog/product-reviews
+    (đọc) đã trỏ RDS `sslmode=require`. Cutover bằng "đóng băng accounting → dump(root)+restore →
+    parity khớp tuyệt đối → đổi conn → thả accounting replay backlog" (70478→70556 đơn, LAG=0, zero-loss).
+  - **✅ Kafka → MSK** (`b-1/b-2/b-3.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096`,
+    SASL/SCRAM-SHA-512 + TLS): **`kafka.m7g.large` × 3 broker** = **$558/tháng** (KHÔNG phải $130 như bản
+    nháp — kiểm chứng 22/07 bằng `CreateCluster`: `t3.small` bị chặn bởi **KRaft mode** chứ không phải số
+    version; `m7g.large` là instance rẻ nhất KRaft cho phép, $558 là giá sàn tuyệt đối — đừng điều tra lại).
+    checkout (producer) + accounting/fraud-detection (consumer) đã trỏ MSK,
+    LAG=0, zero-loss. Cutover: producer trước (PR #276, promote qua canary) → chờ Kafka cũ LAG=0 →
+    consumer sau (PR #278, Earliest ăn sạch backlog). **Bug đã sửa (PR #269/#271):** checkout (Go/sarama)
+    trước nhét cả CSV nhiều broker vào 1 phần tử `[]string{KAFKA_ADDR}` → "too many colons" (gây sự cố
+    0010); nay `strings.Split` + fail-fast + stderr log. accounting(.NET/Confluent)/fraud(Java) nhận CSV
+    bootstrap natively → không dính bug này.
+  - Hạ tầng: module `infra/modules/datastores/` (RDS/ElastiCache/MSK + KMS + Secrets), bật bằng
+    `enable_managed_datastores=true` trong tfvars. Secret qua ExternalSecret (`techx-tf3-postgres-conn`
+    keys dotnet/go-dsn/libpq, `techx-tf3-valkey-auth`, `techx-tf3-kafka-scram`). SG datastore allow
+    **NODE security group** (không phải cluster SG — pod egress qua node SG; đã fix). 3 store cũ
+    (postgresql/valkey-cart/kafka) **VẪN CHẠY** làm đường lui, chỉ gỡ ở §8 sau nghiệm thu.
+  - ADR `docs/adr/0009-mandate-08-managed-migration-cdo02.md`, runbook `docs/runbooks/mandate-08-managed-cutover.md`,
+    tổng quan dễ hiểu `docs/mandate-08-tong-quan-va-qua-trinh.md`.
+  - **⚠️ Bài học freeze dưới GitOps** (xem memory `freeze-replicas-under-argocd-gitops`): muốn
+    `kubectl scale=0` GIỮ được cho 1 deployment, phải thêm nó vào `ignoreDifferences /spec/replicas`
+    của Application `techx-corp` (`gitops/apps/techx-corp.yaml`) — không thì selfHeal + app-of-apps
+    (`techx-corp-bootstrap`) revert. `replicas: 0` trong values KHÔNG dùng (template `default` coi 0 là rỗng).
 
 ### AI trong sản phẩm (AIO02) — Bedrock đã LIVE
 - **`product-reviews` giờ dùng AWS Bedrock thật** (không còn mock): `LLM_PROVIDER=bedrock`,
@@ -133,10 +186,25 @@ Auditability là trụ chung. Nếu người dùng nói "trụ của mình"/"tea
 - **⚠️ 4 IAM user** (`arthur`, `CDO01`, `CDO02`, `AIO02`) + `mentor` đều `AdministratorAccess` — trái
   least-privilege. Chưa thu hẹp (trụ Security/CDO01).
 - **🔑 Secret cần rotate sau bài tập**: flagd sync token (đã dùng trong `kubectl create secret`),
-  **Cloudflare API token** (đã dùng phiên 14/07, file `~/Downloads/tokencloudflare.txt` cần xoá).
-- **Datastore không HA**: postgres/valkey/kafka single-replica trên 1 node stateful — **là SPOF thật
-  trên luồng ra tiền**. Hiện quản bằng planned-failover (PR #117); **đang được xử dứt điểm ở Mandate #8**
-  (migrate lên RDS/ElastiCache/MSK — ADR 0009, hạn 20/07).
+  **Cloudflare API token** (đã dùng nhiều phiên, file `~/Downloads/tokencloudflare.txt` cần xoá).
+- **☁️ Cloudflare Access**: đã thêm 4 mail mentor (`nghia.huynh`/`toan.le`/`khanh.nguyen`/`namhong.ta`
+  @techxcorp.com) + 2 gmail vào allowlist cả 4 app (kubectl/grafana/jaeger/argocd). **Cần bật One-Time
+  PIN** ở Zero Trust → Settings → Authentication thì mail ngoài mới login được (đã bật tay).
+- **Datastore không HA**: ~~postgres/valkey/kafka~~ — **CẢ 3 đã lên managed HA + §8 đã tắt store cũ
+  (Mandate #8 XONG): ElastiCache Multi-AZ + RDS Multi-AZ + MSK 3-broker**. Hết SPOF datastore.
+- **💰 Cost — 3 directive Cost/Reliability đang MỞ (16/17/18, đều quá hạn 21-22/07):** đo cluster 23/07:
+  cụm 45% CPU request nhưng chỉ 6,7% dùng thật; ràng buộc t3.large là **RAM** (t3.large=t3.medium=2vCPU).
+  Node `db-1a` (t3.medium on-demand, taint stateful) sau §8 **rỗng** (chỉ 4 DaemonSet) → gỡ = −$8,9/tuần
+  + đóng rủi ro AZ 1a. Nodegroup `default` **4×t3.large min=4**; hạ 4→3 giữ 3-AZ (an toàn Mandate #17),
+  hạ 4→2 PHÁ phủ 3 AZ (chỉ còn 2 AZ) → không nên. **VPC endpoint tốn $142/mo để né NAT chỉ $7/mo.**
+  ⚠️ CDO01 đang chạy dở batch Karpenter elastic (PR #316→#330) — **đừng đụng nodegroup khi họ chưa xong**.
+- **⚠️ 3 EBS mồ côi** (gp2, `available`): `vol-05d59d76…`(1G), `vol-0f4b0c53…`(2G), `vol-0a22f1049…`(3G)
+  — là PVC store cũ sau §8. Xoá SAU nghiệm thu (Mandate #18 YC1 đòi "không EBS available").
+- **⚠️ Network policy (Mandate #5 CDO01) — đã rollback sau sự cố 20/07**: batch 20 NetworkPolicy chặn egress
+  ra managed datastore (dùng podSelector store cũ thay `ipBlock`) + lỗi podSelector-egress-ClusterIP trên
+  VPC CNI → outage checkout+3 service ~30ph. Đã xoá cả batch (backup ở `docs/postmortem/artifacts/0012-...`).
+  **CDO01 phải dựng lại đúng** (ipBlock RDS/ElastiCache/MSK, test trên VPC CNI, qua GitOps) trước khi apply
+  lại — nếu apply nguyên trạng sẽ sập lại. Postmortem `docs/postmortem/0012-mandate5-networkpolicy-batch-outage.md`.
 
 ---
 
@@ -158,14 +226,16 @@ COST-02 (Karpenter thay cluster-autoscaler), COST-03 (Spot), COST-06 (ResourceQu
 `fix(rel-14) retry product-catalog DB init` — cần verify crash hết), COST-04 (right-size đang tiếp diễn),
 COST-05 (load-gen OOM — config hardened, root cause chưa chốt).
 
-**📌 ĐANG LÀM:** REL-08 (datastore đơn lẻ) → **Mandate #8 migrate lên managed** (ADR 0009, hạn 20/07).
+**✅ ĐÃ LÀM:** REL-08 (datastore đơn lẻ) → **Mandate #8 migrate lên managed XONG 3/3**: Valkey→ElastiCache ✅ +
+Postgres→RDS ✅ + Kafka→MSK ✅ (zero-loss, zero-downtime). ADR 0009, postmortem 0010 + 0012. Store cũ giữ tới §8.
 
 ---
 
 ## Phát hiện code — bản chất service (giữ để tham chiếu, đã cập nhật trạng thái fix)
 
 - 3 service dùng chung 1 Postgres (`product-catalog`, `product-reviews`, `accounting`), 1 Valkey
-  (`cart`), 1 Kafka broker (`checkout`→`accounting`/`fraud-detection`). **Giờ đã có PVC cả 3** (REL-10).
+  (`cart`), 1 Kafka broker (`checkout`→`accounting`/`fraud-detection`). **Mandate #8 XONG 3/3: Postgres→RDS ✅
+  + Valkey→ElastiCache ✅ + Kafka→MSK ✅ (đã cutover cả 3).** Store cũ (có PVC, REL-10) vẫn giữ làm đường lui.
 - `checkout` charge trước ship → **đã fix REL-04** (đảo thứ tự ship-before-charge).
 - Health check giả → **đã fix REL-02** cho service có DB (còn currency/ad/payment stateless giữ static
   SERVING là đúng).
