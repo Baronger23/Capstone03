@@ -6,8 +6,8 @@
 > **HISTORICAL BASELINE (2026-07-20)**
 > Tài liệu này là bằng chứng "before" cho PM-147, giữ nguyên kết quả chạy ngày 2026-07-20 để đối chiếu.
 > **Current-state note:**
-> - PM-149 SEC-01/SEC-02 đã production-verified.
-> - PM-148 mới staged, chưa active.
+> - PM-149 SEC-01/SEC-02 đã production-verified (production evidence).
+> - PM-148 staged/live pending.
 
 ## Người phụ trách
 
@@ -66,7 +66,7 @@ prometheus-access            app.kubernetes.io/name=prometheus                  
 valkey-cart-network-policy   app.kubernetes.io/component=valkey-cart                                6d11h
 ```
 
-**Nhận xét:** 8 NetworkPolicy, 100% thuộc observability/datastore layer. Không có NetworkPolicy nào bảo vệ bất kỳ business service nào trong số:
+**Nhận xét:** 8 NetworkPolicy, 100% thuộc observability, datastore, và supporting workloads. Không có NetworkPolicy nào bảo vệ bất kỳ business service nào trong số:
 `accounting`, `ad`, `cart`, `checkout`, `cloudflared`, `currency`, `email`, `flagd`, `fraud-detection`, `frontend`, `frontend-proxy`, `image-provider`, `kafka`(\*), `llm`, `payment`, `product-catalog`, `product-reviews`, `quote`, `recommendation`, `shipping`.
 
 (\*) Kafka có NP nhưng chỉ giới hạn Ingress vào port 9092 — Egress của Kafka ra ngoài vẫn không bị kiểm soát.
@@ -229,8 +229,7 @@ TimeoutError: timed out
 
 1. Lấy SA token từ `/var/run/secrets/kubernetes.io/serviceaccount/token`
 2. Gọi K8s API từ bên ngoài: `curl -k https://<API>/api/v1/secrets -H "Authorization: Bearer $TOKEN"`
-3. Đọc toàn bộ 11+ secrets bao gồm `aws-load-balancer-tls`, `sh.helm.release.v1.techx-corp.v*` (chứa Helm values, có thể có flagd sync token)
-4. **Vi phạm cơ chế flagd = DISQUALIFY theo RULES.md**
+3. Đọc toàn bộ 11+ secrets bao gồm `aws-load-balancer-tls`, `sh.helm.release.v1.techx-corp.v*`.
 
 **Fix đề xuất (task tiếp theo):**
 
@@ -245,7 +244,7 @@ TimeoutError: timed out
 
 **CWE:** CWE-272: Least Privilege Violation
 
-**Mô tả:** 22/22 workload (bao gồm business, supporting infra, component-scoped IRSA) không set `automountServiceAccountToken: false`. SA `techx-corp` hiện không có quyền K8s (xác nhận 16/07 còn đúng), nhưng token vẫn tồn tại trong mọi pod và có thể bị dùng làm credential nếu:
+**Mô tả:** Đây là default-automount configuration evidence: 22/22 workload (bao gồm business, supporting infra, component-scoped IRSA) không set `automountServiceAccountToken: false`. Theo mặc định của Kubernetes, việc không khai báo sẽ dẫn đến token được mount vào mọi Pod thực tế. Dù SA `techx-corp` hiện không có quyền K8s (xác nhận 16/07 còn đúng), token vẫn tồn tại trong pod và có thể bị dùng làm credential nếu:
 
 - SA `techx-corp` bị grant thêm quyền sau này (configuration drift)
 - Attacker dùng token để recon API server endpoints
@@ -282,18 +281,7 @@ TimeoutError: timed out
 
 ---
 
-## Trạng thái so sánh — "TRƯỚC" vs "SAU" (placeholder)
 
-| Kiểm tra                                                      | TRƯỚC (20/07/2026)      | SAU (chờ fix) |
-| ------------------------------------------------------------- | ----------------------- | ------------- |
-| `kubectl get networkpolicy -n techx-tf3 \| wc -l`             | 8                       | _TBD_         |
-| `kubectl auth can-i list secrets --as=grafana -n kube-system` | `yes`                   | `no`          |
-| `automountServiceAccountToken` trên checkout deploy           | NOT SET (=true)         | `false`       |
-| TCP từ `load-generator` → `payment:8080`                      | ✅ OPEN                 | ❌ Timeout    |
-| TCP từ `load-generator` → `checkout:8080`                     | ✅ OPEN                 | ❌ Timeout    |
-| Egress từ `load-generator` → `ifconfig.me`                    | ✅ OPEN (13.213.127.91) | ❌ Timeout    |
-
----
 
 ## Liên kết
 
