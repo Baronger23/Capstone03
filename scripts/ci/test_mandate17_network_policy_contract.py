@@ -128,6 +128,16 @@ def load_policy(filename):
     return policy
 
 
+def load_active_policy(filename, name):
+    for document in load_documents(INFRA / filename):
+        if (
+            document.get("kind") == "NetworkPolicy"
+            and document.get("metadata", {}).get("name") == name
+        ):
+            return document
+    raise AssertionError(f"{name} was not found in active {filename}")
+
+
 def walk(node):
     if isinstance(node, dict):
         yield node
@@ -443,6 +453,28 @@ def test_jaeger_accepts_otel_gateway_grpc_ingest():
         if any("otel-gateway" in peer_components(peer) for peer in rule.get("from", [])):
             matching_ports.update(port["port"] for port in rule.get("ports", []))
     assert 4317 in matching_ports
+
+
+def test_active_jaeger_replaces_broad_legacy_ingress_in_place():
+    jaeger = load_active_policy("network-policy-jaeger.yaml", "jaeger-access")
+    assert set(jaeger["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    assert all(
+        peer.get("podSelector") != {}
+        for rule in jaeger["spec"].get("ingress", [])
+        for peer in rule.get("from", [])
+    )
+
+    otel_ports = set()
+    for rule in jaeger["spec"]["ingress"]:
+        if any(
+            peer.get("podSelector", {})
+            .get("matchLabels", {})
+            .get("app.kubernetes.io/component")
+            == "otel-gateway"
+            for peer in rule.get("from", [])
+        ):
+            otel_ports.update(port["port"] for port in rule.get("ports", []))
+    assert otel_ports == {4317}
 
 
 def test_every_non_default_egress_policy_has_exact_coredns_rule():
