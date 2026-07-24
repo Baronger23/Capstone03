@@ -2,9 +2,16 @@
 
 # Mandate 17: Khoanh Blast-Radius (Yêu cầu #3 & #4)
 
+> [!NOTE]
+> **HISTORICAL BASELINE (2026-07-20)**
+> Tài liệu này là bằng chứng "before" cho PM-147, giữ nguyên kết quả chạy ngày 2026-07-20 để đối chiếu.
+> **Current-state note:**
+> - PM-149 SEC-01/SEC-02 đã production-verified.
+> - PM-148 mới staged, chưa active.
+
 ## Người phụ trách
 
-CDO02 (Platform Team)
+CDO01
 
 ## Thông tin đánh giá
 
@@ -25,7 +32,7 @@ CDO02 (Platform Team)
 | ID     | Mức độ              | Mô tả                                                                                    | Thay đổi so với 16/07 |
 | ------ | ------------------- | ---------------------------------------------------------------------------------------- | --------------------- |
 | SEC-01 | CAO (HIGH)          | Grafana SA đọc được `secrets` toàn cluster (kể cả `kube-system`)                         | ❌ Chưa fix           |
-| SEC-02 | TRUNG BÌNH (MEDIUM) | 22 business deployment mount SA token mặc định, không cần thiết                          | ❌ Chưa fix           |
+| SEC-02 | TRUNG BÌNH (MEDIUM) | 22 workload (business deployments, supporting infra, component-scoped IRSA) mount SA token mặc định | ❌ Chưa fix           |
 | SEC-03 | CAO (HIGH)          | 18+ business service không có NetworkPolicy — lateral movement tự do, egress internet mở | ❌ Chưa fix           |
 
 **Kết luận:** Không có bất kỳ thay đổi bảo mật nào từ 16/07 đến 20/07. Cả ba gap đều còn nguyên.
@@ -119,7 +126,7 @@ valkey-cart     [BLANK]   techx-corp            ← NOT SET → mount token theo
 grafana         true      grafana               ← Explicit true (upstream Helm)
 ```
 
-**Nhận xét:** 22/22 business + infra deployment không có `automountServiceAccountToken: false`. Kubernetes mặc định là `true` khi không set → mọi pod đều có token SA được mount tại `/var/run/secrets/kubernetes.io/serviceaccount/token`. Token hợp lệ này có thể dùng để gọi Kubernetes API nếu SA được cấp thêm quyền sau này, hoặc bị dùng như credential khi pod bị compromise.
+**Nhận xét:** 22/22 workload (bao gồm business deployments, supporting infrastructure, component-scoped IRSA) không có `automountServiceAccountToken: false`. Kubernetes mặc định là `true` khi không set → mọi pod đều có token SA được mount tại `/var/run/secrets/kubernetes.io/serviceaccount/token`. Token hợp lệ này có thể dùng để gọi Kubernetes API nếu SA được cấp thêm quyền sau này, hoặc bị dùng như credential khi pod bị compromise.
 
 > **Lưu ý kỹ thuật:** `checkout` image là distroless — `sh`/`ls` không có. Lệnh `kubectl exec -- ls ...` sẽ fail với `executable file not found`. Thay thế: verify qua jsonpath Deployment spec (như trên) và đọc projected volume manifest.
 
@@ -232,13 +239,13 @@ TimeoutError: timed out
 
 ---
 
-## FINDING SEC-02 — automountServiceAccountToken không tắt trên business pod
+## FINDING SEC-02 — automountServiceAccountToken không tắt trên workload pods
 
 **Mức độ:** TRUNG BÌNH (MEDIUM)
 
 **CWE:** CWE-272: Least Privilege Violation
 
-**Mô tả:** 22/22 business deployment không set `automountServiceAccountToken: false`. SA `techx-corp` hiện không có quyền K8s (xác nhận 16/07 còn đúng), nhưng token vẫn tồn tại trong mọi pod và có thể bị dùng làm credential nếu:
+**Mô tả:** 22/22 workload (bao gồm business, supporting infra, component-scoped IRSA) không set `automountServiceAccountToken: false`. SA `techx-corp` hiện không có quyền K8s (xác nhận 16/07 còn đúng), nhưng token vẫn tồn tại trong mọi pod và có thể bị dùng làm credential nếu:
 
 - SA `techx-corp` bị grant thêm quyền sau này (configuration drift)
 - Attacker dùng token để recon API server endpoints
@@ -295,3 +302,14 @@ TimeoutError: timed out
 - Postmortem NP outage: [`docs/postmortem/0006-networkpolicy-observability-outage.md`](../postmortem/0006-networkpolicy-observability-outage.md)
 - Postmortem Kafka Recreate: [`docs/postmortem/0007-kafka-recreate-rollout-order-event-loss.md`](../postmortem/0007-kafka-recreate-rollout-order-event-loss.md)
 - Mandate 17: [`phase3 - information/mandates/MANDATE-17-resilience-and-containment.md`](../../phase3%20-%20information/mandates/MANDATE-17-resilience-and-containment.md)
+
+---
+
+## Bổ sung: PR Description & DoD Mapping (PM-147)
+
+**Mục tiêu PR:** Cung cấp Evidence Baseline cho PM-147 (Mandate 17).
+
+**DoD Mapping:**
+1. **NetworkPolicy inventory:** Đã liệt kê tại phần "Bước 1 — Liệt kê NetworkPolicy đang tồn tại" (8 NetworkPolicy cho observability/datastore).
+2. **SEC-01/SEC-02 evidence:** Đã có bằng chứng lệnh và cấu hình tại "Bước 2" (Grafana SA đọc secrets) và "Bước 3" (automountServiceAccountToken).
+3. **Lateral/egress "before" evidence:** Đã test thực tế tại "Bước 4" (load-generator truy cập payment, checkout, ad, và internet).
