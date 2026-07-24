@@ -77,7 +77,7 @@ kind: NodePool
 metadata:
   name: flash-sale-spot-arm64
 spec:
-  weight: 110
+  weight: 100
   template:
     metadata:
       labels:
