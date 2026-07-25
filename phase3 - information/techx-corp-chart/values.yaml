@@ -1725,6 +1725,21 @@ grafana:
     seccompProfile:
       type: RuntimeDefault
 
+# Directive #18 A2 - external retention for OpenSearch log indices. See
+# templates/otel-logs-retention-cronjob.yaml for why this is a stateless CronJob
+# rather than an in-cluster ISM policy (OpenSearch runs on emptyDir here).
+otelLogsRetention:
+  enabled: true
+  # Daily at 01:30; low-traffic window.
+  schedule: "30 1 * * *"
+  # Keep this many days of daily otel-logs-* indices; older ones are deleted.
+  retentionDays: 7
+  indexPrefix: otel-logs
+  opensearchEndpoint: http://opensearch:9200
+  # Reuse the exact image the OpenSearch pod already runs (has curl + date, already
+  # vetted/pulled) so no new supply-chain surface is introduced. Keep digest-pinned.
+  image: opensearchproject/opensearch@sha256:b5dd1512af2a99748c942cfbbd7f32162623336b210667d0fc6333c6321f171d
+
 opensearch:
   enabled: true
   fullnameOverride: opensearch
