@@ -33,6 +33,12 @@ must use a separate PR and a low-traffic change window.
   that selector-only DNS works through the CoreDNS ClusterIP. If it does not,
   add the observed CoreDNS Service ClusterIP as an exact `/32`; never guess it
   or open a broad service/VPC CIDR.
+- The failed first `ad` canary was rolled back in PR #432. A read-only cluster
+  audit on 2026-07-25 observed `kube-dns=172.20.0.10`,
+  `flagd=172.20.213.30`, and `otel-gateway=172.20.117.175`. The follow-up
+  canary keeps the pod selectors for endpoint churn and adds only these Service
+  ClusterIP `/32` peers. These values still require a fresh read-only check
+  immediately before promotion; a changed Service ClusterIP blocks promotion.
 - Production has no direct `checkout -> quote` client configuration. The real
   path is `checkout -> shipping -> quote`, so no unnecessary direct rule is
   opened.
