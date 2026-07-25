@@ -25,16 +25,11 @@ spec:
               app.kubernetes.io/component: load-generator
       ports:
         - { protocol: TCP, port: 8080 }
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: observability-system
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: otel-node-agent
-      ports:
-        - { protocol: TCP, port: 8080 }
-        - { protocol: TCP, port: 10000 }
+    # No otel-node-agent rule: nothing scrapes this workload. frontend-proxy carries
+    # no prometheus.io/scrape annotation, Prometheus has no target for it, and no
+    # envoy_* metric exists. Envoy admin (10000) stays closed - it is unauthenticated
+    # and exposes /quitquitquit, /healthcheck/fail, /runtime_modify and /config_dump.
+    # Measured over 38h uptime: http.admin.downstream_rq_total was 0 on both replicas.
   egress:
     - to:
         - namespaceSelector:
@@ -61,7 +56,10 @@ spec:
         - ipBlock: { cidr: 172.20.1.116/32 }
       ports:
         - { protocol: TCP, port: 8081 }
-    # Preserve both the protected /flagservice route and the flagd UI route.
+    # Preserve the protected /flagservice route. flagd-ui (4000) is deliberately not
+    # opened: Mandate #1 removed the /feature route (it now 404s through the frontend
+    # route), and the orphaned Envoy cluster recorded 0 connections / 0 requests over
+    # 38h while cluster.flagservice served real traffic.
     - to:
         - podSelector:
             matchLabels:
@@ -69,7 +67,6 @@ spec:
         - ipBlock: { cidr: 172.20.213.30/32 }
       ports:
         - { protocol: TCP, port: 8013 }
-        - { protocol: TCP, port: 4000 }
     - to:
         - podSelector:
             matchLabels:

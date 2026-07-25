@@ -490,6 +490,72 @@ def test_active_jaeger_has_observed_service_clusterip_fallbacks():
     )
 
 
+FRONTEND_PROXY_ACTIVE = "network-policy-frontend-proxy.yaml"
+FRONTEND_PROXY_STAGED = "35-frontend-proxy.yaml"
+FRONTEND_PROXY_NAME = "frontend-proxy-business-policy"
+
+
+def test_active_frontend_proxy_matches_staged_copy_exactly():
+    active = (INFRA / FRONTEND_PROXY_ACTIVE).read_text()
+    staged = (INFRA / "network-policy-staged" / FRONTEND_PROXY_STAGED).read_text()
+    assert active == staged, (
+        "promoted frontend-proxy policy drifted from its staged source"
+    )
+
+
+def test_active_frontend_proxy_egress_is_exactly_the_observed_dependencies():
+    policy = load_active_policy(FRONTEND_PROXY_ACTIVE, FRONTEND_PROXY_NAME)
+    assert set(policy["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    assert egress_components(policy) == {"frontend", "image-provider", "flagd", "otel-gateway"}
+
+    assert ports_for_egress_destination(policy, "frontend") == {8080}
+    assert ports_for_egress_destination(policy, "image-provider") == {8081}
+    assert ports_for_egress_destination(policy, "otel-gateway") == {4317, 4318}
+
+    # /flagservice must stay reachable; flagd-ui (4000) is an orphaned cluster and
+    # stays closed, so this assertion is deliberately exact rather than a superset.
+    assert ports_for_egress_destination(policy, "flagd") == {8013}
+
+    assert ipblocks_for_egress_port(policy, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(policy, 8080) == {"172.20.212.8/32"}
+    assert ipblocks_for_egress_port(policy, 8081) == {"172.20.1.116/32"}
+    assert ipblocks_for_egress_port(policy, 8013) == {"172.20.213.30/32"}
+    assert ipblocks_for_egress_port(policy, 4317) == {"172.20.117.175/32"}
+
+
+def test_active_frontend_proxy_never_exposes_envoy_admin():
+    policy = load_active_policy(FRONTEND_PROXY_ACTIVE, FRONTEND_PROXY_NAME)
+    ingress_ports = {
+        port["port"]
+        for rule in policy["spec"].get("ingress", [])
+        for port in rule.get("ports", [])
+    }
+    assert ingress_ports == {8080}, "only the Envoy data plane port may be reachable"
+    assert 10000 not in ingress_ports, "Envoy admin interface must never be allowed"
+
+
+def test_active_frontend_proxy_ingress_sources_are_the_alb_subnets_and_named_peers():
+    policy = load_active_policy(FRONTEND_PROXY_ACTIVE, FRONTEND_PROXY_NAME)
+    cidrs = set()
+    components = set()
+    for rule in policy["spec"].get("ingress", []):
+        for peer in rule.get("from", []):
+            if "ipBlock" in peer:
+                cidrs.add(peer["ipBlock"]["cidr"])
+            selector = peer.get("podSelector", {})
+            labels = selector.get("matchLabels", {})
+            components.update(
+                v
+                for k, v in labels.items()
+                if k in ("app.kubernetes.io/component", "app.kubernetes.io/name")
+            )
+    # The internal ALB places one ENI in each production private subnet. This is a
+    # CIDR constraint, not a Security Group match - NetworkPolicy cannot express the
+    # latter, so any workload in these subnets also matches.
+    assert cidrs == {"10.0.0.0/20", "10.0.16.0/20", "10.0.32.0/20"}
+    assert components == {"cloudflared", "load-generator"}
+
+
 def test_every_non_default_egress_policy_has_exact_coredns_rule():
     for filename in EXPECTED_FILES - {"90-default-deny-all.yaml"}:
         policy = load_policy(filename)
