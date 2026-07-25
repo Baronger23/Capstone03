@@ -325,11 +325,18 @@ def test_cart_has_observed_service_and_elasticache_peers():
     assert ipblocks_for_egress_port(cart, 8013) == {"172.20.213.30/32"}
     assert ipblocks_for_egress_port(cart, 4317) == {"172.20.117.175/32"}
     assert ipblocks_for_egress_port(cart, 6379) == {
+def test_product_catalog_has_observed_service_and_rds_peers():
+    product_catalog = load_policy("20-product-catalog.yaml")
+    assert ipblocks_for_egress_port(product_catalog, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(product_catalog, 8013) == {"172.20.213.30/32"}
+    assert ipblocks_for_egress_port(product_catalog, 4317) == {"172.20.117.175/32"}
+    assert ipblocks_for_egress_port(product_catalog, 5432) == {
         "10.0.0.0/20",
         "10.0.16.0/20",
         "10.0.32.0/20",
     }
     assert cart["metadata"]["annotations"][
+    assert product_catalog["metadata"]["annotations"][
         "mandate-17.techx.io/service-clusterip-evidence"
     ] == (
         "2026-07-25:kube-dns=172.20.0.10,flagd=172.20.213.30,"
