@@ -3,6 +3,8 @@ kind: NetworkPolicy
 metadata:
   name: frontend-proxy-business-policy
   namespace: techx-tf3
+  annotations:
+    mandate-17.techx.io/service-clusterip-evidence: "2026-07-25:kube-dns=172.20.0.10,frontend=172.20.212.8,image-provider=172.20.1.116,flagd=172.20.213.30,otel-gateway=172.20.117.175"
 spec:
   podSelector:
     matchLabels:
@@ -41,6 +43,7 @@ spec:
           podSelector:
             matchLabels:
               k8s-app: kube-dns
+        - ipBlock: { cidr: 172.20.0.10/32 }
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
@@ -48,12 +51,14 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: frontend
+        - ipBlock: { cidr: 172.20.212.8/32 }
       ports:
         - { protocol: TCP, port: 8080 }
     - to:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: image-provider
+        - ipBlock: { cidr: 172.20.1.116/32 }
       ports:
         - { protocol: TCP, port: 8081 }
     # Preserve both the protected /flagservice route and the flagd UI route.
@@ -61,6 +66,7 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: flagd
+        - ipBlock: { cidr: 172.20.213.30/32 }
       ports:
         - { protocol: TCP, port: 8013 }
         - { protocol: TCP, port: 4000 }
@@ -68,6 +74,7 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: otel-gateway
+        - ipBlock: { cidr: 172.20.117.175/32 }
       ports:
         - { protocol: TCP, port: 4317 }
         - { protocol: TCP, port: 4318 }
