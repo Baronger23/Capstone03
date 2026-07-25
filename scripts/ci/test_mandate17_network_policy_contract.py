@@ -229,6 +229,18 @@ def test_checkout_ports_and_indirect_quote_path_are_exact():
     assert "quote" not in egress_components(checkout)
 
 
+def test_accounting_has_observed_service_and_managed_datastore_peers():
+    accounting = load_policy("22-accounting.yaml")
+    assert ipblocks_for_egress_port(accounting, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(accounting, 4318) == {"172.20.117.175/32"}
+    private_subnets = {"10.0.0.0/20", "10.0.16.0/20", "10.0.32.0/20"}
+    assert ipblocks_for_egress_port(accounting, 5432) == private_subnets
+    assert ipblocks_for_egress_port(accounting, 9096) == private_subnets
+    assert accounting["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == "2026-07-25:kube-dns=172.20.0.10,otel-gateway=172.20.117.175"
+
+
 def test_llm_has_observed_service_clusterip_peers():
     llm = load_policy("16-llm.yaml")
     assert ipblocks_for_egress_port(llm, 53) == {"172.20.0.10/32"}
