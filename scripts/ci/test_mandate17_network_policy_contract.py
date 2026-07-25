@@ -319,6 +319,19 @@ def test_quote_has_observed_service_clusterip_peers():
     ] == "2026-07-25:kube-dns=172.20.0.10,otel-gateway=172.20.117.175"
 
 
+def test_shipping_has_observed_service_clusterip_peers():
+    shipping = load_policy("30-shipping.yaml")
+    assert ipblocks_for_egress_port(shipping, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(shipping, 8080) == {"172.20.233.86/32"}
+    assert ipblocks_for_egress_port(shipping, 4317) == {"172.20.117.175/32"}
+    assert shipping["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == (
+        "2026-07-25:kube-dns=172.20.0.10,quote=172.20.233.86,"
+        "otel-gateway=172.20.117.175"
+    )
+
+
 def test_cart_has_observed_service_and_elasticache_peers():
     cart = load_policy("21-cart.yaml")
     assert ipblocks_for_egress_port(cart, 53) == {"172.20.0.10/32"}
