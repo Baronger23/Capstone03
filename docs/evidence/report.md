@@ -24,7 +24,7 @@ Các chỉ số (Metrics) được theo dõi sát sao trên Grafana:
 ## 4. Kết quả Đo đạc Baseline (Trần cũ)
 Sau quá trình tăng tải liên tục, hệ thống đã chính thức đạt đến giới hạn chịu đựng (Breakpoint) ở mức tải sau:
 - **Điểm gãy (Breakpoint):** 425 Locust Users
-- **RPS tại điểm gãy:** Đang cập nhật (chờ đối chiếu Grafana)
+- **RPS tại điểm gãy:** 88
 - **Hiện tượng khi gãy:** Hệ thống bắt đầu xuất hiện các lỗi 5xx, tỷ lệ Success Rate giảm xuống dưới ngưỡng SLO 99% cho phép, và p95 Latency tăng vọt. Nút thắt cổ chai (Bottleneck) chủ yếu xảy ra ở các service Frontend và Product Catalog do cạn kiệt tài nguyên CPU và giới hạn connection pool của Envoy.
 
 ### Minh chứng số liệu (Evidence)
