@@ -493,6 +493,15 @@ def test_prometheus_allows_coredns_metrics_scrape():
         assert found, f"{path.name} must allow Prometheus to scrape CoreDNS metrics"
 
 
+def test_opensearch_dns_uses_observed_clusterip_fallback():
+    for path in [
+        INFRA / "network-policy-opensearch.yaml",
+        STAGED / "04-opensearch.yaml",
+    ]:
+        policy = load_documents(path)[0]
+        assert ipblocks_for_egress_port(policy, 53) == {"172.20.0.10/32"}
+
+
 def test_public_egress_is_blocked_from_promotion_and_never_active():
     staged_public = {
         filename
