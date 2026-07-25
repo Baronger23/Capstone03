@@ -178,8 +178,17 @@ main() {
   [[ -n "$service" ]] || service="$container_name"
   if ! run_json image-manifest "$WORK/manifest.json" docker buildx imagetools inspect --raw "$release_image"; then write_failure "$result_tmp"; return 1; fi
   manifest_json="$(cat "$WORK/manifest.json")"
-  jq -e --arg child "$child_digest" '.manifests[]?.digest == $child' <<<"$manifest_json" >/dev/null \
-    || { fail_step image-manifest "runtime child digest is not a member of the release index"; write_failure "$result_tmp"; return 1; }
+  # `any()` is required, not a bare `.manifests[]?.digest == $child` stream: `jq -e`
+  # only checks the LAST emitted value of a stream, and the index always lists
+  # attestation manifests (architecture "unknown") after the real platform
+  # manifests, so the bare form failed closed on every run regardless of whether
+  # an earlier entry matched. Some container runtimes (confirmed: containerd
+  # 2.2.4 on EKS 1.35/AL2023) also report a digest-pinned pod's imageID as the
+  # release index digest itself rather than resolving to the child platform
+  # manifest, so accept that as equivalent proof of provenance too.
+  jq -e --arg child "$child_digest" '[.manifests[]?.digest] | any(. == $child)' <<<"$manifest_json" >/dev/null \
+    || [[ "$child_digest" == "$release_digest" ]] \
+    || { fail_step image-manifest "runtime child digest is neither a member of the release index nor equal to the index digest"; write_failure "$result_tmp"; return 1; }
 
   if ! run_json ecr "$WORK/ecr.json" aws ecr describe-images --repository-name "$IMAGE_REPOSITORY" --image-ids "imageDigest=$release_digest" --region "$REGION" --output json; then write_failure "$result_tmp"; return 1; fi
   ecr_json="$(cat "$WORK/ecr.json")"
