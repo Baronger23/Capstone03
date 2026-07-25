@@ -229,20 +229,19 @@ def test_checkout_ports_and_indirect_quote_path_are_exact():
     assert "quote" not in egress_components(checkout)
 
 
+def test_currency_has_observed_service_clusterip_peers():
+    currency = load_policy("11-currency.yaml")
+    assert ipblocks_for_egress_port(currency, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(currency, 4317) == {"172.20.117.175/32"}
+    assert currency["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == "2026-07-25:kube-dns=172.20.0.10,otel-gateway=172.20.117.175"
+
+
 def test_quote_has_observed_service_clusterip_peers():
     quote = load_policy("10-quote.yaml")
-    cidrs_by_port = {}
-    for rule in quote["spec"]["egress"]:
-        cidrs = {
-            peer["ipBlock"]["cidr"]
-            for peer in rule.get("to", [])
-            if "ipBlock" in peer
-        }
-        for port in rule.get("ports", []):
-            cidrs_by_port.setdefault(port["port"], set()).update(cidrs)
-
-    assert cidrs_by_port[53] == {"172.20.0.10/32"}
-    assert cidrs_by_port[4318] == {"172.20.117.175/32"}
+    assert ipblocks_for_egress_port(quote, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(quote, 4318) == {"172.20.117.175/32"}
     assert quote["metadata"]["annotations"][
         "mandate-17.techx.io/service-clusterip-evidence"
     ] == "2026-07-25:kube-dns=172.20.0.10,otel-gateway=172.20.117.175"
