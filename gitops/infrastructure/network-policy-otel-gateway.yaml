@@ -29,18 +29,21 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: jaeger
+        - ipBlock: { cidr: 172.20.93.48/32 }
       ports:
         - { protocol: TCP, port: 4317 }
     - to:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: prometheus
+        - ipBlock: { cidr: 172.20.123.8/32 }
       ports:
         - { protocol: TCP, port: 9090 }
     - to:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: opensearch
+        - ipBlock: { cidr: 172.20.106.195/32 }
       ports:
         - { protocol: TCP, port: 9200 }
     # k8sattributes watches the private EKS API.
