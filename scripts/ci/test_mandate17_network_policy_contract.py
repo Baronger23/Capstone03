@@ -229,6 +229,15 @@ def test_checkout_ports_and_indirect_quote_path_are_exact():
     assert "quote" not in egress_components(checkout)
 
 
+def test_llm_has_observed_service_clusterip_peers():
+    llm = load_policy("16-llm.yaml")
+    assert ipblocks_for_egress_port(llm, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(llm, 8013) == {"172.20.213.30/32"}
+    assert llm["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == "2026-07-25:kube-dns=172.20.0.10,flagd=172.20.213.30"
+
+
 def test_image_provider_has_observed_service_clusterip_peers():
     image_provider = load_policy("15-image-provider.yaml")
     assert ipblocks_for_egress_port(image_provider, 53) == {"172.20.0.10/32"}
