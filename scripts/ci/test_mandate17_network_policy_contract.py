@@ -251,6 +251,24 @@ def test_llm_has_observed_service_clusterip_peers():
     ] == "2026-07-25:kube-dns=172.20.0.10,flagd=172.20.213.30"
 
 
+def test_fraud_detection_has_observed_service_and_msk_peers():
+    fraud_detection = load_policy("23-fraud-detection.yaml")
+    assert ipblocks_for_egress_port(fraud_detection, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(fraud_detection, 8013) == {"172.20.213.30/32"}
+    assert ipblocks_for_egress_port(fraud_detection, 4318) == {"172.20.117.175/32"}
+    assert ipblocks_for_egress_port(fraud_detection, 9096) == {
+        "10.0.0.0/20",
+        "10.0.16.0/20",
+        "10.0.32.0/20",
+    }
+    assert fraud_detection["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == (
+        "2026-07-25:kube-dns=172.20.0.10,flagd=172.20.213.30,"
+        "otel-gateway=172.20.117.175"
+    )
+
+
 def test_image_provider_has_observed_service_clusterip_peers():
     image_provider = load_policy("15-image-provider.yaml")
     assert ipblocks_for_egress_port(image_provider, 53) == {"172.20.0.10/32"}
