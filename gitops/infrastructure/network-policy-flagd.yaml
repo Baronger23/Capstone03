@@ -59,6 +59,7 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: otel-gateway
+        - ipBlock: { cidr: 172.20.117.175/32 }
       ports:
         - { protocol: TCP, port: 4317 }
         - { protocol: TCP, port: 4318 }
