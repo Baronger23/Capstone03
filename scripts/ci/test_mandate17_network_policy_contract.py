@@ -177,6 +177,18 @@ def ports_for_egress_destination(policy, destination):
     return ports
 
 
+def ipblocks_for_egress_port(policy, port):
+    cidrs = set()
+    for rule in policy["spec"].get("egress", []):
+        if any(item["port"] == port for item in rule.get("ports", [])):
+            cidrs.update(
+                peer["ipBlock"]["cidr"]
+                for peer in rule.get("to", [])
+                if "ipBlock" in peer
+            )
+    return cidrs
+
+
 def test_staged_inventory_is_one_policy_per_file():
     actual = {path.name for path in STAGED.glob("*.yaml")}
     assert actual == EXPECTED_FILES
@@ -215,6 +227,19 @@ def test_checkout_ports_and_indirect_quote_path_are_exact():
     assert ports_for_egress_destination(checkout, "flagd") == {8013}
     assert ports_for_egress_destination(checkout, "otel-gateway") == {4317}
     assert "quote" not in egress_components(checkout)
+
+
+def test_email_has_observed_service_clusterip_peers():
+    email = load_policy("13-email.yaml")
+    assert ipblocks_for_egress_port(email, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(email, 8013) == {"172.20.213.30/32"}
+    assert ipblocks_for_egress_port(email, 4318) == {"172.20.117.175/32"}
+    assert email["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == (
+        "2026-07-25:kube-dns=172.20.0.10,flagd=172.20.213.30,"
+        "otel-gateway=172.20.117.175"
+    )
 
 
 def test_jaeger_accepts_otel_gateway_grpc_ingest():
