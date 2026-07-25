@@ -463,9 +463,43 @@ def test_every_non_default_egress_policy_has_exact_coredns_rule():
                         (item.get("protocol", "TCP"), item["port"])
                         for item in rule.get("ports", [])
                     }
-                    assert ports == {("TCP", 53), ("UDP", 53)}
-                    found = True
+                    if ports == {("TCP", 53), ("UDP", 53)}:
+                        found = True
         assert found, f"{filename} is missing the exact CoreDNS rule"
+
+
+def test_prometheus_allows_coredns_metrics_scrape():
+    for path in [
+        INFRA / "network-policy-prometheus.yaml",
+        STAGED / "03-prometheus.yaml",
+    ]:
+        policy = load_documents(path)[0]
+        found = False
+        for rule in policy["spec"].get("egress", []):
+            peers = rule.get("to", [])
+            ports = {
+                (item.get("protocol", "TCP"), item["port"])
+                for item in rule.get("ports", [])
+            }
+            for peer in peers:
+                namespace = peer.get("namespaceSelector", {}).get("matchLabels", {})
+                pod = peer.get("podSelector", {}).get("matchLabels", {})
+                if (
+                    namespace.get("kubernetes.io/metadata.name") == "kube-system"
+                    and pod.get("k8s-app") == "kube-dns"
+                    and ("TCP", 9153) in ports
+                ):
+                    found = True
+        assert found, f"{path.name} must allow Prometheus to scrape CoreDNS metrics"
+
+
+def test_opensearch_dns_uses_observed_clusterip_fallback():
+    for path in [
+        INFRA / "network-policy-opensearch.yaml",
+        STAGED / "04-opensearch.yaml",
+    ]:
+        policy = load_documents(path)[0]
+        assert ipblocks_for_egress_port(policy, 53) == {"172.20.0.10/32"}
 
 
 def test_public_egress_is_blocked_from_promotion_and_never_active():
