@@ -234,6 +234,10 @@ def test_image_provider_has_observed_service_clusterip_peers():
     assert ipblocks_for_egress_port(image_provider, 53) == {"172.20.0.10/32"}
     assert ipblocks_for_egress_port(image_provider, 4317) == {"172.20.117.175/32"}
     assert image_provider["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == "2026-07-25:kube-dns=172.20.0.10,otel-gateway=172.20.117.175"
+
+
 def test_email_has_observed_service_clusterip_peers():
     email = load_policy("13-email.yaml")
     assert ipblocks_for_egress_port(email, 53) == {"172.20.0.10/32"}
@@ -245,6 +249,8 @@ def test_email_has_observed_service_clusterip_peers():
         "2026-07-25:kube-dns=172.20.0.10,flagd=172.20.213.30,"
         "otel-gateway=172.20.117.175"
     )
+
+
 def test_currency_has_observed_service_clusterip_peers():
     currency = load_policy("11-currency.yaml")
     assert ipblocks_for_egress_port(currency, 53) == {"172.20.0.10/32"}
