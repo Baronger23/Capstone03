@@ -319,6 +319,34 @@ def test_quote_has_observed_service_clusterip_peers():
     ] == "2026-07-25:kube-dns=172.20.0.10,otel-gateway=172.20.117.175"
 
 
+def test_checkout_has_observed_service_and_msk_peers():
+    checkout = load_policy("33-checkout.yaml")
+    assert ipblocks_for_egress_port(checkout, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(checkout, 8080) == {
+        "172.20.2.10/32",
+        "172.20.58.251/32",
+        "172.20.98.73/32",
+        "172.20.105.214/32",
+        "172.20.145.185/32",
+        "172.20.165.232/32",
+    }
+    assert ipblocks_for_egress_port(checkout, 8013) == {"172.20.213.30/32"}
+    assert ipblocks_for_egress_port(checkout, 4317) == {"172.20.117.175/32"}
+    assert ipblocks_for_egress_port(checkout, 9096) == {
+        "10.0.0.0/20",
+        "10.0.16.0/20",
+        "10.0.32.0/20",
+    }
+    assert checkout["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == (
+        "2026-07-25:kube-dns=172.20.0.10,cart=172.20.165.232,"
+        "currency=172.20.98.73,email=172.20.2.10,payment=172.20.105.214,"
+        "product-catalog=172.20.145.185,shipping=172.20.58.251,"
+        "flagd=172.20.213.30,otel-gateway=172.20.117.175"
+    )
+
+
 def test_frontend_has_observed_service_clusterip_peers():
     frontend = load_policy("34-frontend.yaml")
     assert ipblocks_for_egress_port(frontend, 53) == {"172.20.0.10/32"}
