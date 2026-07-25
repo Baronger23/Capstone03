@@ -43,9 +43,13 @@ spec:
       expireAfter: 168h
       terminationGracePeriod: 10m
   limits:
+    # PM-152 (Mandate 19 breakpoint test): tạm hạ nodes 6 -> 2 để khoá cứng số
+    # node Karpenter được tạo, đúng điều kiện "không thêm node giữa bài" của
+    # directive. cpu/memory giữ nguyên (nodes đã là ceiling chặt hơn rồi).
+    # PHẢI trả lại nodes: 6 sau khi test xong.
     cpu: "12"
     memory: 48Gi
-    nodes: 6
+    nodes: 2
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 3m
