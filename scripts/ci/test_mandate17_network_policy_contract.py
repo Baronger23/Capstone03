@@ -128,6 +128,16 @@ def load_policy(filename):
     return policy
 
 
+def load_active_policy(filename, name):
+    for document in load_documents(INFRA / filename):
+        if (
+            document.get("kind") == "NetworkPolicy"
+            and document.get("metadata", {}).get("name") == name
+        ):
+            return document
+    raise AssertionError(f"{name} was not found in active {filename}")
+
+
 def walk(node):
     if isinstance(node, dict):
         yield node
@@ -445,6 +455,41 @@ def test_jaeger_accepts_otel_gateway_grpc_ingest():
     assert 4317 in matching_ports
 
 
+def test_active_jaeger_replaces_broad_legacy_ingress_in_place():
+    jaeger = load_active_policy("network-policy-jaeger.yaml", "jaeger-access")
+    assert set(jaeger["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    assert all(
+        peer.get("podSelector") != {}
+        for rule in jaeger["spec"].get("ingress", [])
+        for peer in rule.get("from", [])
+    )
+
+    otel_ports = set()
+    for rule in jaeger["spec"]["ingress"]:
+        if any(
+            peer.get("podSelector", {})
+            .get("matchLabels", {})
+            .get("app.kubernetes.io/component")
+            == "otel-gateway"
+            for peer in rule.get("from", [])
+        ):
+            otel_ports.update(port["port"] for port in rule.get("ports", []))
+    assert otel_ports == {4317}
+
+
+def test_active_jaeger_has_observed_service_clusterip_fallbacks():
+    jaeger = load_active_policy("network-policy-jaeger.yaml", "jaeger-access")
+    assert ipblocks_for_egress_port(jaeger, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(jaeger, 9090) == {"172.20.123.8/32"}
+    assert ipblocks_for_egress_port(jaeger, 4318) == {"172.20.117.175/32"}
+    assert jaeger["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == (
+        "2026-07-25:kube-dns=172.20.0.10,prometheus=172.20.123.8,"
+        "otel-gateway=172.20.117.175"
+    )
+
+
 def test_every_non_default_egress_policy_has_exact_coredns_rule():
     for filename in EXPECTED_FILES - {"90-default-deny-all.yaml"}:
         policy = load_policy(filename)
@@ -463,9 +508,43 @@ def test_every_non_default_egress_policy_has_exact_coredns_rule():
                         (item.get("protocol", "TCP"), item["port"])
                         for item in rule.get("ports", [])
                     }
-                    assert ports == {("TCP", 53), ("UDP", 53)}
-                    found = True
+                    if ports == {("TCP", 53), ("UDP", 53)}:
+                        found = True
         assert found, f"{filename} is missing the exact CoreDNS rule"
+
+
+def test_prometheus_allows_coredns_metrics_scrape():
+    for path in [
+        INFRA / "network-policy-prometheus.yaml",
+        STAGED / "03-prometheus.yaml",
+    ]:
+        policy = load_documents(path)[0]
+        found = False
+        for rule in policy["spec"].get("egress", []):
+            peers = rule.get("to", [])
+            ports = {
+                (item.get("protocol", "TCP"), item["port"])
+                for item in rule.get("ports", [])
+            }
+            for peer in peers:
+                namespace = peer.get("namespaceSelector", {}).get("matchLabels", {})
+                pod = peer.get("podSelector", {}).get("matchLabels", {})
+                if (
+                    namespace.get("kubernetes.io/metadata.name") == "kube-system"
+                    and pod.get("k8s-app") == "kube-dns"
+                    and ("TCP", 9153) in ports
+                ):
+                    found = True
+        assert found, f"{path.name} must allow Prometheus to scrape CoreDNS metrics"
+
+
+def test_opensearch_dns_uses_observed_clusterip_fallback():
+    for path in [
+        INFRA / "network-policy-opensearch.yaml",
+        STAGED / "04-opensearch.yaml",
+    ]:
+        policy = load_documents(path)[0]
+        assert ipblocks_for_egress_port(policy, 53) == {"172.20.0.10/32"}
 
 
 def test_public_egress_is_blocked_from_promotion_and_never_active():
