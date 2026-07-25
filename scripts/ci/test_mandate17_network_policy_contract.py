@@ -239,6 +239,17 @@ def test_accounting_has_observed_service_and_managed_datastore_peers():
     assert accounting["metadata"]["annotations"][
         "mandate-17.techx.io/service-clusterip-evidence"
     ] == "2026-07-25:kube-dns=172.20.0.10,otel-gateway=172.20.117.175"
+def test_payment_has_observed_service_clusterip_peers():
+    payment = load_policy("12-payment.yaml")
+    assert ipblocks_for_egress_port(payment, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(payment, 8013) == {"172.20.213.30/32"}
+    assert ipblocks_for_egress_port(payment, 4317) == {"172.20.117.175/32"}
+    assert payment["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == (
+        "2026-07-25:kube-dns=172.20.0.10,flagd=172.20.213.30,"
+        "otel-gateway=172.20.117.175"
+    )
 
 
 def test_llm_has_observed_service_clusterip_peers():
