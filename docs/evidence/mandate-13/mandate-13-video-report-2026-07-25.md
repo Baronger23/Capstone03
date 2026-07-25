@@ -101,8 +101,9 @@ Bảng này dùng để nói thẳng gói evidence hiện tại đã chứng min
 ### EV-01 - Video quay full màn hình
 
 - Mô tả: video quay 4 màn hình gồm load test, port-forward, node inventory, Grafana
-- File artifact local: `mandate-13-video-evidence-2026-07-25.mp4`
-- Ghi chú: file video không đưa vào Git thường vì vượt ngưỡng kích thước push; báo cáo này dùng bộ ảnh trích và mô tả để đại diện trong PR.
+- Video Drive:
+  - [mandate-13-video-evidence-2026-07-25.mp4](https://drive.google.com/file/d/1lHxEmZ--ophlwMUB6eVr0IHL01qFJnGh/view?usp=drive_link)
+- Ghi chú: video gốc được lưu trên Google Drive; trong PR Git chỉ đính kèm bộ ảnh trích và báo cáo Markdown.
 
 ### EV-02 - Spot pool headroom `3/3`
 
@@ -151,7 +152,7 @@ Bảng này dùng để nói thẳng gói evidence hiện tại đã chứng min
 - Ý nghĩa:
   - xác nhận traffic đã vào hệ thống thật
 - Nguồn:
-  - video artifact local `mandate-13-video-evidence-2026-07-25.mp4`
+  - [video gốc trên Drive](https://drive.google.com/file/d/1lHxEmZ--ophlwMUB6eVr0IHL01qFJnGh/view?usp=drive_link)
   - [ev-04-node-inventory-and-grafana.png](/C:/Users/Admin/Desktop/xbrain-phase-3/Phase3-TF3-Infra-Sentinel-m13-clean/docs/evidence/mandate-13/ev-04-node-inventory-and-grafana.png)
 
 ### EV-06 - Node count tăng trong cửa sổ test
@@ -161,7 +162,7 @@ Bảng này dùng để nói thẳng gói evidence hiện tại đã chứng min
   - có bằng chứng scale-up trong cửa sổ evidence
   - dù terminal không bắt trúng chính xác khoảnh khắc node mới xuất hiện, Grafana vẫn cho thấy cluster đã burst thêm capacity
 - Nguồn:
-  - video artifact local `mandate-13-video-evidence-2026-07-25.mp4`
+  - [video gốc trên Drive](https://drive.google.com/file/d/1lHxEmZ--ophlwMUB6eVr0IHL01qFJnGh/view?usp=drive_link)
   - [ev-03-load-commands-and-node-count.png](/C:/Users/Admin/Desktop/xbrain-phase-3/Phase3-TF3-Infra-Sentinel-m13-clean/docs/evidence/mandate-13/ev-03-load-commands-and-node-count.png)
 
 ### EV-07 - Interruption demo trên Spot node thật
@@ -172,8 +173,9 @@ Bảng này dùng để nói thẳng gói evidence hiện tại đã chứng min
   - terminal hiển thị `evicting pod`
   - Grafana vẫn duy trì request và success rate
   - sau đó hạ tải `50 users` và dừng test
-- File artifact local: `mandate-13-interruption-demo-2026-07-25.mp4`
-- Ghi chú: file video không đưa vào Git thường vì vượt ngưỡng kích thước push; PR dùng các khung hình trích từ clip này.
+- Video Drive:
+  - [mandate-13-interruption-demo-2026-07-25.mp4](https://drive.google.com/file/d/1A6cBJDiPCDqh6871NDf_gxgM4x4oZzUa/view?usp=drive_link)
+- Ghi chú: video gốc được lưu trên Google Drive; PR Git dùng các khung hình trích từ clip này để tránh vượt ngưỡng kích thước file.
 
 ### EV-08 - Ảnh mốc drain và recovery
 
