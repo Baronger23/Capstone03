@@ -328,6 +328,10 @@ def test_shipping_has_observed_service_clusterip_peers():
         "mandate-17.techx.io/service-clusterip-evidence"
     ] == (
         "2026-07-25:kube-dns=172.20.0.10,quote=172.20.233.86,"
+        "otel-gateway=172.20.117.175"
+    )
+
+
 def test_cart_has_observed_service_and_elasticache_peers():
     cart = load_policy("21-cart.yaml")
     assert ipblocks_for_egress_port(cart, 53) == {"172.20.0.10/32"}
