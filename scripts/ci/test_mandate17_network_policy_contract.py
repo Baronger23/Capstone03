@@ -477,6 +477,19 @@ def test_active_jaeger_replaces_broad_legacy_ingress_in_place():
     assert otel_ports == {4317}
 
 
+def test_active_jaeger_has_observed_service_clusterip_fallbacks():
+    jaeger = load_active_policy("network-policy-jaeger.yaml", "jaeger-access")
+    assert ipblocks_for_egress_port(jaeger, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(jaeger, 9090) == {"172.20.123.8/32"}
+    assert ipblocks_for_egress_port(jaeger, 4318) == {"172.20.117.175/32"}
+    assert jaeger["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == (
+        "2026-07-25:kube-dns=172.20.0.10,prometheus=172.20.123.8,"
+        "otel-gateway=172.20.117.175"
+    )
+
+
 def test_every_non_default_egress_policy_has_exact_coredns_rule():
     for filename in EXPECTED_FILES - {"90-default-deny-all.yaml"}:
         policy = load_policy(filename)
