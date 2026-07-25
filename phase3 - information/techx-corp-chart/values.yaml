@@ -1599,6 +1599,25 @@ jaeger:
 
 prometheus:
   enabled: true
+  # Directive #18 A4 - metric cardinality. The kubernetes-api-servers scrape job alone is
+  # ~56% of all active series (measured 131k / 237k), almost entirely apiserver/etcd
+  # latency+size histogram buckets that no storefront SLO or cluster-ops dashboard reads.
+  # Drop the _bucket series (keeping _count/_sum, so request/error rates and averages
+  # survive) plus the kubelet buckets. scrapeConfigs is a keyed map in the subchart, so
+  # this deep-merges: it only adds metric_relabel_configs to these two jobs and leaves the
+  # other eight scrape jobs (and each job's relabel/SD config) untouched. Validated with
+  # promtool. cadvisor is deliberately left alone - dashboards use its container_* gauges.
+  scrapeConfigs:
+    kubernetes-api-servers:
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: '(apiserver|etcd)_.*_bucket'
+          action: drop
+    kubernetes-nodes:
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'kubelet_.*_bucket'
+          action: drop
   alertmanager:
     enabled: false
   configmapReload:
