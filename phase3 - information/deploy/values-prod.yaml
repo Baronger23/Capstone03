@@ -249,6 +249,8 @@ components:
           minDomains: 2
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
+          nodeAffinityPolicy: Honor
+          nodeTaintsPolicy: Honor
           labelSelector:
             matchLabels:
               opentelemetry.io/name: frontend
@@ -256,6 +258,11 @@ components:
           minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
+          nodeAffinityPolicy: Honor
+          nodeTaintsPolicy: Honor # nếu không có dòng này 2 node arm64 có taint nhưng frontend không vào được vẫn tính vào domain hợp lệ, nhưng ở đó không có pod frontend làm global min = 0
+          # khi frontend thêm 1 pod, công thức (1+1) - 0 = 2 skew = 2 > maxSkew, pod sẽ pending
+          # 4 domain eligible: 1, 1, 0, 0, 0 → global min = 0
+          
           labelSelector:
             matchLabels:
               opentelemetry.io/name: frontend
