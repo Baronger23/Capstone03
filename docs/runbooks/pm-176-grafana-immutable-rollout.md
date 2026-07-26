@@ -46,7 +46,7 @@ ECR `tag@sha256` image reference.
 Run the smoke test with the current Grafana egress state:
 
 ```bash
-./scripts/pm-176-grafana-smoke.sh
+bash scripts/pm-176-grafana-smoke.sh
 ```
 
 The script creates only a short-lived local port-forward. It records the Pod
@@ -75,7 +75,7 @@ After the Grafana image/config PR is verified, rebase and merge the NetworkPolic
 PR. Wait for `techx-infrastructure-app` to become `Synced/Healthy`, then run:
 
 ```bash
-EXPECT_EGRESS_BLOCK=1 ./scripts/pm-176-grafana-smoke.sh
+EXPECT_EGRESS_BLOCK=1 bash scripts/pm-176-grafana-smoke.sh
 ```
 
 The public egress assertion must fail closed while the internal OpenSearch,
@@ -95,7 +95,7 @@ kubectl -n techx-tf3 delete pod \
   -l app.kubernetes.io/name=grafana
 
 kubectl -n techx-tf3 rollout status deployment/grafana --timeout=5m
-EXPECT_EGRESS_BLOCK=1 ./scripts/pm-176-grafana-smoke.sh
+EXPECT_EGRESS_BLOCK=1 bash scripts/pm-176-grafana-smoke.sh
 ```
 
 The new Pod UID must differ from `POD_BEFORE`. The smoke output must still
