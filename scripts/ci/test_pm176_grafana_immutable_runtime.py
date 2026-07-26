@@ -15,6 +15,7 @@ VALUES = [
     REPO / "phase3 - information" / "deploy" / "values-prod.yaml",
     REPO / "phase3 - information" / "deploy" / "values-aio-llm.yaml",
 ]
+SMOKE = REPO / "scripts" / "pm-176-grafana-smoke.sh"
 PLUGIN_PATH = "/opt/grafana/plugins"
 IMAGE_RE = re.compile(
     r"^197826770971\.dkr\.ecr\.ap-southeast-1\.amazonaws\.com/"
@@ -115,3 +116,19 @@ def test_pm176_base_values_do_not_declare_runtime_plugins():
         "check_for_updates": False,
         "reporting_enabled": False,
     }
+
+
+def test_pm176_smoke_script_is_read_only_and_syntax_valid():
+    script = SMOKE.read_text(encoding="utf-8")
+    assert shutil.which("bash") is not None
+    subprocess.run(["bash", "-n", str(SMOKE)], cwd=REPO, check=True)
+    for forbidden in ("kubectl apply", "kubectl patch", "kubectl delete", "kubectl rollout"):
+        assert forbidden not in script
+    for required in (
+        "GF_PATHS_PLUGINS",
+        "grafana-opensearch-datasource/plugin.json",
+        "/api/datasources/uid/webstore-logs",
+        "EXPECT_EGRESS_BLOCK",
+        "kubectl port-forward",
+    ):
+        assert required in script
