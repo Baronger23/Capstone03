@@ -1716,6 +1716,11 @@ grafana:
     # chart's `plugins` value. Keep the immutable image as the only plugin
     # source and disable UI/external runtime plugin management.
     plugins:
+      # The backend is rebuilt from the exact 2.34.0 source commit with patched
+      # Go dependencies, so the upstream manifest is intentionally removed.
+      # Trust is scoped to this ID and enforced by the read-only, digest-pinned,
+      # Cosign-verified first-party image.
+      allow_loading_unsigned_plugins: grafana-opensearch-datasource
       preinstall_disabled: true
       preinstall_auto_update: false
       plugin_admin_enabled: false
