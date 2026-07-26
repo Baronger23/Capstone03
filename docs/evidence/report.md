@@ -40,7 +40,7 @@ Dưới đây là các hình ảnh chụp lại biểu đồ Grafana và Locust 
 
 ![Locust Baseline](../../tests/kyverno/mandate-05/test_slo/Locust_tran.jpg)
 
-![Nodes Topology](../../tests/kyverno/mandate-05/test_slo/nodes.jpg)
+![Nodes Topology](../../tests/kyverno/mandate-05/test_slo/node1.jpg)
 
 ## 5. Đề xuất Tối ưu (Next Steps)
 Dựa trên điểm gãy 410 users, chúng tôi đề xuất thực hiện Phase 2 (Tuning):
