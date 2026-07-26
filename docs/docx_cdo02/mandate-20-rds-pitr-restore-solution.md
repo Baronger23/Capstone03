@@ -40,13 +40,13 @@ So sánh ngắn để giải thích với mentor vì sao solution này chọn RD
 
 Có cần tạo DB mới không: **Có, nhưng chỉ là DB instance restore tạm cho drill**. Không tạo DB production thay thế, không đổi connection string của service, không chuyển app sang DB drill. Lý do bắt buộc là mandate yêu cầu restore vào môi trường tách biệt và không được đè lên production.
 
-Có sửa code không: **Không sửa code ứng dụng** để chạy RDS drill. Drill chỉ cần SQL probe trong schema riêng `dr_drill`, AWS CLI tạo RDS restored instance tạm, và tài liệu/evidence. Không rebuild image, không đổi Helm values của app, không đổi ExternalSecret production.
+Có sửa code không: **Không sửa code ứng dụng** để chạy RDS drill. Drill chỉ cần SQL probe trong schema riêng `dr_drill`, Terraform/AWS CLI tạo RDS restored instance tạm, và tài liệu/evidence. Không rebuild image, không đổi Helm values của app, không đổi ExternalSecret production.
 
 Có cần tạo hạ tầng mới không: **Có, tạo hạ tầng tạm rồi tắt/xóa sau drill**:
 
 | Hạ tầng tạm | Mục đích | Tạo bằng | Cleanup |
 |---|---|---|---|
-| RDS instance `techx-tf3-postgres-drill-YYYYMMDD-HHMM` | Môi trường restore tách biệt để query proof | `aws rds restore-db-instance-to-point-in-time` | `aws rds delete-db-instance --skip-final-snapshot` chỉ sau khi mentor chấp nhận evidence |
+| RDS instance `techx-tf3-postgres-drill-YYYYMMDD-HHMM` | Môi trường restore tách biệt để query proof | Terraform additive-only nếu mentor yêu cầu IaC; nếu không thì AWS CLI/console | Terraform destroy target hoặc `aws rds delete-db-instance --skip-final-snapshot` sau khi mentor chấp nhận evidence |
 | Security group/subnet override cho DB drill | Chỉ cần nếu restored DB không dùng được SG/subnet private hiện có | Ưu tiên reuse DB subnet group và SG hiện tại; chỉ tạo SG tạm nếu bắt buộc | Xóa SG tạm sau khi DB drill đã deleted |
 | Debug pod hoặc SSM tunnel | Kết nối query DB drill | Dùng đường vận hành hiện có; không expose public | Xóa pod/tắt session sau drill |
 
@@ -63,12 +63,22 @@ Nguyên tắc an toàn:
 Cleanup sau nghiệm thu:
 
 ```powershell
+# Nếu tạo bằng AWS CLI/console:
 aws rds delete-db-instance `
   --db-instance-identifier techx-tf3-postgres-drill-20260727-001 `
   --skip-final-snapshot
 
 aws rds wait db-instance-deleted `
   --db-instance-identifier techx-tf3-postgres-drill-20260727-001
+
+# Nếu tạo bằng Terraform:
+terraform destroy `
+  -target='aws_db_instance.m20_rds_pitr_drill[0]' `
+  -var="enable_m20_rds_drill=true" `
+  -var="m20_drill_identifier=techx-tf3-postgres-drill-20260727-001" `
+  -var="m20_restore_time=2026-07-27T03:15:00Z" `
+  -var="m20_db_subnet_group_name=<private-db-subnet-group>" `
+  -var='m20_vpc_security_group_ids=["sg-xxxxxxxx"]'
 ```
 
 Chỉ cleanup sau khi đã lưu evidence. Không cleanup nếu mentor còn cần xem console hoặc query lại.
@@ -104,6 +114,95 @@ WHERE id = 'm20-20260727-001';
 
 # 3) Đợi LatestRestorableTime >= good_time_utc, bắt đầu đo RTO
 $start = Get-Date
+```
+
+Nếu mentor yêu cầu tạo DB drill bằng IaC, thay bước tạo DB thủ công bằng Terraform additive-only. File IaC đề xuất:
+
+- `infra/live/production/m20-rds-pitr-drill.tf`
+- `infra/live/production/m20-rds-pitr-drill-variables.tf`
+
+Skeleton Terraform:
+
+```hcl
+variable "enable_m20_rds_drill" {
+  type    = bool
+  default = false
+}
+
+variable "m20_drill_identifier" {
+  type    = string
+  default = "techx-tf3-postgres-drill-20260727-001"
+}
+
+variable "m20_restore_time" {
+  type        = string
+  default     = null
+  description = "UTC restore time, for example 2026-07-27T03:15:00Z"
+}
+
+variable "m20_source_db_identifier" {
+  type    = string
+  default = "techx-tf3-postgres"
+}
+
+variable "m20_db_subnet_group_name" {
+  type        = string
+  default     = null
+  description = "Private DB subnet group to use for the drill restore."
+}
+
+variable "m20_vpc_security_group_ids" {
+  type        = list(string)
+  default     = []
+  description = "Existing private RDS security group ids allowed from the operator path."
+}
+
+resource "aws_db_instance" "m20_rds_pitr_drill" {
+  count = var.enable_m20_rds_drill ? 1 : 0
+
+  identifier          = var.m20_drill_identifier
+  instance_class      = "db.t4g.micro"
+  publicly_accessible = false
+
+  db_subnet_group_name   = var.m20_db_subnet_group_name
+  vpc_security_group_ids = var.m20_vpc_security_group_ids
+
+  restore_to_point_in_time {
+    source_db_instance_identifier = var.m20_source_db_identifier
+    restore_time                  = var.m20_restore_time
+  }
+
+  deletion_protection = false
+  skip_final_snapshot = true
+
+  tags = {
+    Mandate = "20"
+    Purpose = "temporary-rds-pitr-drill"
+  }
+}
+```
+
+Apply chỉ được chạy nếu plan chỉ tạo thêm DB drill instance:
+
+```powershell
+terraform plan `
+  -var="enable_m20_rds_drill=true" `
+  -var="m20_drill_identifier=techx-tf3-postgres-drill-20260727-001" `
+  -var="m20_restore_time=2026-07-27T03:15:00Z" `
+  -var="m20_db_subnet_group_name=<private-db-subnet-group>" `
+  -var='m20_vpc_security_group_ids=["sg-xxxxxxxx"]'
+
+terraform apply `
+  -var="enable_m20_rds_drill=true" `
+  -var="m20_drill_identifier=techx-tf3-postgres-drill-20260727-001" `
+  -var="m20_restore_time=2026-07-27T03:15:00Z" `
+  -var="m20_db_subnet_group_name=<private-db-subnet-group>" `
+  -var='m20_vpc_security_group_ids=["sg-xxxxxxxx"]'
+```
+
+Nếu không dùng IaC cho drill một lần, dùng AWS CLI:
+
+```powershell
 aws rds restore-db-instance-to-point-in-time `
   --source-db-instance-identifier techx-tf3-postgres `
   --target-db-instance-identifier techx-tf3-postgres-drill-20260727-001 `
@@ -113,12 +212,16 @@ aws rds restore-db-instance-to-point-in-time `
 
 aws rds wait db-instance-available `
   --db-instance-identifier techx-tf3-postgres-drill-20260727-001
+```
 
-# 4) Kết nối restored DB, verify probe đã quay về GOOD
+```sql
+-- 4) Kết nối restored DB, verify probe đã quay về GOOD
 SELECT id, expected_payload
 FROM dr_drill.restore_probe
 WHERE id = 'm20-20260727-001';
+```
 
+```powershell
 $end = Get-Date
 ($end - $start).TotalMinutes
 ```
@@ -173,18 +276,36 @@ Phần có thể thêm vào repo nhưng chưa claim là đã chặn được:
 - Test hoặc checklist `aws iam simulate-principal-policy` cho operator role.
 - Backlog/security note: account có nhiều admin nên guard IAM/quy trình không chặn tuyệt đối được mọi người.
 
+## 4.1. Phần bàn giao cho CDO01 Security
+
+Phạm vi của **CDO02** trong solution này là Reliability/Operational Excellence: RDS PITR restore drill, đo RTO, chứng minh dữ liệu quay lại đúng, và viết ADR/evidence vận hành. Các mục dưới đây thuộc phần Security do **CDO01** phụ trách xác nhận hoặc triển khai riêng; CDO02 không tự ý sửa trong drill để tránh phát sinh rủi ro ngoài phạm vi.
+
+| Hạng mục Security | Việc cần CDO01 làm | Lý do |
+|---|---|---|
+| Quyền xóa RDS backup/snapshot | Xác nhận ai được phép gọi `rds:DeleteDBSnapshot`, `rds:DeleteDBInstanceAutomatedBackup`, `rds:DeleteDBInstance` | M20 yêu cầu tách quyền để operator thường không xóa được backup |
+| IAM guard cho operator | Nếu phù hợp, thêm deny policy/permission boundary cho operator role; không dùng SCP vì mentor đã chấp nhận không dùng SCP | Account có nhiều admin nên CDO không claim chặn tuyệt đối |
+| Break-glass process | Ghi rõ principal nào được xóa backup trong trường hợp khẩn cấp, cần ticket/MFA/mentor-owner approval | Tránh vừa "ai cũng admin" vừa không có quy trình trách nhiệm |
+| Evidence review | Security xem lại phần encryption at rest, private endpoint, Secrets Manager, KMS key rotation | CDO dùng làm input cho ADR nhưng không tự claim phần Security |
+
+Deliverable CDO01 nên trả lại cho ADR M20:
+
+- Danh sách role/user được phép xóa RDS backup/snapshot.
+- Kết quả kiểm tra quyền operator không được xóa backup, hoặc ghi rõ accepted risk nếu chưa chặn được do admin rộng.
+- Xác nhận không dùng SCP là quyết định đã được mentor chấp nhận.
+
 ## 5. ADR cần nộp
 
 Tạo/sửa các file sau, không cần sửa code ứng dụng:
 
 | File | Loại thay đổi | Mục đích |
 |---|---|---|
-| `solutionmd20.md` | Đã tạo | Bản phân tích và phương án để review trước |
+| `docs/docx_cdo02/mandate-20-rds-pitr-restore-solution.md` | Đã tạo | Bản phân tích và phương án để review trước |
 | `docs/adr/0013-mandate-20-backup-restore-drill.md` | Cần thêm | ADR ký tên: RPO/RTO, strategy, quyền xóa backup, runbook drill |
 | `docs/runbooks/mandate-20-rds-pitr-drill.md` | Nên thêm | Runbook thao tác chi tiết từng lệnh cho mentor session |
 | `docs/evidence/mandate-20/README.md` | Cần thêm sau drill | Index evidence: thời điểm drill, RTO, link output |
 | `docs/evidence/mandate-20/rds-pitr-drill-YYYYMMDD.md` | Cần thêm sau drill | Biên bản kết quả restore thật |
-| `infra/live/production/iam-backup-delete-guard.tf` hoặc file IAM tương đương | Optional/đề xuất | Thêm deny policy/boundary cho operator; không claim chặn tuyệt đối admin |
+| `infra/live/production/m20-rds-pitr-drill.tf` | Optional, chỉ nếu mentor yêu cầu IaC | Tạo thêm RDS drill instance tạm, mặc định tắt |
+| `infra/live/production/m20-rds-pitr-drill-variables.tf` | Optional, chỉ nếu mentor yêu cầu IaC | Biến bật/tắt drill, restore time, identifier, subnet group, SG |
 
 ADR mới, ví dụ `docs/adr/0013-mandate-20-backup-restore-drill.md`, cần có nội dung tối thiểu:
 
