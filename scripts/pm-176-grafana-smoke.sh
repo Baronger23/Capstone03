@@ -150,11 +150,11 @@ fi
 
 startup_log="$(kubectl logs -n "$NS" "$pod" -c grafana)"
 if grep -Eqi \
-  'plugin\.(backgroundinstaller|installer).*installing plugin|download(ed)? and extracted|plugin successfully installed|failed to install plugin' \
+  'plugin\.(backgroundinstaller|installer).*installing plugin|download(ed)? and extracted|plugin successfully installed|failed to install plugin|modified signature|skipping loading plugin due to problem with signature|plugin validation failed' \
   <<<"$startup_log"; then
-  fail "Grafana made no runtime plugin install/download attempt"
+  fail "Grafana made no runtime plugin install/download attempt or signature validation failure"
 else
-  pass "Grafana made no runtime plugin install/download attempt"
+  pass "Grafana made no runtime plugin install/download attempt or signature validation failure"
 fi
 
 if [[ -z "$GRAFANA_BASE_URL" ]]; then

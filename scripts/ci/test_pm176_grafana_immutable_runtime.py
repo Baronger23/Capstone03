@@ -150,6 +150,8 @@ def test_pm176_smoke_script_is_read_only_and_syntax_valid():
         "GF_PATHS_PLUGINS",
         "preinstall_disabled = true",
         "failed to install plugin",
+        "modified signature",
+        "plugin validation failed",
         "grafana-opensearch-datasource/plugin.json",
         "/api/datasources/uid/webstore-logs",
         "EXPECT_EGRESS_BLOCK",
