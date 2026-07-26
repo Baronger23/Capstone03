@@ -105,8 +105,9 @@ EXPECTED_EGRESS_COMPONENTS = {
     "flagd": {"otel-gateway"},
 }
 
+# 06-cloudflared.yaml left this set once its egress was narrowed from 0.0.0.0/0 to the
+# published Cloudflare ranges, so it is now promotable like any other policy.
 PUBLIC_EGRESS_FILES = {
-    "06-cloudflared.yaml",
     "07-aiops-engine.yaml",
     "32-product-reviews.yaml",
 }
@@ -554,6 +555,95 @@ def test_active_frontend_proxy_ingress_sources_are_the_alb_subnets_and_named_pee
     # latter, so any workload in these subnets also matches.
     assert cidrs == {"10.0.0.0/20", "10.0.16.0/20", "10.0.32.0/20"}
     assert components == {"cloudflared", "load-generator"}
+
+
+CLOUDFLARED_ACTIVE = "network-policy-cloudflared.yaml"
+CLOUDFLARED_STAGED = "06-cloudflared.yaml"
+CLOUDFLARED_NAME = "cloudflared-platform-policy"
+
+# https://www.cloudflare.com/ips-v4, read 2026-07-26. cloudflared dials the Tunnel edge
+# (region1/region2.v2.argotunnel.com, observed inside 198.41.128.0/17) and the Cloudflare
+# API, both of which stay inside this list.
+CLOUDFLARE_EDGE_RANGES = {
+    "173.245.48.0/20",
+    "103.21.244.0/22",
+    "103.22.200.0/22",
+    "103.31.4.0/22",
+    "141.101.64.0/18",
+    "108.162.192.0/18",
+    "190.93.240.0/20",
+    "188.114.96.0/20",
+    "197.234.240.0/22",
+    "198.41.128.0/17",
+    "162.158.0.0/15",
+    "104.16.0.0/13",
+    "104.24.0.0/14",
+    "172.64.0.0/13",
+    "131.0.72.0/22",
+}
+
+
+def test_active_cloudflared_matches_staged_copy_exactly():
+    active = (INFRA / CLOUDFLARED_ACTIVE).read_text()
+    staged = (INFRA / "network-policy-staged" / CLOUDFLARED_STAGED).read_text()
+    assert active == staged, (
+        "promoted cloudflared policy drifted from its staged source"
+    )
+
+
+def test_active_cloudflared_accepts_no_ingress():
+    policy = load_active_policy(CLOUDFLARED_ACTIVE, CLOUDFLARED_NAME)
+    assert set(policy["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    # cloudflared publishes no Service and is dialled by nobody. The kubelet probe on
+    # :2000 is node-sourced and is not evaluated by the VPC CNI policy agent.
+    assert policy["spec"]["ingress"] == []
+
+
+def test_active_cloudflared_egress_reaches_only_cloudflare_and_the_four_tunnel_routes():
+    policy = load_active_policy(CLOUDFLARED_ACTIVE, CLOUDFLARED_NAME)
+
+    # Tunnel transport is pinned to Cloudflare's published ranges, never 0.0.0.0/0.
+    for port in (443, 7844):
+        assert CLOUDFLARE_EDGE_RANGES <= ipblocks_for_egress_port(policy, port)
+
+    # QUIC runs on 7844, and cloudflared's Go HTTP client does not speak HTTP/3, so
+    # 443/udp has no caller and must stay closed.
+    protocol_ports = {
+        (item.get("protocol", "TCP"), item["port"])
+        for rule in policy["spec"].get("egress", [])
+        for item in rule.get("ports", [])
+    }
+    assert ("UDP", 7844) in protocol_ports
+    assert ("TCP", 7844) in protocol_ports
+    assert ("UDP", 443) not in protocol_ports
+
+    # Route 1 - kubectl.arthur-ngo.org reaches the private EKS endpoint ENIs, which EKS
+    # rotates on its own, so the three production private subnets are the stable unit.
+    assert ipblocks_for_egress_port(policy, 443) == CLOUDFLARE_EDGE_RANGES | {
+        "10.0.0.0/20",
+        "10.0.16.0/20",
+        "10.0.32.0/20",
+        "172.20.60.48/32",
+    }
+
+    # Routes 2-4 are split across pre-DNAT (ClusterIP) and post-DNAT (pod) ports wherever
+    # the Service remaps the port: grafana 80 -> 3000 and argocd-server 443 -> 8080.
+    assert ipblocks_for_egress_port(policy, 80) == {"172.20.79.132/32"}
+    assert ipblocks_for_egress_port(policy, 16686) == {"172.20.93.48/32"}
+    assert ipblocks_for_egress_port(policy, 53) == {"172.20.0.10/32"}
+
+    names = set()
+    for rule in policy["spec"].get("egress", []):
+        for peer in rule.get("to", []):
+            names.update(
+                peer.get("podSelector", {}).get("matchLabels", {}).get(key)
+                for key in ("app.kubernetes.io/name", "app.kubernetes.io/component")
+            )
+    names.discard(None)
+    # CoreDNS is matched on k8s-app and is asserted by the shared CoreDNS test above.
+    # The storefront is served through CloudFront, never through this tunnel, so
+    # frontend-proxy must not appear here.
+    assert names == {"grafana", "jaeger", "argocd-server"}
 
 
 def test_every_non_default_egress_policy_has_exact_coredns_rule():
