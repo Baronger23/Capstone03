@@ -1,6 +1,40 @@
-FROM docker.io/grafana/grafana:13.0.1@sha256:0f86bada30d65ef9d0183b90c1e2682ac92d53d95da8bed322b984ea78a4a73a
+FROM docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS grafana-builder
+
+ARG TARGETARCH
+ARG GRAFANA_SOURCE_COMMIT=5d189285069d02af604bfaeedb21a0b6ec4c4d0a
+ARG GRAFANA_BUILD_NUMBER=30056490933
+
+WORKDIR /src
+RUN git init \
+    && git remote add origin https://github.com/grafana/grafana.git \
+    && git fetch --depth 1 origin "${GRAFANA_SOURCE_COMMIT}" \
+    && git checkout --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "${GRAFANA_SOURCE_COMMIT}"
+RUN go get github.com/getkin/kin-openapi@v0.144.0 \
+    && CGO_ENABLED=0 OS=linux ARCH="${TARGETARCH}" GO_BUILD_TAGS=oss WIRE_TAGS=oss \
+      COMMIT_SHA="${GRAFANA_SOURCE_COMMIT}" BUILD_BRANCH=main \
+      BUILD_NUMBER="${GRAFANA_BUILD_NUMBER}" \
+      make build-go
+
+FROM docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS opensearch-plugin-builder
+
+ARG TARGETARCH
+ARG OPENSEARCH_PLUGIN_COMMIT=b42207a0015573793e8f8842d06fdd658a1500fd
+
+WORKDIR /src
+RUN git init \
+    && git remote add origin https://github.com/grafana/opensearch-datasource.git \
+    && git fetch --depth 1 origin "${OPENSEARCH_PLUGIN_COMMIT}" \
+    && git checkout --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "${OPENSEARCH_PLUGIN_COMMIT}"
+RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
+    go build -trimpath -buildvcs=false -ldflags="-s -w" \
+      -o "/out/gpx_opensearch-datasource_linux_${TARGETARCH}" ./pkg
+
+FROM docker.io/grafana/grafana:nightly-ubuntu-slim@sha256:7dcef0c66bc3692de69155ed9e229fee733c85e520207dcda26e1f52479dcb30
 
 ARG GRAFANA_PLUGIN_VERSION=2.34.0
+ARG TARGETARCH
 ENV GF_PATHS_PLUGINS=/opt/grafana/plugins
 
 USER root
@@ -12,7 +46,20 @@ RUN install -d -o 472 -g 0 -m 0755 "${GF_PATHS_PLUGINS}" \
     && grep -Fq '"id": "grafana-opensearch-datasource"' \
       "${GF_PATHS_PLUGINS}/grafana-opensearch-datasource/plugin.json" \
     && grep -Fq "\"version\": \"${GRAFANA_PLUGIN_VERSION}\"" \
-      "${GF_PATHS_PLUGINS}/grafana-opensearch-datasource/plugin.json" \
+      "${GF_PATHS_PLUGINS}/grafana-opensearch-datasource/plugin.json"
+
+COPY --from=grafana-builder \
+    "/src/bin/linux/${TARGETARCH}/grafana" \
+    "/usr/share/grafana/bin/grafana"
+COPY --from=opensearch-plugin-builder \
+    "/out/gpx_opensearch-datasource_linux_${TARGETARCH}" \
+    "${GF_PATHS_PLUGINS}/grafana-opensearch-datasource/gpx_opensearch-datasource_linux_${TARGETARCH}"
+
+RUN test -x "/usr/share/grafana/bin/grafana" \
+    && test -x \
+      "${GF_PATHS_PLUGINS}/grafana-opensearch-datasource/gpx_opensearch-datasource_linux_${TARGETARCH}" \
+    && chown root:0 "/usr/share/grafana/bin/grafana" \
+    && chmod a-w "/usr/share/grafana/bin/grafana" \
     && chown -R root:0 "${GF_PATHS_PLUGINS}" \
     && chmod -R a-w "${GF_PATHS_PLUGINS}"
 
