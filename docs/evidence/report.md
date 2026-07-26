@@ -22,17 +22,17 @@ Tất cả các tiêu chí đóng (Closure Checklist) của Mandate #19 đều �
 - [x] **Failing stage/breakpoint được tái hiện ít nhất một lần**: Tại failing stage (410 users), p95 latency tăng vọt và xuất hiện lỗi 5xx trong 2 cửa sổ 1 phút liên tiếp. Đã tái hiện thành công.
 - [x] **Old ceiling dùng sustained served RPS**: Trần cũ được ghi nhận bằng Sustained Served RPS (174.75 RPS) tại highest passing stage, không dùng điểm spike trên Grafana.
 - [x] **Node-set hash không đổi & load generator không tranh capacity**: 
-  - Khẳng định: **Không thêm node** trong suốt quá trình test. Khảo sát file `nodes/before.json` và `nodes/after.json` cho thấy số lượng Node cố định là 9 -> 9. 
-  - Node-set SHA256 (full): `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+  - Khẳng định: **Không thêm node** trong suốt quá trình test. Khảo sát file [nodes/before.json](./mandate-19/pm-152/nodes/before.json) và [nodes/after.json](./mandate-19/pm-152/nodes/after.json) cho thấy số lượng Node cố định là 9 -> 9. 
+  - Node-set SHA256 (full): `9ABA3968DF9A04B50AE2050EC39822427642915F9C2F41E864F59C9E2BA2A08C`
   - Load generator chạy trên Node Pool riêng, không tranh giành CPU/Memory.
 - [x] **Raw Locust + exact-window Prometheus + trace đủ**: Raw evidence và timeline được xác nhận lưu trữ và đối chiếu.
 - [x] **Earliest bottleneck có saturation metric + trace**:
   - **Kết luận DUY NHẤT: `frontend` là service bão hòa sớm nhất.**
-  - **Metric chứng minh**: CPU của `frontend` đạt tới **208m/pod** (so với limit 250m, tức utilization ~83%). Đã bắt đầu xuất hiện CPU throttling metric. Số lượng replica chạm kịch trần HPA (8/8 pods). Các metric bão hòa này xuất hiện vào đúng phút thứ 4:30 của stage 410 users, ngay lập tức dẫn đến p95 latency tăng vọt và làm gãy SLO. Trong khi đó, CPU headroom của Node vẫn còn dư dả (khoảng 60% free).
+  - **Metric chứng minh (xem [frontend_cpu.json](./mandate-19/pm-152/prometheus/frontend_cpu.json))**: CPU của `frontend` đạt tới **208m/pod** (so với CPU **request** là 250m, tức HPA utilization tính theo request đạt ~83.2%). Đã bắt đầu xuất hiện CPU throttling metric. Số lượng replica chạm kịch trần HPA (8/8 pods). Các metric bão hòa này xuất hiện vào đúng phút thứ 4:30 của stage 410 users, ngay lập tức dẫn đến p95 latency tăng vọt và làm gãy SLO. Trong khi đó, CPU headroom của Node vẫn còn dư dả (khoảng 60% free).
   - **Loại trừ**: 
     - `product-reviews` chỉ ở mức 143m CPU/pod, HPA chưa max.
-    - **DB Pool**: RDS Postgres connection ổn định ở 50 active connections. DB Pool của application `OpenConnections = 45/100`, `WaitCount = 0`, `WaitDuration = 0ms`.
-    - **Envoy**: `upstream_rq_pending_overflow = 0` và `upstream_cx_overflow = 0` (Connection pool chưa bị tràn).
+    - **DB Pool (xem [db_pool.json](./mandate-19/pm-152/prometheus/db_pool.json))**: RDS Postgres connection ổn định ở 50 active connections. DB Pool của application `OpenConnections = 45/100`, `WaitCount = 0`, `WaitDuration = 0ms`.
+    - **Envoy (xem [envoy.json](./mandate-19/pm-152/prometheus/envoy.json))**: `upstream_rq_pending_overflow = 0` và `upstream_cx_overflow = 0` (Connection pool chưa bị tràn).
 - [x] **Correctness pass**: Hệ thống không gặp duplicate order hay rớt event trong quá trình test.
 - [x] **Recovery sau hạ tải được xác nhận**: Hệ thống tự động phục hồi SLO và HPA co xuống (scale down) bình thường khi ngừng bắn tải.
 - [x] **Không deployment/config/flag/backup interference**: Môi trường EKS hoàn toàn đóng băng (freeze) các thay đổi GitOps trong cửa sổ test.
