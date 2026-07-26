@@ -215,6 +215,7 @@ def test_pm176_premerge_image_gate_is_read_only_and_dual_arch():
     assert "linux/arm64" in workflow
     assert "--severity HIGH,CRITICAL" in workflow
     assert "--exit-code 1" in workflow
+    assert "--retry-all-errors" in workflow
     assert "actions/upload-artifact@" in workflow
     assert "persist-credentials: false" in workflow
     for forbidden in (
