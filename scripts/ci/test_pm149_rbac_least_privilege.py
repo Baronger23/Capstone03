@@ -329,6 +329,7 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
         "scripts/pm-176-grafana-smoke.sh",
         "docs/runbooks/pm-176-grafana-immutable-rollout.md",
         "docs/evidence/pm-176/01-pre-networkpolicy-runtime-test.md",
+        "docs/evidence/pm-176/02-post-pr473-default-preinstall-failure.md",
     }
     # PM-149 content files (excluding the test itself and docs).
     # Only enforce scope guard when the PR is actually a PM-149 content PR.
@@ -344,6 +345,7 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
         "scripts/pm-176-grafana-smoke.sh",
         "docs/runbooks/pm-176-grafana-immutable-rollout.md",
         "docs/evidence/pm-176/01-pre-networkpolicy-runtime-test.md",
+        "docs/evidence/pm-176/02-post-pr473-default-preinstall-failure.md",
     }
     if changed & pm176_paths:
         pm149_content.discard("phase3 - information/techx-corp-chart/values.yaml")
