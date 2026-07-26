@@ -1,5 +1,6 @@
-FROM docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS grafana-builder
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS grafana-builder
 
+ARG TARGETOS
 ARG TARGETARCH
 ARG GRAFANA_SOURCE_COMMIT=5d189285069d02af604bfaeedb21a0b6ec4c4d0a
 ARG GRAFANA_BUILD_NUMBER=30056490933
@@ -10,14 +11,21 @@ RUN git init \
     && git fetch --depth 1 origin "${GRAFANA_SOURCE_COMMIT}" \
     && git checkout --detach FETCH_HEAD \
     && test "$(git rev-parse HEAD)" = "${GRAFANA_SOURCE_COMMIT}"
-RUN go get github.com/getkin/kin-openapi@v0.144.0 \
-    && CGO_ENABLED=0 OS=linux ARCH="${TARGETARCH}" GO_BUILD_TAGS=oss WIRE_TAGS=oss \
-      COMMIT_SHA="${GRAFANA_SOURCE_COMMIT}" BUILD_BRANCH=main \
-      BUILD_NUMBER="${GRAFANA_BUILD_NUMBER}" \
-      make build-go
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go get github.com/getkin/kin-openapi@v0.144.0 \
+    && CGO_ENABLED=0 make build-go \
+      OS="${TARGETOS}" \
+      ARCH="${TARGETARCH}" \
+      GO_BUILD_TAGS=oss \
+      WIRE_TAGS=oss \
+      COMMIT_SHA="${GRAFANA_SOURCE_COMMIT}" \
+      BUILD_BRANCH=main \
+      BUILD_NUMBER="${GRAFANA_BUILD_NUMBER}"
 
-FROM docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS opensearch-plugin-builder
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS opensearch-plugin-builder
 
+ARG TARGETOS
 ARG TARGETARCH
 ARG OPENSEARCH_PLUGIN_COMMIT=b42207a0015573793e8f8842d06fdd658a1500fd
 
@@ -27,7 +35,9 @@ RUN git init \
     && git fetch --depth 1 origin "${OPENSEARCH_PLUGIN_COMMIT}" \
     && git checkout --detach FETCH_HEAD \
     && test "$(git rev-parse HEAD)" = "${OPENSEARCH_PLUGIN_COMMIT}"
-RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
     go build -trimpath -buildvcs=false -ldflags="-s -w" \
       -o "/out/gpx_opensearch-datasource_linux_${TARGETARCH}" ./pkg
 
