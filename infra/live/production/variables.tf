@@ -48,12 +48,12 @@ variable "node_instance_type" {
 
 variable "node_desired_size" {
   type    = number
-  default = 3
+  default = 4
 }
 
 variable "node_min_size" {
   type    = number
-  default = 3
+  default = 4
 }
 
 variable "node_max_size" {
@@ -76,6 +76,30 @@ variable "stateful_node_instance_type" {
   description = "Instance type for the dedicated on-demand stateful node group."
   type        = string
   default     = "t3.medium"
+}
+
+variable "enable_stateful_node_group" {
+  description = "Whether to provision the dedicated on-demand stateful node group."
+  type        = bool
+  default     = true
+}
+
+variable "stateful_node_desired_size" {
+  description = "Desired size for the dedicated on-demand stateful node group."
+  type        = number
+  default     = 1
+}
+
+variable "stateful_node_min_size" {
+  description = "Minimum size for the dedicated on-demand stateful node group."
+  type        = number
+  default     = 1
+}
+
+variable "stateful_node_max_size" {
+  description = "Maximum size for the dedicated on-demand stateful node group."
+  type        = number
+  default     = 1
 }
 
 variable "eks_admin_principal_arns" {
