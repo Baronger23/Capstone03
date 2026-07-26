@@ -73,6 +73,7 @@ Required PASS results:
   `grafana-opensearch-datasource`.
 - Datasource health is successful.
 - Startup log contains no runtime download/install attempt for any plugin.
+- Startup log contains no modified/invalid plugin signature or validation error.
 
 `BLOCKED` means the operator permission or tool is missing; it is not a pass.
 Resolve it or attach the output as incomplete evidence.

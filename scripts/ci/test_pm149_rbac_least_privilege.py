@@ -326,10 +326,13 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
         "scripts/ci/test_pm149_rbac_least_privilege.py",
         "docs/evidence/mandate-17/pm-149-rbac-least-privilege.md",
         "scripts/ci/test_pm176_grafana_immutable_runtime.py",
+        "scripts/ci/test_workflow_image_bump_contract.py",
         "scripts/pm-176-grafana-smoke.sh",
+        "phase3 - information/techx-corp-platform/src/grafana/Dockerfile",
         "docs/runbooks/pm-176-grafana-immutable-rollout.md",
         "docs/evidence/pm-176/01-pre-networkpolicy-runtime-test.md",
         "docs/evidence/pm-176/02-post-pr473-default-preinstall-failure.md",
+        "docs/evidence/pm-176/03-post-pr474-plugin-signature-failure.md",
     }
     # PM-149 content files (excluding the test itself and docs).
     # Only enforce scope guard when the PR is actually a PM-149 content PR.
@@ -342,10 +345,13 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
     # as PM-149 content merely because both mandates use the same values file.
     pm176_paths = {
         "scripts/ci/test_pm176_grafana_immutable_runtime.py",
+        "scripts/ci/test_workflow_image_bump_contract.py",
         "scripts/pm-176-grafana-smoke.sh",
+        "phase3 - information/techx-corp-platform/src/grafana/Dockerfile",
         "docs/runbooks/pm-176-grafana-immutable-rollout.md",
         "docs/evidence/pm-176/01-pre-networkpolicy-runtime-test.md",
         "docs/evidence/pm-176/02-post-pr473-default-preinstall-failure.md",
+        "docs/evidence/pm-176/03-post-pr474-plugin-signature-failure.md",
     }
     if changed & pm176_paths:
         pm149_content.discard("phase3 - information/techx-corp-chart/values.yaml")
