@@ -23,19 +23,27 @@ Các chỉ số (Metrics) được theo dõi sát sao trên Grafana:
 
 ## 4. Kết quả Đo đạc Baseline (Trần cũ)
 Sau quá trình tăng tải liên tục, hệ thống đã chính thức đạt đến giới hạn chịu đựng (Breakpoint) ở mức tải sau:
-- **Điểm gãy (Breakpoint):** 425 Locust Users
-- **RPS tại điểm gãy:** 88
-- **Hiện tượng khi gãy:** Hệ thống bắt đầu xuất hiện các lỗi 5xx, tỷ lệ Success Rate giảm xuống dưới ngưỡng SLO 99% cho phép, và p95 Latency tăng vọt. Nút thắt cổ chai (Bottleneck) chủ yếu xảy ra ở các service Frontend và Product Catalog do cạn kiệt tài nguyên CPU và giới hạn connection pool của Envoy.
+- **Điểm gãy (Breakpoint):** 410 Locust Users
+- **RPS tại điểm gãy:** 
+  - Browse (RPS): 86.3
+  - Cart (RPS): 84.4
+  - Checkout (RPS): 4.05
+- **Hiện tượng khi gãy:** Hệ thống bắt đầu xuất hiện các lỗi 5xx, tỷ lệ Success Rate giảm xuống dưới ngưỡng SLO 99% cho phép, và p95 Latency tăng vọt. 
+- **Các Service ngốn CPU nhiều nhất (Nút thắt cổ chai):** 
+  - `frontend`: Sử dụng lên tới **208m CPU** cho một pod và đã chạm kịch trần số lượng replica (8 pods).
+  - `product-reviews`: Sử dụng lên tới **143m CPU** cho một pod.
 
 ### Minh chứng số liệu (Evidence)
-Dưới đây là các hình ảnh chụp lại biểu đồ Grafana và Locust tại thời điểm hệ thống chạm trần 425 users:
+Dưới đây là các hình ảnh chụp lại biểu đồ Grafana và Locust tại thời điểm hệ thống chạm trần 410 users:
 
-![Grafana SLO Dashboard](../../tests/kyverno/mandate-05/test_slo/425_user.jpg)
+![Grafana SLO Dashboard](../../tests/kyverno/mandate-05/test_slo/grafana.jpg)
 
-![Locust Baseline](../../tests/kyverno/mandate-05/test_slo/425_user_01.jpg)
+![Locust Baseline](../../tests/kyverno/mandate-05/test_slo/Locust_tran.jpg)
+
+![Nodes Topology](../../tests/kyverno/mandate-05/test_slo/nodes.jpg)
 
 ## 5. Đề xuất Tối ưu (Next Steps)
-Dựa trên điểm gãy 425 users, chúng tôi đề xuất thực hiện Phase 2 (Tuning):
+Dựa trên điểm gãy 410 users, chúng tôi đề xuất thực hiện Phase 2 (Tuning):
 - Tăng giới hạn `max_requests` của Envoy Circuit Breaker.
 - Điều chỉnh `averageUtilization` của HPA lên 75% để tăng mật độ request trên mỗi Pod (Pod Density).
-- Sau khi áp dụng, tiến hành Load Test lại để chứng minh hệ thống có thể chịu được lượng users lớn hơn 425 trên cùng một hạ tầng Node.
+- Sau khi áp dụng, tiến hành Load Test lại để chứng minh hệ thống có thể chịu được lượng users lớn hơn 410 trên cùng một hạ tầng Node.
