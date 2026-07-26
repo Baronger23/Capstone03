@@ -32,7 +32,7 @@ env:
   TRIVY_SEVERITIES: HIGH,CRITICAL
   ALL_SERVICES: >-
     accounting ad cart checkout currency email fraud-detection frontend
-    frontend-proxy image-provider kafka llm load-generator payment
+    frontend-proxy grafana image-provider kafka llm load-generator payment
     product-catalog product-reviews quote recommendation shipping flagd-ui
 
 jobs:
