@@ -1704,12 +1704,18 @@ grafana:
       enabled: true
       org_name: Main Org.
       org_role: Admin
+    analytics:
+      check_for_updates: false
+      reporting_enabled: false
+    # PM-176: the custom, digest-pinned Grafana image owns the OpenSearch
+    # plugin. Overriding the chart-native path renders exactly one
+    # GF_PATHS_PLUGINS entry and avoids the writable runtime plugin directory.
+    paths:
+      plugins: /opt/grafana/plugins
     server:
       root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana"
       serve_from_sub_path: true
   adminPassword: admin
-  plugins:
-    - grafana-opensearch-datasource
   sidecar:
     securityContext:
       runAsUser: 65534
