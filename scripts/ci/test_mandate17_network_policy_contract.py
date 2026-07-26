@@ -606,6 +606,17 @@ def test_active_cloudflared_egress_reaches_only_cloudflare_and_the_four_tunnel_r
     for port in (443, 7844):
         assert CLOUDFLARE_EDGE_RANGES <= ipblocks_for_egress_port(policy, port)
 
+    # QUIC runs on 7844, and cloudflared's Go HTTP client does not speak HTTP/3, so
+    # 443/udp has no caller and must stay closed.
+    protocol_ports = {
+        (item.get("protocol", "TCP"), item["port"])
+        for rule in policy["spec"].get("egress", [])
+        for item in rule.get("ports", [])
+    }
+    assert ("UDP", 7844) in protocol_ports
+    assert ("TCP", 7844) in protocol_ports
+    assert ("UDP", 443) not in protocol_ports
+
     # Route 1 - kubectl.arthur-ngo.org reaches the private EKS endpoint ENIs, which EKS
     # rotates on its own, so the three production private subnets are the stable unit.
     assert ipblocks_for_egress_port(policy, 443) == CLOUDFLARE_EDGE_RANGES | {

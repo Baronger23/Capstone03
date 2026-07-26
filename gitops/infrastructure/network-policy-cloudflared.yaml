@@ -31,10 +31,17 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     # Cloudflare Tunnel transport. cloudflared prefers QUIC on 7844/udp, falls back to
-    # HTTP/2 on 443, and reaches api.cloudflare.com over 443 - all of which land inside the
-    # published Cloudflare ranges below. The full list is allowed rather than today's two
-    # argotunnel /24s because Cloudflare re-homes tunnel edges without notice, and pinning
-    # a /24 would cut the mentors' only SSO path the first time that happens.
+    # HTTP/2 on 7844/tcp, and reaches api.cloudflare.com over 443/tcp - all of which land
+    # inside the published Cloudflare ranges below. The full list is allowed rather than
+    # today's two argotunnel /24s because Cloudflare re-homes tunnel edges without notice,
+    # and pinning a /24 would cut the mentors' only SSO path the first time that happens.
+    #
+    # 443/udp is deliberately NOT opened. QUIC runs on 7844, and cloudflared's Go HTTP
+    # client does not speak HTTP/3, so nothing here needs it.
+    #
+    # These CIDRs are a snapshot of an externally-owned list. Re-check against
+    # https://www.cloudflare.com/ips-v4 when touching this policy - the annotation above
+    # records when it was last read.
     - to:
         - ipBlock: { cidr: 173.245.48.0/20 }
         - ipBlock: { cidr: 103.21.244.0/22 }
@@ -55,7 +62,6 @@ spec:
         - { protocol: TCP, port: 7844 }
         - { protocol: UDP, port: 7844 }
         - { protocol: TCP, port: 443 }
-        - { protocol: UDP, port: 443 }
     # Route 1/4 - kubectl.arthur-ngo.org -> tcp://<private EKS endpoint>:443. The endpoint
     # resolved to 10.0.23.132 and 10.0.8.89 on 2026-07-26, but EKS replaces those ENIs on
     # its own, so the three production private subnets are the stable unit here.
