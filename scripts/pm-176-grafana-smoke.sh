@@ -123,6 +123,7 @@ fi
 
 grafana_ini="$(kubectl get configmap -n "$NS" grafana -o jsonpath='{.data.grafana\.ini}')"
 required_plugin_settings=(
+  "allow_loading_unsigned_plugins = grafana-opensearch-datasource"
   "preinstall_disabled = true"
   "preinstall_auto_update = false"
   "plugin_admin_enabled = false"

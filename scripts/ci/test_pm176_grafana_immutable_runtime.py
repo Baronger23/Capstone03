@@ -19,6 +19,7 @@ VALUES = [
 SMOKE = REPO / "scripts" / "pm-176-grafana-smoke.sh"
 PLUGIN_PATH = "/opt/grafana/plugins"
 PLUGIN_SETTINGS = {
+    "allow_loading_unsigned_plugins": "grafana-opensearch-datasource",
     "preinstall_disabled": True,
     "preinstall_auto_update": False,
     "plugin_admin_enabled": False,
@@ -148,6 +149,7 @@ def test_pm176_smoke_script_is_read_only_and_syntax_valid():
         assert forbidden not in script
     for required in (
         "GF_PATHS_PLUGINS",
+        "allow_loading_unsigned_plugins = grafana-opensearch-datasource",
         "preinstall_disabled = true",
         "failed to install plugin",
         "modified signature",
