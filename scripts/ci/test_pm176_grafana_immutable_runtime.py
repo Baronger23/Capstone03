@@ -18,6 +18,12 @@ VALUES = [
 ]
 SMOKE = REPO / "scripts" / "pm-176-grafana-smoke.sh"
 PLUGIN_PATH = "/opt/grafana/plugins"
+PLUGIN_SETTINGS = {
+    "preinstall_disabled": True,
+    "preinstall_auto_update": False,
+    "plugin_admin_enabled": False,
+    "plugin_admin_external_manage_enabled": False,
+}
 IMAGE_RE = re.compile(
     r"^197826770971\.dkr\.ecr\.ap-southeast-1\.amazonaws\.com/"
     r"techx-corp:[A-Za-z0-9_.-]+-grafana@sha256:[0-9a-f]{64}$"
@@ -116,6 +122,9 @@ def test_pm176_render_uses_baked_plugin_without_runtime_installer():
     assert "[analytics]" in grafana_ini
     assert "check_for_updates = false" in grafana_ini
     assert "reporting_enabled = false" in grafana_ini
+    assert "[plugins]" in grafana_ini
+    for key, value in PLUGIN_SETTINGS.items():
+        assert f"{key} = {str(value).lower()}" in grafana_ini
 
 
 def test_pm176_base_values_do_not_declare_runtime_plugins():
@@ -128,6 +137,7 @@ def test_pm176_base_values_do_not_declare_runtime_plugins():
         "check_for_updates": False,
         "reporting_enabled": False,
     }
+    assert grafana["grafana.ini"]["plugins"] == PLUGIN_SETTINGS
 
 
 def test_pm176_smoke_script_is_read_only_and_syntax_valid():
