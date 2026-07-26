@@ -333,6 +333,7 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
         "docs/evidence/pm-176/01-pre-networkpolicy-runtime-test.md",
         "docs/evidence/pm-176/02-post-pr473-default-preinstall-failure.md",
         "docs/evidence/pm-176/03-post-pr474-plugin-signature-failure.md",
+        "docs/evidence/pm-176/04-post-pr475-trivy-block.md",
     }
     # PM-149 content files (excluding the test itself and docs).
     # Only enforce scope guard when the PR is actually a PM-149 content PR.
@@ -352,6 +353,7 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
         "docs/evidence/pm-176/01-pre-networkpolicy-runtime-test.md",
         "docs/evidence/pm-176/02-post-pr473-default-preinstall-failure.md",
         "docs/evidence/pm-176/03-post-pr474-plugin-signature-failure.md",
+        "docs/evidence/pm-176/04-post-pr475-trivy-block.md",
     }
     if changed & pm176_paths:
         pm149_content.discard("phase3 - information/techx-corp-chart/values.yaml")

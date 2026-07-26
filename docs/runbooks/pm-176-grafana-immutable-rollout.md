@@ -43,6 +43,7 @@ ECR `tag@sha256` image reference. The rendered `grafana.ini` must also contain:
 
 ```ini
 [plugins]
+allow_loading_unsigned_plugins = grafana-opensearch-datasource
 preinstall_disabled = true
 preinstall_auto_update = false
 plugin_admin_enabled = false
