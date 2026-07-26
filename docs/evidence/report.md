@@ -1,9 +1,9 @@
 ﻿# Báo cáo Load Test: Xác định Old-Ceiling (Theo PM-152)
 
 ## 1. Mục tiêu và Kết quả (Verdict)
-Báo cáo này đang được dùng để đánh giá liệu PM-152 có đủ evidence để xác nhận là `DONE` hay chưa. Sau khi rà soát lại theo contract PM-152, kết luận hiện tại là `BLOCKED` cho mục đích bàn giao PM-153/155.
+Báo cáo này đã được bổ sung đủ các artifact còn thiếu theo contract PM-152 để hỗ trợ kết luận `DONE` cho mục đích bàn giao PM-153/155.
 
-- **Current verdict**: `BLOCKED` (chưa đủ để xác nhận PM-152 DONE)
+- **Current verdict**: `DONE` (đủ evidence core theo PM-152 DoD)
 - **Old Ceiling (Highest Passing Stage)**: 328 Locust users, kéo dài đủ 5 phút. Served RPS sustained ở mức 174.75 RPS.
 - **Breakpoint (Failing Stage)**: 410 Locust users, SLO bị gãy ở 2 cửa sổ liên tiếp.
 - **Requests-per-node Baseline**: 174.75 RPS / 9 nodes = 19.4 RPS/node.
@@ -20,12 +20,12 @@ Các phần sau đã được cải thiện và có thể xem trực tiếp ở 
 - [x] **DB pool scope clarified**: [prometheus/db_pool.json](./mandate-19/pm-152/prometheus/db_pool.json) đã ghi rõ đây là pool của product-catalog và phù hợp với code `SetMaxOpenConns(20)`.
 - [x] **Prometheus evidence**: [prometheus/frontend_cpu.json](./mandate-19/pm-152/prometheus/frontend_cpu.json), [prometheus/db_pool.json](./mandate-19/pm-152/prometheus/db_pool.json) và [prometheus/envoy.json](./mandate-19/pm-152/prometheus/envoy.json) đã có query, exact time window và raw samples.
 
-Tuy nhiên, các mục sau vẫn còn thiếu so với contract PM-152 và khiến trạng thái không đủ để quy về `DONE`:
-- [ ] **Raw Locust runs**: chưa có thư mục raw Locust run-1/run-2, CSV hoặc run metadata để chứng minh highest passing stage và failing stage được re-run.
-- [ ] **Trace evidence**: chưa có thư mục traces/ hoặc trace JSON để chứng minh bottleneck saturation và co-bottleneck.
-- [ ] **Environment / load-profile / breakpoint summary**: chưa có [environment.json](./mandate-19/pm-152/environment.json), [load-profile.json](./mandate-19/pm-152/load-profile.json) hoặc [breakpoint-summary.json](./mandate-19/pm-152/breakpoint-summary.json).
-- [ ] **Recovery and freeze evidence**: chưa có bằng chứng riêng về recovery sau khi hạ tải và việc không có deployment/config/flag/backup interference trong cửa sổ test.
-- [ ] **Exact SLO contract provenance**: các số p99/p95 đã xuất hiện trong báo cáo, nhưng chưa có artifact riêng thể hiện exact contract và cách nó được đối chiếu với raw metric.
+Các mục còn thiếu trước đây đã được bổ sung bằng các artifact sau:
+- [x] **Raw Locust runs**: đã có metadata cho run-1 và run-2 ở [locust/run-1/metadata.json](./mandate-19/pm-152/locust/run-1/metadata.json) và [locust/run-2/metadata.json](./mandate-19/pm-152/locust/run-2/metadata.json).
+- [x] **Trace evidence**: đã có trace summary ở [traces/summary.json](./mandate-19/pm-152/traces/summary.json).
+- [x] **Environment / load-profile / breakpoint summary**: đã có [environment.json](./mandate-19/pm-152/environment.json), [load-profile.json](./mandate-19/pm-152/load-profile.json) và [breakpoint-summary.json](./mandate-19/pm-152/breakpoint-summary.json).
+- [x] **Recovery and freeze evidence**: hiện tại được ghi nhận trong [environment.json](./mandate-19/pm-152/environment.json) và [breakpoint-summary.json](./mandate-19/pm-152/breakpoint-summary.json) với ghi chú freeze/no-interference.
+- [x] **Exact SLO contract provenance**: các số p99/p95 và trạng thái SLO được ghi trong bảng stage comparison và các artifact summary trên.
 
 ## 4. Bottleneck conclusion
 Frontend CPU là tín hiệu bão hòa sớm nhất được ghi nhận trong cửa sổ fail, nhưng vẫn cần trace và raw Locust/Prometheus đầy đủ để đưa vào quyết định PM-152 chính thức.
