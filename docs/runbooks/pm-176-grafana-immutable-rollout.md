@@ -39,7 +39,15 @@ python3 -m pytest -q \
 
 The render must show exactly one `GF_PATHS_PLUGINS=/opt/grafana/plugins`
 entry, no `GF_PLUGINS_PREINSTALL*` entry, no plugin installer command, and an
-ECR `tag@sha256` image reference.
+ECR `tag@sha256` image reference. The rendered `grafana.ini` must also contain:
+
+```ini
+[plugins]
+preinstall_disabled = true
+preinstall_auto_update = false
+plugin_admin_enabled = false
+plugin_admin_external_manage_enabled = false
+```
 
 ## Non-destructive runtime gate
 
@@ -64,7 +72,7 @@ Required PASS results:
 - Datasource UID `webstore-logs` has type
   `grafana-opensearch-datasource`.
 - Datasource health is successful.
-- Startup log contains no runtime download/install for the OpenSearch plugin.
+- Startup log contains no runtime download/install attempt for any plugin.
 
 `BLOCKED` means the operator permission or tool is missing; it is not a pass.
 Resolve it or attach the output as incomplete evidence.
