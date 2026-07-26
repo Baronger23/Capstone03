@@ -148,6 +148,8 @@ def test_pm176_smoke_script_is_read_only_and_syntax_valid():
         assert forbidden not in script
     for required in (
         "GF_PATHS_PLUGINS",
+        "preinstall_disabled = true",
+        "failed to install plugin",
         "grafana-opensearch-datasource/plugin.json",
         "/api/datasources/uid/webstore-logs",
         "EXPECT_EGRESS_BLOCK",

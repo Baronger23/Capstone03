@@ -121,6 +121,21 @@ else
   fail "GF_PATHS_PLUGINS points to the immutable image path"
 fi
 
+grafana_ini="$(kubectl get configmap -n "$NS" grafana -o jsonpath='{.data.grafana\.ini}')"
+required_plugin_settings=(
+  "preinstall_disabled = true"
+  "preinstall_auto_update = false"
+  "plugin_admin_enabled = false"
+  "plugin_admin_external_manage_enabled = false"
+)
+for setting in "${required_plugin_settings[@]}"; do
+  if grep -Fqx "$setting" <<<"$grafana_ini"; then
+    pass "Grafana config contains: $setting"
+  else
+    fail "Grafana config contains: $setting"
+  fi
+done
+
 manifest="$(
   kubectl exec -n "$NS" "$pod" -c grafana -- sh -ceu \
     "test -f '$EXPECTED_PLUGIN_PATH/grafana-opensearch-datasource/plugin.json' && \
@@ -135,11 +150,11 @@ fi
 
 startup_log="$(kubectl logs -n "$NS" "$pod" -c grafana)"
 if grep -Eqi \
-  'download(ed)? and extracted grafana-opensearch-datasource|installing plugin.*grafana-opensearch-datasource|plugin successfully installed.*grafana-opensearch-datasource' \
+  'plugin\.(backgroundinstaller|installer).*installing plugin|download(ed)? and extracted|plugin successfully installed|failed to install plugin' \
   <<<"$startup_log"; then
-  fail "Grafana did not download the OpenSearch plugin at startup"
+  fail "Grafana made no runtime plugin install/download attempt"
 else
-  pass "Grafana did not download the OpenSearch plugin at startup"
+  pass "Grafana made no runtime plugin install/download attempt"
 fi
 
 if [[ -z "$GRAFANA_BASE_URL" ]]; then
