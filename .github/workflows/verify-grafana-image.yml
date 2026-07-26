@@ -122,7 +122,8 @@ jobs:
           fi
 
           docker logs "${container}" 2>&1 |
-            grep -Fq "Plugin registered pluginId=grafana-opensearch-datasource"
+            grep -Fq \
+              'msg="Plugin registered" pluginId=grafana-opensearch-datasource'
 
       - name: Upload PM-176 verification evidence
         if: always()
