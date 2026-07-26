@@ -1,6 +1,7 @@
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -24,22 +25,33 @@ IMAGE_RE = re.compile(
 
 
 def render_production() -> list[dict]:
-    result = subprocess.run(
-        [
-            "helm",
-            "template",
-            "techx-corp",
-            str(CHART),
-            "--namespace",
-            "techx-tf3",
-            *sum((["-f", str(path)] for path in VALUES), []),
-        ],
-        cwd=REPO,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        chart_copy = Path(tmpdir) / CHART.name
+        shutil.copytree(CHART, chart_copy)
+        subprocess.run(
+            ["helm", "dependency", "build", str(chart_copy)],
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        values = [chart_copy / "values.yaml", *VALUES[1:]]
+        result = subprocess.run(
+            [
+                "helm",
+                "template",
+                "techx-corp",
+                str(chart_copy),
+                "--namespace",
+                "techx-tf3",
+                *sum((["-f", str(path)] for path in values), []),
+            ],
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
 
 
 def named_document(documents: list[dict], kind: str, name: str) -> dict:
