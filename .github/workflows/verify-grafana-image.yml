@@ -114,16 +114,18 @@ jobs:
           docker exec "${container}" \
             test -f /opt/grafana/plugins/grafana-opensearch-datasource/TF3-PROVENANCE
 
-          if docker logs "${container}" 2>&1 |
-            grep -Eiq \
-              'plugin\.(backgroundinstaller|installer).*installing|download(ed)? and extracted|failed to install plugin|modified signature|skipping loading plugin due to problem with signature|plugin validation failed'; then
+          docker logs "${container}" > "${report}" 2>&1
+
+          if grep -Eiq \
+              'plugin\.(backgroundinstaller|installer).*installing|download(ed)? and extracted|failed to install plugin|modified signature|skipping loading plugin due to problem with signature|plugin validation failed' \
+              "${report}"; then
             echo "FAIL: runtime plugin installation/download/signature failure detected" >&2
             exit 1
           fi
 
-          docker logs "${container}" 2>&1 |
-            grep -Fq \
-              'msg="Plugin registered" pluginId=grafana-opensearch-datasource'
+          grep -Fq \
+            'msg="Plugin registered" pluginId=grafana-opensearch-datasource' \
+            "${report}"
 
       - name: Upload PM-176 verification evidence
         if: always()
