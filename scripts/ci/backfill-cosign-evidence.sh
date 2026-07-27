@@ -24,29 +24,33 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-usage: backfill-cosign-evidence.sh --pairs "<service>=<digest> [<service>=<digest> ...]"
+usage: backfill-cosign-evidence.sh --pairs "<service>=<digest>=<sourceSha> [...]"
                                    --registry <registry> --repository <repo>
-                                   --platforms <csv> --source-sha <sha>
+                                   --platforms <csv>
                                    --identity <workflow identity> --evidence-root <dir>
+
+<sourceSha> is the commit the image was ORIGINALLY built from, not the commit
+running the backfill. Directive #10 requires tracing a running pod back to its
+source commit, so recording the backfill run's SHA here would make that trace
+point at a commit that never produced the image.
 USAGE
   exit 2
 }
 
-PAIRS="" REGISTRY="" REPOSITORY="" PLATFORMS="" SOURCE_SHA="" IDENTITY="" EVIDENCE_ROOT=""
+PAIRS="" REGISTRY="" REPOSITORY="" PLATFORMS="" IDENTITY="" EVIDENCE_ROOT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --pairs) PAIRS="$2"; shift 2 ;;
     --registry) REGISTRY="$2"; shift 2 ;;
     --repository) REPOSITORY="$2"; shift 2 ;;
     --platforms) PLATFORMS="$2"; shift 2 ;;
-    --source-sha) SOURCE_SHA="$2"; shift 2 ;;
     --identity) IDENTITY="$2"; shift 2 ;;
     --evidence-root) EVIDENCE_ROOT="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; usage ;;
   esac
 done
 
-for required in PAIRS REGISTRY REPOSITORY PLATFORMS SOURCE_SHA IDENTITY EVIDENCE_ROOT; do
+for required in PAIRS REGISTRY REPOSITORY PLATFORMS IDENTITY EVIDENCE_ROOT; do
   if [ -z "${!required}" ]; then
     echo "FAIL: --${required,,} is required" >&2
     usage
@@ -74,20 +78,26 @@ fi
 # Pre-flight: reject malformed input and digests that already carry evidence,
 # before any registry write happens. A partial backfill would leave a digest
 # permanently un-completable, because the .att tag can only be written once.
-declare -a SERVICES=() DIGESTS=()
+declare -a SERVICES=() DIGESTS=() SOURCE_SHAS=()
 for pair in "${PAIR_ARRAY[@]}"; do
-  service="${pair%%=*}"
-  digest="${pair#*=}"
-  if [ -z "$service" ] || [ -z "$digest" ] || [ "$service" = "$pair" ]; then
-    echo "FAIL: malformed pair '$pair', expected <service>=<digest>" >&2
+  IFS='=' read -r service digest source_sha extra <<< "$pair"
+  if [ -z "$service" ] || [ -z "$digest" ] || [ -z "$source_sha" ] || [ -n "${extra:-}" ]; then
+    echo "FAIL: malformed pair '$pair', expected <service>=<digest>=<sourceSha>" >&2
     exit 1
   fi
   if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     echo "FAIL: '$service' digest is not a sha256 digest: $digest" >&2
     exit 1
   fi
+  # The ClusterPolicy requires techx.sourceSha to look like a commit, and the
+  # directive requires it to be the commit this image was actually built from.
+  if ! [[ "$source_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
+    echo "FAIL: '$service' source SHA is not a commit sha: $source_sha" >&2
+    exit 1
+  fi
   SERVICES+=("$service")
   DIGESTS+=("$digest")
+  SOURCE_SHAS+=("$source_sha")
 done
 
 echo "== Pre-flight: checking for existing Cosign evidence =="
@@ -116,6 +126,7 @@ fi
 for i in "${!SERVICES[@]}"; do
   service="${SERVICES[$i]}"
   index_digest="${DIGESTS[$i]}"
+  SOURCE_SHA="${SOURCE_SHAS[$i]}"
   index_image="${REGISTRY}/${REPOSITORY}@${index_digest}"
   manifest_raw="$MANIFEST_ROOT/${service}.json"
   platform_map="$PLATFORM_ROOT/${service}.json"

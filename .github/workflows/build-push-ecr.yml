@@ -17,9 +17,10 @@ on:
         default: ""
       backfill_digests:
         description: >-
-          Backfill only. Space-separated <service>=<sha256:digest> pairs of existing
-          index digests that need legacy Cosign evidence. Skips build/push entirely
-          and never promotes; leave empty for a normal build.
+          Backfill only. Space-separated <service>=<sha256:digest>=<sourceSha> triples
+          for existing index digests that need legacy Cosign evidence. sourceSha is the
+          commit the image was originally built from, not this run's commit. Skips
+          build/push entirely and never promotes; leave empty for a normal build.
         required: false
         default: ""
 
@@ -1540,7 +1541,6 @@ jobs:
         env:
           BACKFILL_DIGESTS: ${{ inputs.backfill_digests }}
           BUILD_PLATFORMS: ${{ inputs.platforms }}
-          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           bash scripts/ci/backfill-cosign-evidence.sh \
@@ -1548,7 +1548,6 @@ jobs:
             --registry "$ECR_REGISTRY" \
             --repository "$ECR_REPOSITORY" \
             --platforms "$BUILD_PLATFORMS" \
-            --source-sha "$SOURCE_SHA" \
             --identity "https://github.com/${GITHUB_WORKFLOW_REF}" \
             --evidence-root "$GITHUB_WORKSPACE/backfill-evidence"
 
