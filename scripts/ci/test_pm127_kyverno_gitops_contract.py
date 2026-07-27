@@ -19,7 +19,7 @@ def test_kyverno_controller_is_gitops_managed_and_version_pinned():
     assert application["spec"]["source"]["targetRevision"] == "3.8.2"
     assert application["spec"]["destination"]["namespace"] == "kyverno"
     assert application["spec"]["syncPolicy"]["automated"] == {
-        "enabled": False,
+        "enabled": True,
         "prune": True,
         "selfHeal": True,
     }
@@ -39,10 +39,10 @@ def test_only_registry_verifier_controllers_receive_irsa():
     assert "rbac" not in values["cleanupController"]
 
 
-def test_kyverno_reconciliation_is_paused_until_iam_is_applied():
+def test_controller_reconciles_after_iam_while_policies_remain_paused():
     controller = load_yaml("gitops/apps/kyverno-app.yaml")
     policies = load_yaml("gitops/apps/kyverno-policies-app.yaml")
-    assert controller["spec"]["syncPolicy"]["automated"]["enabled"] is False
+    assert controller["spec"]["syncPolicy"]["automated"]["enabled"] is True
     assert policies["spec"]["syncPolicy"]["automated"]["enabled"] is False
 
 
