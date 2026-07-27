@@ -1,0 +1,108 @@
+# Shopping Copilot Deployment.
+#
+# ⚠️ IMAGE IS DIGEST-PINNED (PM-101). The placeholder below MUST be replaced with the real
+# digest emitted by .github/workflows/build-push-copilot.yml before this app is allowed to
+# sync - until then the pod stays ImagePullBackOff (harmless to other services). Never pin a
+# mutable tag like :v1.0.0.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopping-copilot
+  namespace: techx-tf3
+  labels:
+    app: shopping-copilot
+    app.kubernetes.io/part-of: techx-corp
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # keep full capacity during rollout (REL-01 / Mandate #3 posture)
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: shopping-copilot
+  template:
+    metadata:
+      labels:
+        app: shopping-copilot
+        app.kubernetes.io/part-of: techx-corp
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: shopping-copilot-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread the 2 replicas across zones AND hosts so a single node/AZ loss can't take
+      # both down (matches how we made the other HA pairs survive drains).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: shopping-copilot
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: shopping-copilot
+      containers:
+        - name: shopping-copilot
+          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/shopping-copilot@sha256:REPLACE_WITH_CI_DIGEST
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+              name: http
+          envFrom:
+            - configMapRef:
+                name: shopping-copilot-config
+          env:
+            # RDS DSN (libpq keyword form, sslmode=require) - same secret product-reviews uses.
+            - name: DB_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: techx-tf3-postgres-conn
+                  key: libpq
+            # ElastiCache Valkey URL: rediss:// with auth token, rendered by ExternalSecret.
+            - name: VALKEY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: shopping-copilot-valkey-url
+                  key: url
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3

@@ -1,0 +1,22 @@
+# ArgoCD Application for the shopping-copilot service. Picked up by the app-of-apps
+# (techx-corp-bootstrap watches gitops/apps). Renders the plain manifests in
+# gitops/shopping-copilot (no Helm - the copilot is a standalone image, not a techx-corp
+# chart component, so it does not go through values.schema.json).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopping-copilot
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel.git'
+    targetRevision: main
+    path: gitops/shopping-copilot
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: techx-tf3
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

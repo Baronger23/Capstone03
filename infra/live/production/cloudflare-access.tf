@@ -31,5 +31,12 @@ module "cloudflare_access" {
       service       = "https://argocd-server.argocd.svc.cluster.local:443"
       no_tls_verify = true
     }
+    # Shopping Copilot UI (/chatbot) behind SSO - customer-facing chat is NOT exposed on
+    # the public storefront yet; team/mentor reach it through Cloudflare Access, same auth
+    # boundary as the other internal UIs. Plain HTTP inside the cluster; Access is the gate.
+    copilot = {
+      hostname = "copilot.${var.cloudflare_zone_name}"
+      service  = "http://shopping-copilot.techx-tf3.svc.cluster.local:8001"
+    }
   } : {}
 }
