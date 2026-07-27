@@ -159,10 +159,12 @@ policies through a later PR only after controller health is proven.
 
 The first controller sync may report `OutOfSync` for the Kyverno
 `policies.kyverno.io` CRDs because Helm renders `metadata.labels: {}` while the
-Kubernetes API omits an empty labels map. The approved follow-up ignores only
-that JSON pointer for Kyverno chart CRDs. It does not ignore CRD `spec` or any
-policy resource. Re-check the Application after reconciliation; any remaining
-diff outside `/metadata/labels` is a real drift and must be investigated.
+Kubernetes API omits an empty labels map. An initial `ignoreDifferences`
+workaround did not clear this status on Argo CD v3.4.5. The canonical
+remediation sets a stable label through the chart's `kyverno-api.labels` value,
+so the API server persists the desired metadata. No CRD fields are ignored:
+re-check the Application after reconciliation and investigate every remaining
+diff as real drift.
 
 If Argo reports `ComparisonError`, inspect chart dependencies and the exact
 Git revision before touching the cluster. Do not bypass GitOps with a manual
