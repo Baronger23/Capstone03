@@ -46,6 +46,17 @@ def test_controller_reconciles_after_iam_while_policies_remain_paused():
     assert policies["spec"]["syncPolicy"]["automated"]["enabled"] is False
 
 
+def test_crd_ignore_is_limited_to_empty_labels_metadata():
+    application = load_yaml("gitops/apps/kyverno-app.yaml")
+    assert application["spec"]["ignoreDifferences"] == [
+        {
+            "group": "apiextensions.k8s.io",
+            "kind": "CustomResourceDefinition",
+            "jsonPointers": ["/metadata/labels"],
+        }
+    ]
+
+
 def test_admission_and_reports_controllers_are_ha_and_immutable():
     application = load_yaml("gitops/apps/kyverno-app.yaml")
     values = yaml.safe_load(application["spec"]["source"]["helm"]["values"])
