@@ -346,6 +346,11 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
     # Updating only the test file or CI infra does not constitute a PM-149 PR.
     pm149_content = allowed - {
         "scripts/ci/test_pm149_rbac_least_privilege.py",
+        # Shared CI contract test: it pins the job set of build-push-ecr.yml, so
+        # any mandate that adds a job has to touch it. Treating it as PM-149
+        # content makes this guard fire on unrelated PRs (PM-127 hit exactly
+        # that when it registered the backfill-evidence job).
+        "scripts/ci/test_workflow_image_bump_contract.py",
     }
     # PM-176 intentionally changes the shared chart values file to remove the
     # runtime Grafana plugin installer. Do not classify that unrelated change
