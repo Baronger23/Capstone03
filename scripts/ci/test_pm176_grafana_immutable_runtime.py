@@ -176,6 +176,7 @@ def test_pm176_opensearch_datasource_uses_daily_time_pattern():
     assert item["uid"] == "webstore-logs"
     assert item["type"] == "grafana-opensearch-datasource"
     assert item["jsonData"]["database"] == "[otel-logs-]YYYY-MM-DD"
+    assert item["jsonData"]["interval"] == "Daily"
     assert item["jsonData"]["pplEnabled"] is True
 
 

@@ -59,9 +59,10 @@ set `GF_PLUGINS_PREINSTALL_DISABLED=true`; setting
 otherwise starts its default catalog installer.
 
 The provisioned OpenSearch datasource must use
-`database: "[otel-logs-]YYYY-MM-DD"`. Grafana's OpenSearch health endpoint can
-treat a literal `otel-logs-*` value as an index name even when matching daily
-indices exist; dashboard PPL queries may continue to use
+`database: "[otel-logs-]YYYY-MM-DD"` together with
+`interval: Daily`. The interval is required for the plugin to expand the
+time-pattern during Save & Test; without it, the health endpoint treats the
+pattern as a literal index name. Dashboard PPL queries may continue to use
 `source=otel-logs-*`.
 
 ## Non-destructive runtime gate
