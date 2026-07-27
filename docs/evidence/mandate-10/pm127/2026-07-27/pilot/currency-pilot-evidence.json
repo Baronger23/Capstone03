@@ -1,0 +1,58 @@
+{
+  "phase": "Giai doan B - scoped pilot after PR #493",
+  "result": "PASS",
+  "generatedAt": "2026-07-27T17:50:00Z",
+  "service": "currency",
+  "sourceSha": "5419a9ff37c549effad88180a07e33360b6edfd6",
+  "workflowRunId": "30287961994",
+  "workflowRunAttempt": "1",
+  "workflowRunUrl": "https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/actions/runs/30287961994",
+  "imageTag": "pm127-currency-20260727T170903Z",
+  "imageRepository": "197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp",
+  "indexDigest": "sha256:e19420e85851b042061948345f9d9956ba2dd448ec4b9f62e245e5a86b9915ac",
+  "signatureIdentity": "https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/.github/workflows/build-push-ecr.yml@refs/heads/main",
+  "signatureIssuer": "https://token.actions.githubusercontent.com",
+  "sbomPredicateType": "https://cyclonedx.org/bom",
+  "indexAttestationCount": 1,
+  "platforms": [
+    {
+      "platform": "linux/amd64",
+      "childDigest": "sha256:ad20f51d8436247bc2a36b0751cc44a2aef003629eca4e33f8f8f4becf023efe",
+      "bomFormat": "CycloneDX",
+      "componentCount": 154,
+      "subjectDigestMatches": true,
+      "indexDigestMatches": true,
+      "attestationVerified": true,
+      "oneCommandRetrieval": "PASS"
+    },
+    {
+      "platform": "linux/arm64",
+      "childDigest": "sha256:706692e83421f473e7e955c829cf31082c6dd3e315920c548c4a92d4393162b2",
+      "bomFormat": "CycloneDX",
+      "componentCount": 154,
+      "subjectDigestMatches": true,
+      "indexDigestMatches": true,
+      "attestationVerified": true,
+      "oneCommandRetrieval": "PASS"
+    }
+  ],
+  "verificationCommands": {
+    "indexSignature": "cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity '<identity>' <index>",
+    "indexAttestationCount": "cosign verify-attestation --type cyclonedx ... <index>  # exactly 1 envelope",
+    "childAttestation": "cosign verify-attestation --type cyclonedx ... <child>",
+    "retrieval": "python3 scripts/ci/get-sbom.py <index> --platform linux/amd64 --metadata"
+  },
+  "verifierToolVersion": "cosign v3.1.1 (local, read-only verification); producer used cosign v2.6.2 legacy layout",
+  "notes": [
+    "Root cause fixed by PR #493: the index-to-platform mapping attestation was a second cosign attest against the same index digest. ECR immutable tags allow only one legacy .att write per subject digest, so it always failed with TAG_INVALID regardless of predicate type.",
+    "Step 24 'Generate, attest, and verify CycloneDX SBOMs' succeeded - this is the exact step that failed in runs 30271215463 and 30275177873.",
+    "Index carries exactly one CycloneDX attestation, verified independently against ECR rather than trusting workflow logs.",
+    "Index-to-platform mapping remains signed inside each child predicate via techx.indexDigest / techx.subjectDigest / techx.platform, and get-sbom.py resolves both platforms from it.",
+    "No promotion performed: values-prod.yaml untouched, no workload rollout, no policy mode change."
+  ],
+  "notProvenYet": [
+    "Coverage of the 20 live production digests (Giai doan C backfill) - none of them carry legacy .sig/.att yet.",
+    "External image remediation (Giai doan D) - 11 references still fail allow-approved-external-image-digests.",
+    "Kyverno admission enforcement - both policies remain in Audit."
+  ]
+}
