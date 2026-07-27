@@ -46,15 +46,13 @@ def test_controller_reconciles_after_iam_while_policies_remain_paused():
     assert policies["spec"]["syncPolicy"]["automated"]["enabled"] is False
 
 
-def test_crd_ignore_is_limited_to_empty_labels_metadata():
+def test_kyverno_api_crds_have_stable_labels_without_hidden_drift():
     application = load_yaml("gitops/apps/kyverno-app.yaml")
-    assert application["spec"]["ignoreDifferences"] == [
-        {
-            "group": "apiextensions.k8s.io",
-            "kind": "CustomResourceDefinition",
-            "jsonPointers": ["/metadata/labels"],
-        }
-    ]
+    values = yaml.safe_load(application["spec"]["source"]["helm"]["values"])
+    assert values["kyverno-api"]["labels"] == {
+        "app.kubernetes.io/managed-by": "argocd"
+    }
+    assert "ignoreDifferences" not in application["spec"]
 
 
 def test_admission_and_reports_controllers_are_ha_and_immutable():
