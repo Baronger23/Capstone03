@@ -39,4 +39,14 @@ module "cloudflare_access" {
       service  = "http://shopping-copilot.techx-tf3.svc.cluster.local:8001"
     }
   } : {}
+
+  # Fence off the copilot's unauthenticated introspection endpoints at the edge: /debug/*
+  # (dumps every user's session/cache) and /docs (Swagger). Returns 404 before reaching the
+  # pod, even for SSO users. Full in-app disable still tracked as an AIO02 hardening ask.
+  blocked_paths = var.enable_cloudflare_access ? [
+    {
+      hostname = "copilot.${var.cloudflare_zone_name}"
+      path     = "^/(debug|docs)"
+    },
+  ] : []
 }

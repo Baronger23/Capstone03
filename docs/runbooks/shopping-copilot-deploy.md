@@ -122,9 +122,13 @@ Still to confirm / accept — do not block a first deploy (graceful degradation 
    OpenSearch Serverless was turned off for cost. If gone, RAG Flow-2 → SQL-only.
 2. **`/metrics` not implemented.** No `/metrics` route/prometheus client despite spec §7.4.
    Scrape annotation removed; SLO/alert claims are unbacked until AIO02 adds it.
-3. **Debug endpoints.** `/debug/sessions|session|cache|ratelimit` + `/docs` are unauthenticated
-   and dump all users' sessions. Cloudflare Access gates the hostname (SSO allowlist only);
-   ask AIO02 for a flag to disable `/debug/*` in prod.
+3. **Debug endpoints — blocked at the edge (our side).** `/debug/*` (dumps all users'
+   sessions/cache) and `/docs` (Swagger) are unauthenticated in the app. We hard-block them at
+   the tunnel: `blocked_paths` in `cloudflare-access.tf` makes cloudflared return 404 for
+   `^/(debug|docs)` on `copilot.arthur-ngo.org` before the request reaches the pod, even for
+   SSO users. In-cluster direct access to `shopping-copilot:8001/debug` is still open (same
+   trust boundary as every other Service; NetworkPolicy is the tool, deferred). Full in-app
+   disable (an `ENABLE_DEBUG=false` flag) remains an AIO02 hardening ask.
 4. **Bedrock ARNs.** IRSA scoped to the contract's model/guardrail/KB IDs; if AIO02 promotes
    the guardrail out of `DRAFT` or moves the KB/model, update the locals in
    `shopping-copilot-bedrock.tf`.
