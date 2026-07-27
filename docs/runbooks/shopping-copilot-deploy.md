@@ -92,25 +92,42 @@ allowlist as grafana/argocd). No public storefront exposure.
 
 ---
 
-## Open items / AIO02 dependencies (verify before calling it done)
+## Source-code findings (reviewing AIO02 PR #468) and how this deploy handles them
 
-1. **Valkey TLS/auth in the app.** The copilot was built against plaintext in-cluster Valkey.
-   `VALKEY_URL` is now `rediss://` (TLS) with an AUTH token. Confirm the client honours both,
-   and that logical DB index `/1` is valid on our ElastiCache (unsupported if cluster-mode).
-   Fallback per spec: session degrades to in-memory — functional but no HA persistence.
-2. **RAG Knowledge Base health.** `BEDROCK_KB_ID=UCTITOWFHE` backs onto a vector store.
-   OpenSearch Serverless was turned off for cost (cost-breakdown §2). If the KB's store is
-   gone, RAG Flow-2 fails and search degrades to SQL-only. Confirm the KB is live, or accept
-   SQL-only and note it.
-3. **Bedrock model/guardrail/KB ARNs.** The IRSA policy is scoped to the IDs in the spec. If
-   AIO02 promotes the guardrail out of `DRAFT` or moves the KB/model, update the locals in
+Resolved on our side — no AIO02 change needed:
+- **DB creds** — `src/database/connect.py` reads `DB_USER`/`DB_PASSWORD`/`DB_SSLMODE`
+  **individually** (defaults `otelu`/`otelp`/`prefer`); it does NOT read a DSN. So we inject
+  RDS-managed master creds as discrete `DB_USER`/`DB_PASSWORD` (ExternalSecret
+  `shopping-copilot-db`) + `DB_SSLMODE=require`. Do NOT rely on `DB_CONNECTION_STRING` — the
+  app ignores it.
+- **Valkey** — verified 2026-07-27: ElastiCache `techx-tf3-valkey` is `ClusterEnabled=false`,
+  TLS on, Auth on → `redis.Redis.from_url("rediss://…:6379/1")` (what the app uses) works with
+  TLS+auth and the `/1` index. If Valkey is unreachable the app falls back to a per-replica
+  file under `/app/data` (emptyDir) — sessions stop being shared, so Valkey is the real store.
+- **runAsUser** — image `appuser` is UID 1000 and owns `/app`; the app writes
+  `uvicorn_execution.txt` (CWD) and `/app/data` at startup, so the pod runs as 1000 (a
+  mismatched UID crashes it on import).
+- **gRPC ports** — the app's `service_config.py` defaults (3550/7070/9090/7001/50051) are the
+  vanilla OTel-demo ports and are WRONG for our chart (`:8080`, reviews `:3551`). We override
+  all six `*_ADDR` in the ConfigMap with the correct cluster ports.
+
+Still to confirm / accept — do not block a first deploy (graceful degradation or hardening):
+1. **RDS schema (LIVE CHECK).** App queries `catalog.products` / `reviews.productreviews` with
+   `search_path=catalog,reviews,public`. Verify those exist in RDS `otel` and the master user
+   can read them (psql via tunnel, or the app's `scripts/check_db_schema.py`). If missing, the
+   SQL search tool degrades; RAG + gRPC tools still work.
+2. **RAG Knowledge Base health.** `BEDROCK_KB_ID=UCTITOWFHE` backs onto a vector store;
+   OpenSearch Serverless was turned off for cost. If gone, RAG Flow-2 → SQL-only.
+3. **`/metrics` not implemented.** No `/metrics` route/prometheus client despite spec §7.4.
+   Scrape annotation removed; SLO/alert claims are unbacked until AIO02 adds it.
+4. **Debug endpoints.** `/debug/sessions|session|cache|ratelimit` + `/docs` are unauthenticated
+   and dump all users' sessions. Cloudflare Access gates the hostname (SSO allowlist only);
+   ask AIO02 for a flag to disable `/debug/*` in prod.
+5. **Bedrock ARNs.** IRSA scoped to the contract's model/guardrail/KB IDs; if AIO02 promotes
+   the guardrail out of `DRAFT` or moves the KB/model, update the locals in
    `shopping-copilot-bedrock.tf`.
-4. **DB user path.** We inject `DB_CONNECTION_STRING` (RDS managed creds). If the app builds
-   its own connection from `DB_USER`/`DB_PASSWORD` instead, it will fail — it must read
-   `DB_CONNECTION_STRING` (same contract product-reviews uses).
-5. **NetworkPolicy.** Deliberately NOT added here — the Mandate #5 batch caused the 20/07
-   outage and is being rebuilt by CDO01. Add copilot egress (RDS/ElastiCache/Bedrock/gRPC)
-   when that work lands, tested on VPC CNI.
+6. **NetworkPolicy.** Deliberately NOT added (Mandate #5 batch caused the 20/07 outage; CDO01
+   is rebuilding it). Add copilot egress (RDS/ElastiCache/Bedrock/gRPC) when that lands.
 
 ## Rollback
 `gitops/apps/shopping-copilot-app.yaml` removal (or `kubectl -n argocd delete app shopping-copilot`
