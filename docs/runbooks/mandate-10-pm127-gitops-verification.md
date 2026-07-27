@@ -140,14 +140,16 @@ kubectl get crd clusterpolicies.kyverno.io
 Expected ordering and state:
 
 - `kyverno-app.yaml` sync wave 10 creates the controller and CRDs.
-- `kyverno-policies-app.yaml` sync wave 20 creates the two PM-127 policies.
+- `kyverno-policies-app.yaml` remains auto-sync disabled at this stage; neither
+  PM-127 ClusterPolicy is created yet.
 - admission and reports controller service accounts have the dedicated ECR
   read-role annotation because admission verifies new requests and reports
   performs background scans.
 - background and cleanup service accounts do not receive that annotation.
 - admission has three replicas and reports has two replicas, each with a PDB
   and topology constraints.
-- both policies are `Ready` and remain `Audit`.
+- the controller Application is `Synced` and `Healthy`; policy readiness is a
+  gate for the later policy-only rollout, where both policies remain `Audit`.
 
 Terraform and Argo are separate reconcilers. Argo sync waves cannot prove that
 the Terraform IAM role already exists. The scoped Terraform rollout established
