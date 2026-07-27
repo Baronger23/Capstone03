@@ -10,6 +10,11 @@ default:
     tag: 58b13f2
 
 grafana:
+  image:
+    registry: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com
+    repository: techx-corp
+    tag: b44ca10-30240572310-grafana
+    sha: "198bff3b9b5f15962cf0942f38a0a90226f60277e7ef5212294987d160f55958"
   # REL-17: Grafana giờ có hostname riêng qua Cloudflare (grafana.arthur-ngo.org).
   # Base chart values.yaml đặt root_url = http://%(domain)s:%(http_port)s/grafana +
   # serve_from_sub_path=true (cho đường truy cập /grafana subpath cũ) → khi vào qua
@@ -249,6 +254,8 @@ components:
           minDomains: 2
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
+          nodeAffinityPolicy: Honor
+          nodeTaintsPolicy: Honor
           labelSelector:
             matchLabels:
               opentelemetry.io/name: frontend
@@ -256,11 +263,20 @@ components:
           minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
+          nodeAffinityPolicy: Honor
+          nodeTaintsPolicy: Honor # nếu không có dòng này 2 node arm64 có taint nhưng frontend không vào được vẫn tính vào domain hợp lệ, nhưng ở đó không có pod frontend làm global min = 0
+          # khi frontend thêm 1 pod, công thức (1+1) - 0 = 2 skew = 2 > maxSkew, pod sẽ pending
+          # 4 domain eligible: 1, 1, 0, 0, 0 → global min = 0
+          
           labelSelector:
             matchLabels:
               opentelemetry.io/name: frontend
     imageOverride:
-      digest: sha256:e6874914182473a905354d9e17c55fc1aec7d690c5f1428758c0b6c78e114e9e
+      # REL-17-02: bump lên image chứa deadline+fallback (tag ba46a27-30060412880-frontend,
+      # build từ code fallback + postcss fix). Re-apply PR #448 - từng merge rồi bị revert (#450)
+      # như biện pháp phòng ngừa trong lúc ổn định PM-129 (bug tooling trace-provenance đa-arch,
+      # KHÔNG phải lỗi supply-chain); image đã qua Trivy + Cosign. Đừng revert lại.
+      digest: sha256:6e91e6c017ebea643845b1e493fe1a85e455e23d59d3970022a342fcc8ffded6
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -466,8 +482,8 @@ components:
           seconds: 5
     replicas: 2
     imageOverride: # CDO02 fix kafka/producer.go + main.go - xem comment imageOverride đầu components:
-      digest: sha256:ebea1f1d2ab51dac3a1de5493d4a8e97e6607601f966315eb1608a4d6f9aeeb8
-      tag: 5511bed-29978396050-checkout
+      digest: sha256:8e22139cae1a6db0aa3dbabc83cba56a2608d78ee21c09541d7024959dac934e
+      tag: b1ae5c1-30187331856-checkout
     # Mandate #8 buoc 3/3 (cutover Kafka -> MSK, runbook §6 buoc 2): PRODUCER TRUOC.
     # checkout doi KAFKA_ADDR -> MSK bootstrap (nhieu broker, phan tach dau phay - da fix
     # split o main.go PR #271) + SASL_SSL + SCRAM tu secret techx-tf3-kafka-scram.

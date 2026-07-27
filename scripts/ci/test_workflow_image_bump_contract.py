@@ -1,4 +1,5 @@
 import os
+import json
 import pytest
 from pathlib import Path
 
@@ -152,3 +153,46 @@ def test_t63_scoped_canary_and_promotion_evidence_contract():
     assert "unknown production service" in build_raw
     assert "promotion-evidence-${{ github.run_id }}-${{ github.run_attempt }}" in build_raw
     assert "retention-days: 90" in build_raw
+
+def test_t64_grafana_is_registered_as_scoped_production_service():
+    build_raw = Path(".github/workflows/build-push-ecr.yml").read_text()
+    assert "frontend-proxy grafana image-provider" in build_raw
+    assert 'PLATFORM_ROOT="phase3 - information/techx-corp-platform"' in build_raw
+    assert 'grep -Fq "# Grafana" <<< "$COMPOSE_DIFF"' in build_raw
+    assert "GRAFANA_[A-Za-z0-9_]+=" in build_raw
+
+def test_t65_grafana_dockerfile_is_in_immutable_scope_registry():
+    registry = json.loads(Path("scripts/ci/dockerfile-scope.json").read_text())
+    entries = [
+        item for item in registry["dockerfiles"]
+        if item["owner"] == "grafana"
+    ]
+    assert entries == [{
+        "path": "phase3 - information/techx-corp-platform/src/grafana/Dockerfile",
+        "classification": "production",
+        "owner": "grafana",
+        "inScope": True,
+        "expectedPlatforms": ["linux/amd64", "linux/arm64"],
+    }]
+
+
+def test_t66_grafana_cross_compile_and_buildkit_cache_contract():
+    dockerfile = Path(
+        "phase3 - information/techx-corp-platform/src/grafana/Dockerfile"
+    ).read_text()
+    workflow = Path(".github/workflows/build-push-ecr.yml").read_text()
+
+    assert dockerfile.count("FROM --platform=$BUILDPLATFORM") == 3
+    assert 'make build-go \\\n      OS="${TARGETOS}" \\\n      ARCH="${TARGETARCH}"' in dockerfile
+    assert "ARG OPENSEARCH_PLUGIN_COMMIT=188f6f20d488f771808eff476e8647dccb901dad" in dockerfile
+    assert "go mod verify" in dockerfile
+    assert "go get google.golang.org/grpc@v1.82.1" not in dockerfile
+    assert "src/grafana/patches/opensearch-grpc-1.82.1.patch" in dockerfile
+    assert "ADD --checksum=sha256:fcd1bedfccde21ca224139bf409170c194a9a34cdda2f8756b8427b6775ca611" in dockerfile
+    assert "ADD --checksum=sha256:8c644c95b3ac39dedf8254cc99d3921b136fe06895f5a8aeb17cfa0a709e7da6" in dockerfile
+    assert 'COPY --from=opensearch-plugin-builder' in dockerfile
+    assert 'rm "${GF_PATHS_PLUGINS}/grafana-opensearch-datasource/MANIFEST.txt"' in dockerfile
+    assert "--mount=type=cache,target=/go/pkg/mod" in dockerfile
+    assert "--mount=type=cache,target=/root/.cache/go-build" in dockerfile
+    assert workflow.count('--set "${SERVICE}.cache-from=type=gha,scope=${SERVICE}"') == 3
+    assert workflow.count('--set "${SERVICE}.cache-to=type=gha,mode=max,scope=${SERVICE}"') == 3

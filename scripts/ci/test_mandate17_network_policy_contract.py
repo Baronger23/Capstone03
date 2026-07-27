@@ -105,8 +105,9 @@ EXPECTED_EGRESS_COMPONENTS = {
     "flagd": {"otel-gateway"},
 }
 
+# 06-cloudflared.yaml left this set once its egress was narrowed from 0.0.0.0/0 to the
+# published Cloudflare ranges, so it is now promotable like any other policy.
 PUBLIC_EGRESS_FILES = {
-    "06-cloudflared.yaml",
     "07-aiops-engine.yaml",
     "32-product-reviews.yaml",
 }
@@ -126,6 +127,16 @@ def load_policy(filename):
     policy = documents[0]
     assert policy["kind"] == "NetworkPolicy"
     return policy
+
+
+def load_active_policy(filename, name):
+    for document in load_documents(INFRA / filename):
+        if (
+            document.get("kind") == "NetworkPolicy"
+            and document.get("metadata", {}).get("name") == name
+        ):
+            return document
+    raise AssertionError(f"{name} was not found in active {filename}")
 
 
 def walk(node):
@@ -445,6 +456,196 @@ def test_jaeger_accepts_otel_gateway_grpc_ingest():
     assert 4317 in matching_ports
 
 
+def test_active_jaeger_replaces_broad_legacy_ingress_in_place():
+    jaeger = load_active_policy("network-policy-jaeger.yaml", "jaeger-access")
+    assert set(jaeger["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    assert all(
+        peer.get("podSelector") != {}
+        for rule in jaeger["spec"].get("ingress", [])
+        for peer in rule.get("from", [])
+    )
+
+    otel_ports = set()
+    for rule in jaeger["spec"]["ingress"]:
+        if any(
+            peer.get("podSelector", {})
+            .get("matchLabels", {})
+            .get("app.kubernetes.io/component")
+            == "otel-gateway"
+            for peer in rule.get("from", [])
+        ):
+            otel_ports.update(port["port"] for port in rule.get("ports", []))
+    assert otel_ports == {4317}
+
+
+def test_active_jaeger_has_observed_service_clusterip_fallbacks():
+    jaeger = load_active_policy("network-policy-jaeger.yaml", "jaeger-access")
+    assert ipblocks_for_egress_port(jaeger, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(jaeger, 9090) == {"172.20.123.8/32"}
+    assert ipblocks_for_egress_port(jaeger, 4318) == {"172.20.117.175/32"}
+    assert jaeger["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == (
+        "2026-07-25:kube-dns=172.20.0.10,prometheus=172.20.123.8,"
+        "otel-gateway=172.20.117.175"
+    )
+
+
+FRONTEND_PROXY_ACTIVE = "network-policy-frontend-proxy.yaml"
+FRONTEND_PROXY_STAGED = "35-frontend-proxy.yaml"
+FRONTEND_PROXY_NAME = "frontend-proxy-business-policy"
+
+
+def test_active_frontend_proxy_matches_staged_copy_exactly():
+    active = (INFRA / FRONTEND_PROXY_ACTIVE).read_text()
+    staged = (INFRA / "network-policy-staged" / FRONTEND_PROXY_STAGED).read_text()
+    assert active == staged, (
+        "promoted frontend-proxy policy drifted from its staged source"
+    )
+
+
+def test_active_frontend_proxy_egress_is_exactly_the_observed_dependencies():
+    policy = load_active_policy(FRONTEND_PROXY_ACTIVE, FRONTEND_PROXY_NAME)
+    assert set(policy["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    assert egress_components(policy) == {"frontend", "image-provider", "flagd", "otel-gateway"}
+
+    assert ports_for_egress_destination(policy, "frontend") == {8080}
+    assert ports_for_egress_destination(policy, "image-provider") == {8081}
+    assert ports_for_egress_destination(policy, "otel-gateway") == {4317, 4318}
+
+    # /flagservice must stay reachable; flagd-ui (4000) is an orphaned cluster and
+    # stays closed, so this assertion is deliberately exact rather than a superset.
+    assert ports_for_egress_destination(policy, "flagd") == {8013}
+
+    assert ipblocks_for_egress_port(policy, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(policy, 8080) == {"172.20.212.8/32"}
+    assert ipblocks_for_egress_port(policy, 8081) == {"172.20.1.116/32"}
+    assert ipblocks_for_egress_port(policy, 8013) == {"172.20.213.30/32"}
+    assert ipblocks_for_egress_port(policy, 4317) == {"172.20.117.175/32"}
+
+
+def test_active_frontend_proxy_never_exposes_envoy_admin():
+    policy = load_active_policy(FRONTEND_PROXY_ACTIVE, FRONTEND_PROXY_NAME)
+    ingress_ports = {
+        port["port"]
+        for rule in policy["spec"].get("ingress", [])
+        for port in rule.get("ports", [])
+    }
+    assert ingress_ports == {8080}, "only the Envoy data plane port may be reachable"
+    assert 10000 not in ingress_ports, "Envoy admin interface must never be allowed"
+
+
+def test_active_frontend_proxy_ingress_sources_are_the_alb_subnets_and_named_peers():
+    policy = load_active_policy(FRONTEND_PROXY_ACTIVE, FRONTEND_PROXY_NAME)
+    cidrs = set()
+    components = set()
+    for rule in policy["spec"].get("ingress", []):
+        for peer in rule.get("from", []):
+            if "ipBlock" in peer:
+                cidrs.add(peer["ipBlock"]["cidr"])
+            selector = peer.get("podSelector", {})
+            labels = selector.get("matchLabels", {})
+            components.update(
+                v
+                for k, v in labels.items()
+                if k in ("app.kubernetes.io/component", "app.kubernetes.io/name")
+            )
+    # The internal ALB places one ENI in each production private subnet. This is a
+    # CIDR constraint, not a Security Group match - NetworkPolicy cannot express the
+    # latter, so any workload in these subnets also matches.
+    assert cidrs == {"10.0.0.0/20", "10.0.16.0/20", "10.0.32.0/20"}
+    assert components == {"cloudflared", "load-generator"}
+
+
+CLOUDFLARED_ACTIVE = "network-policy-cloudflared.yaml"
+CLOUDFLARED_STAGED = "06-cloudflared.yaml"
+CLOUDFLARED_NAME = "cloudflared-platform-policy"
+
+# https://www.cloudflare.com/ips-v4, read 2026-07-26. cloudflared dials the Tunnel edge
+# (region1/region2.v2.argotunnel.com, observed inside 198.41.128.0/17) and the Cloudflare
+# API, both of which stay inside this list.
+CLOUDFLARE_EDGE_RANGES = {
+    "173.245.48.0/20",
+    "103.21.244.0/22",
+    "103.22.200.0/22",
+    "103.31.4.0/22",
+    "141.101.64.0/18",
+    "108.162.192.0/18",
+    "190.93.240.0/20",
+    "188.114.96.0/20",
+    "197.234.240.0/22",
+    "198.41.128.0/17",
+    "162.158.0.0/15",
+    "104.16.0.0/13",
+    "104.24.0.0/14",
+    "172.64.0.0/13",
+    "131.0.72.0/22",
+}
+
+
+def test_active_cloudflared_matches_staged_copy_exactly():
+    active = (INFRA / CLOUDFLARED_ACTIVE).read_text()
+    staged = (INFRA / "network-policy-staged" / CLOUDFLARED_STAGED).read_text()
+    assert active == staged, (
+        "promoted cloudflared policy drifted from its staged source"
+    )
+
+
+def test_active_cloudflared_accepts_no_ingress():
+    policy = load_active_policy(CLOUDFLARED_ACTIVE, CLOUDFLARED_NAME)
+    assert set(policy["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+    # cloudflared publishes no Service and is dialled by nobody. The kubelet probe on
+    # :2000 is node-sourced and is not evaluated by the VPC CNI policy agent.
+    assert policy["spec"]["ingress"] == []
+
+
+def test_active_cloudflared_egress_reaches_only_cloudflare_and_the_four_tunnel_routes():
+    policy = load_active_policy(CLOUDFLARED_ACTIVE, CLOUDFLARED_NAME)
+
+    # Tunnel transport is pinned to Cloudflare's published ranges, never 0.0.0.0/0.
+    for port in (443, 7844):
+        assert CLOUDFLARE_EDGE_RANGES <= ipblocks_for_egress_port(policy, port)
+
+    # QUIC runs on 7844, and cloudflared's Go HTTP client does not speak HTTP/3, so
+    # 443/udp has no caller and must stay closed.
+    protocol_ports = {
+        (item.get("protocol", "TCP"), item["port"])
+        for rule in policy["spec"].get("egress", [])
+        for item in rule.get("ports", [])
+    }
+    assert ("UDP", 7844) in protocol_ports
+    assert ("TCP", 7844) in protocol_ports
+    assert ("UDP", 443) not in protocol_ports
+
+    # Route 1 - kubectl.arthur-ngo.org reaches the private EKS endpoint ENIs, which EKS
+    # rotates on its own, so the three production private subnets are the stable unit.
+    assert ipblocks_for_egress_port(policy, 443) == CLOUDFLARE_EDGE_RANGES | {
+        "10.0.0.0/20",
+        "10.0.16.0/20",
+        "10.0.32.0/20",
+        "172.20.60.48/32",
+    }
+
+    # Routes 2-4 are split across pre-DNAT (ClusterIP) and post-DNAT (pod) ports wherever
+    # the Service remaps the port: grafana 80 -> 3000 and argocd-server 443 -> 8080.
+    assert ipblocks_for_egress_port(policy, 80) == {"172.20.79.132/32"}
+    assert ipblocks_for_egress_port(policy, 16686) == {"172.20.93.48/32"}
+    assert ipblocks_for_egress_port(policy, 53) == {"172.20.0.10/32"}
+
+    names = set()
+    for rule in policy["spec"].get("egress", []):
+        for peer in rule.get("to", []):
+            names.update(
+                peer.get("podSelector", {}).get("matchLabels", {}).get(key)
+                for key in ("app.kubernetes.io/name", "app.kubernetes.io/component")
+            )
+    names.discard(None)
+    # CoreDNS is matched on k8s-app and is asserted by the shared CoreDNS test above.
+    # The storefront is served through CloudFront, never through this tunnel, so
+    # frontend-proxy must not appear here.
+    assert names == {"grafana", "jaeger", "argocd-server"}
+
+
 def test_every_non_default_egress_policy_has_exact_coredns_rule():
     for filename in EXPECTED_FILES - {"90-default-deny-all.yaml"}:
         policy = load_policy(filename)
@@ -463,9 +664,43 @@ def test_every_non_default_egress_policy_has_exact_coredns_rule():
                         (item.get("protocol", "TCP"), item["port"])
                         for item in rule.get("ports", [])
                     }
-                    assert ports == {("TCP", 53), ("UDP", 53)}
-                    found = True
+                    if ports == {("TCP", 53), ("UDP", 53)}:
+                        found = True
         assert found, f"{filename} is missing the exact CoreDNS rule"
+
+
+def test_prometheus_allows_coredns_metrics_scrape():
+    for path in [
+        INFRA / "network-policy-prometheus.yaml",
+        STAGED / "03-prometheus.yaml",
+    ]:
+        policy = load_documents(path)[0]
+        found = False
+        for rule in policy["spec"].get("egress", []):
+            peers = rule.get("to", [])
+            ports = {
+                (item.get("protocol", "TCP"), item["port"])
+                for item in rule.get("ports", [])
+            }
+            for peer in peers:
+                namespace = peer.get("namespaceSelector", {}).get("matchLabels", {})
+                pod = peer.get("podSelector", {}).get("matchLabels", {})
+                if (
+                    namespace.get("kubernetes.io/metadata.name") == "kube-system"
+                    and pod.get("k8s-app") == "kube-dns"
+                    and ("TCP", 9153) in ports
+                ):
+                    found = True
+        assert found, f"{path.name} must allow Prometheus to scrape CoreDNS metrics"
+
+
+def test_opensearch_dns_uses_observed_clusterip_fallback():
+    for path in [
+        INFRA / "network-policy-opensearch.yaml",
+        STAGED / "04-opensearch.yaml",
+    ]:
+        policy = load_documents(path)[0]
+        assert ipblocks_for_egress_port(policy, 53) == {"172.20.0.10/32"}
 
 
 def test_public_egress_is_blocked_from_promotion_and_never_active():

@@ -178,8 +178,17 @@ main() {
   [[ -n "$service" ]] || service="$container_name"
   if ! run_json image-manifest "$WORK/manifest.json" docker buildx imagetools inspect --raw "$release_image"; then write_failure "$result_tmp"; return 1; fi
   manifest_json="$(cat "$WORK/manifest.json")"
-  jq -e --arg child "$child_digest" '.manifests[]?.digest == $child' <<<"$manifest_json" >/dev/null \
-    || { fail_step image-manifest "runtime child digest is not a member of the release index"; write_failure "$result_tmp"; return 1; }
+  # `any()` is required, not a bare `.manifests[]?.digest == $child` stream: `jq -e`
+  # only checks the LAST emitted value of a stream, and the index always lists
+  # attestation manifests (architecture "unknown") after the real platform
+  # manifests, so the bare form failed closed on every run regardless of whether
+  # an earlier entry matched. Some container runtimes (confirmed: containerd
+  # 2.2.4 on EKS 1.35/AL2023) also report a digest-pinned pod's imageID as the
+  # release index digest itself rather than resolving to the child platform
+  # manifest, so accept that as equivalent proof of provenance too.
+  jq -e --arg child "$child_digest" '[.manifests[]?.digest] | any(. == $child)' <<<"$manifest_json" >/dev/null \
+    || [[ "$child_digest" == "$release_digest" ]] \
+    || { fail_step image-manifest "runtime child digest is neither a member of the release index nor equal to the index digest"; write_failure "$result_tmp"; return 1; }
 
   if ! run_json ecr "$WORK/ecr.json" aws ecr describe-images --repository-name "$IMAGE_REPOSITORY" --image-ids "imageDigest=$release_digest" --region "$REGION" --output json; then write_failure "$result_tmp"; return 1; fi
   ecr_json="$(cat "$WORK/ecr.json")"
@@ -261,45 +270,111 @@ main() {
   done < <(find "$WORK/trivy" -type f -name "${service}-linux-*.json" | sort)
 
   local release_ref="$REGISTRY/$IMAGE_REPOSITORY@$release_digest"
+  # cosign verify itself enforces the --certificate-oidc-issuer/--certificate-identity
+  # match (fails closed with a non-zero exit and no entries if the cert doesn't match) -
+  # that flag pair is the actual identity/issuer gate. The re-check below only confirms
+  # the returned entries are bound to this exact release digest, not a substituted one.
+  # It does not re-derive Issuer/Subject from `optional`: newer cosign (v3, new bundle
+  # format) only "partially populates" that field and leaves it empty on real successes
+  # (sigstore/cosign#4416), which made the old field-presence check fail closed on every
+  # run regardless of correctness.
   cosign verify --output json --certificate-oidc-issuer "$OIDC_ISSUER" --certificate-identity "$OIDC_IDENTITY" "$release_ref" > "$WORK/cosign.json" 2>"$WORK/cosign.err" \
     || { fail_step cosign "cosign verify failed: $(tail -1 "$WORK/cosign.err")"; write_failure "$result_tmp"; return 1; }
   cosign_json="$(cat "$WORK/cosign.json")"
-  jq -e --arg issuer "$OIDC_ISSUER" --arg identity "$OIDC_IDENTITY" '((if type=="array" then . else [.] end)[] | .optional // {}) | select(.Issuer==$issuer and .Subject==$identity)' <<<"$cosign_json" >/dev/null \
-    || { fail_step cosign "signature identity/issuer does not match policy"; write_failure "$result_tmp"; return 1; }
+  jq -e --arg ref "$release_ref" '(if type=="array" then . else [.] end) | any(.critical.identity."docker-reference"==$ref)' <<<"$cosign_json" >/dev/null \
+    || { fail_step cosign "verified signature does not reference the expected release digest"; write_failure "$result_tmp"; return 1; }
 
-  local node_name node_arch platform child_ref
+  local node_name node_arch platform child_ref sbom_expected_child
   node_name="$(jq -r '.spec.nodeName // empty' <<<"$pod_json")"
   [[ -n "$node_name" ]] || { fail_step pod "pod is not scheduled on a node"; write_failure "$result_tmp"; return 1; }
   if ! run_json node "$WORK/node.json" kubectl get node "$node_name" -o json; then write_failure "$result_tmp"; return 1; fi
   node_arch="$(jq -r '.status.nodeInfo.architecture // empty' "$WORK/node.json")"
   [[ "$node_arch" == amd64 || "$node_arch" == arm64 ]] || { fail_step pod "unsupported node architecture: ${node_arch:-unknown}"; write_failure "$result_tmp"; return 1; }
   platform="linux/$node_arch"
+  # When containerd reports imageID == the release index digest (see the image-manifest
+  # comment above), child_digest IS the index digest, not the platform child manifest -
+  # get-sbom.py still resolves the correct per-platform attestation from an index ref,
+  # but its returned techx.subjectDigest is genuinely the platform child digest, so
+  # comparing it against child_digest would always mismatch. Resolve the real per-platform
+  # child digest from the already-fetched index for that comparison instead.
+  sbom_expected_child="$child_digest"
+  if [[ "$child_digest" == "$release_digest" ]]; then
+    sbom_expected_child="$(jq -r --arg platform "$platform" '.manifests[] | select((.platform.os+"/"+.platform.architecture)==$platform) | .digest' <<<"$manifest_json" | head -1)"
+    validate_hex_digest "$sbom_expected_child" || { fail_step sbom "could not resolve ${platform} child digest from the release index"; write_failure "$result_tmp"; return 1; }
+  fi
   child_ref="$REGISTRY/$IMAGE_REPOSITORY@$child_digest"
   python3 "$SCRIPT_DIR/get-sbom.py" --no-login --metadata --platform "$platform" "$child_ref" > "$WORK/sbom.json" 2>"$WORK/sbom.err" \
     || { fail_step sbom "trusted SBOM lookup failed: $(tail -1 "$WORK/sbom.err")"; write_failure "$result_tmp"; return 1; }
   sbom_json="$(cat "$WORK/sbom.json")"
-  jq -e --arg sha "$source_sha" --arg child "$child_digest" '.predicateType=="https://cyclonedx.org/bom" and (.predicate.metadata.properties | from_entries) as $p | ($p["techx.sourceSha"]==$sha and $p["techx.subjectDigest"]==$child)' <<<"$sbom_json" >/dev/null \
+  # `and` binds tighter than `EXPR as $x | BODY` in jq, so the original
+  # ".predicateType==... and (...) as $p | (...)" bound $p to the *boolean* result of
+  # (predicateType check) and (properties object) - a truthy-coerced boolean, not the
+  # properties object - so $p["techx.sourceSha"] always errored ("Cannot index boolean
+  # with string"). Parenthesize the `as` binding so $p is actually the properties map.
+  jq -e --arg sha "$source_sha" --arg child "$sbom_expected_child" '(.predicateType=="https://cyclonedx.org/bom") and ((.predicate.metadata.properties | from_entries) as $p | ($p["techx.sourceSha"]==$sha and $p["techx.subjectDigest"]==$child))' <<<"$sbom_json" >/dev/null \
     || { fail_step sbom "SBOM is not bound to source SHA and runtime child digest"; write_failure "$result_tmp"; return 1; }
+
+  # Resolve the pod's actual owning top-level workload (walk ReplicaSet -> its owner,
+  # e.g. Rollout/Deployment) so the app lookup below can match the concrete resource
+  # ArgoCD tracks. Multiple Applications from this repo now deploy into techx-tf3
+  # (techx-corp, techx-edge, techx-infrastructure-app, flagd-secret-sync,
+  # native-admission-policies), so repo+namespace alone no longer disambiguates to
+  # exactly one app the way it did when this script was first written.
+  local owner_kind owner_name rs_json
+  owner_kind="$(jq -r '.metadata.ownerReferences[0].kind // empty' <<<"$pod_json")"
+  owner_name="$(jq -r '.metadata.ownerReferences[0].name // empty' <<<"$pod_json")"
+  if [[ "$owner_kind" == "ReplicaSet" && -n "$owner_name" ]]; then
+    if rs_json="$(kubectl get replicaset "$owner_name" -n "$NAMESPACE" -o json 2>/dev/null)"; then
+      local rs_owner_kind rs_owner_name
+      rs_owner_kind="$(jq -r '.metadata.ownerReferences[0].kind // empty' <<<"$rs_json")"
+      rs_owner_name="$(jq -r '.metadata.ownerReferences[0].name // empty' <<<"$rs_json")"
+      if [[ -n "$rs_owner_kind" && -n "$rs_owner_name" ]]; then
+        owner_kind="$rs_owner_kind"
+        owner_name="$rs_owner_name"
+      fi
+    fi
+  fi
 
   if ! run_json argo "$WORK/apps.json" kubectl get applications.argoproj.io -A -o json; then write_failure "$result_tmp"; return 1; fi
   apps_json="$(cat "$WORK/apps.json")"
-  local app_count
-  app_count="$(jq --arg repo "$REPOSITORY" --arg ns "$NAMESPACE" '[.items[] | ((.spec.source.repoURL // "") as $url | (.spec.sources[]?.repoURL // $url)) as $source | select(($source==("https://github.com/"+$repo) or $source==("https://github.com/"+$repo+".git") or $source==("git@github.com:"+$repo+".git")) and (.spec.destination.namespace==$ns or .spec.destination.namespace=="techx-tf3"))] | length' <<<"$apps_json")"
-  [[ "$app_count" -eq 1 ]] || { fail_step argo "expected exactly one matching healthy Argo application"; write_failure "$result_tmp"; return 1; }
-  jq -e --arg repo "$REPOSITORY" --arg ns "$NAMESPACE" --arg sha "$promotion_merge_sha" '[.items[] | ((.spec.source.repoURL // "") as $url | (.spec.sources[]?.repoURL // $url)) as $source | select(($source==("https://github.com/"+$repo) or $source==("https://github.com/"+$repo+".git") or $source==("git@github.com:"+$repo+".git")) and (.spec.destination.namespace==$ns or .spec.destination.namespace=="techx-tf3")) | select(.status.sync.status=="Synced" and .status.health.status=="Healthy" and .status.sync.revision==$sha)] | length == 1' <<<"$apps_json" >/dev/null \
-    || { fail_step argo "Argo application is not Healthy/Synced at promotion merge SHA"; write_failure "$result_tmp"; return 1; }
+  local matching_apps app_count argo_revision
+  matching_apps="[]"
+  if [[ -n "$owner_kind" && -n "$owner_name" ]]; then
+    matching_apps="$(jq -c --arg kind "$owner_kind" --arg name "$owner_name" --arg ns "$NAMESPACE" '[.items[] | select(.status.resources[]? | .kind==$kind and .name==$name and .namespace==$ns)]' <<<"$apps_json")"
+  fi
+  app_count="$(jq 'length' <<<"$matching_apps")"
+  if [[ "$app_count" -ne 1 ]]; then
+    # Fall back to the repo+namespace heuristic for topologies where the owning
+    # workload above wasn't found or isn't tracked directly in any app's resource tree.
+    matching_apps="$(jq -c --arg repo "$REPOSITORY" --arg ns "$NAMESPACE" '[.items[] | ((.spec.source.repoURL // "") as $url | (.spec.sources[]?.repoURL // $url)) as $source | select(($source==("https://github.com/"+$repo) or $source==("https://github.com/"+$repo+".git") or $source==("git@github.com:"+$repo+".git")) and (.spec.destination.namespace==$ns or .spec.destination.namespace=="techx-tf3"))]' <<<"$apps_json")"
+    app_count="$(jq 'length' <<<"$matching_apps")"
+  fi
+  [[ "$app_count" -eq 1 ]] || { fail_step argo "expected exactly one matching Argo application"; write_failure "$result_tmp"; return 1; }
+  jq -e '.[0] | .status.sync.status=="Synced" and .status.health.status=="Healthy"' <<<"$matching_apps" >/dev/null \
+    || { fail_step argo "Argo application is not Healthy/Synced"; write_failure "$result_tmp"; return 1; }
+  argo_revision="$(jq -r '.[0].status.sync.revision // empty' <<<"$matching_apps")"
+  [[ "$argo_revision" =~ ^[0-9a-f]{40}$ ]] \
+    || { fail_step argo "Argo sync revision is not a valid commit SHA"; write_failure "$result_tmp"; return 1; }
+  # ArgoCD tracks main HEAD with auto-sync + selfHeal, so unrelated commits keep
+  # landing on main after this promotion merges. The live revision will almost
+  # never equal the promotion SHA exactly — what must hold is that the promoted
+  # commit is included in (an ancestor of, or equal to) what is currently synced.
+  run_json argo-ancestry "$WORK/argo-compare.json" gh api "repos/${REPOSITORY}/compare/${promotion_merge_sha}...${argo_revision}" \
+    || { write_failure "$result_tmp"; return 1; }
+  jq -e '.status=="ahead" or .status=="identical"' "$WORK/argo-compare.json" >/dev/null \
+    || { fail_step argo "promotion merge SHA is not an ancestor of the current Argo revision"; write_failure "$result_tmp"; return 1; }
 
   jq -n --arg pod "$POD" --arg namespace "$NAMESPACE" --arg container "$container_name" \
     --arg service "$service" --arg release "$release_ref" --arg index "$release_digest" --arg child "$child_digest" \
     --arg source_sha "$source_sha" --arg source_pr "$source_number" --arg promotion_pr "$promotion_number" \
-    --arg promotion_sha "$promotion_merge_sha" --arg run "$workflow_run" --arg attempt "$workflow_attempt" \
+    --arg promotion_sha "$promotion_merge_sha" --arg argo_revision "$argo_revision" --arg run "$workflow_run" --arg attempt "$workflow_attempt" \
     --arg issuer "$OIDC_ISSUER" --arg identity "$OIDC_IDENTITY" \
     '{schemaVersion:1,overallResult:"PASS",generatedAt:(now|todateiso8601),pod:$pod,namespace:$namespace,container:$container,service:$service,
       runtime:{releaseImage:$release,indexDigest:$index,childDigest:$child},
       build:{workflowRunId:$run,workflowRunAttempt:$attempt,sourceSha:$source_sha},
       review:{sourcePr:$source_pr,promotionPr:$promotion_pr,promotionMergeSha:$promotion_sha},
       scans:{trivy:"PASS",cosign:"PASS",sbom:"PASS"},signature:{issuer:$issuer,identity:$identity},
-      gitops:{argoRevision:$promotion_sha,status:"Healthy/Synced"}}' > "$result_tmp"
+      gitops:{promotionRevision:$promotion_sha,argoRevision:$argo_revision,promotionIsAncestor:true,status:"Healthy/Synced"}}' > "$result_tmp"
   mkdir -p -- "$(dirname -- "$OUTPUT")"
   mv -f -- "$result_tmp" "$OUTPUT"
   cat "$OUTPUT"

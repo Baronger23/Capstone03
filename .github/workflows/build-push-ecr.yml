@@ -32,7 +32,7 @@ env:
   TRIVY_SEVERITIES: HIGH,CRITICAL
   ALL_SERVICES: >-
     accounting ad cart checkout currency email fraud-detection frontend
-    frontend-proxy image-provider kafka llm load-generator payment
+    frontend-proxy grafana image-provider kafka llm load-generator payment
     product-catalog product-reviews quote recommendation shipping flagd-ui
 
 jobs:
@@ -137,6 +137,7 @@ jobs:
             CHANGED="$(git diff --name-only "$EVENT_BEFORE" "$SOURCE_SHA" -- \
               "phase3 - information/techx-corp-platform")"
             PREFIX="phase3 - information/techx-corp-platform/src/"
+            PLATFORM_ROOT="phase3 - information/techx-corp-platform"
             SERVICES=""
             FULL=false
             while IFS= read -r file; do
@@ -149,6 +150,23 @@ jobs:
                     SERVICES="$SERVICES $service"
                   else
                     FULL=true
+                  fi ;;
+                "$PLATFORM_ROOT/docker-compose.yml")
+                  COMPOSE_DIFF="$(git diff --unified=3 "$EVENT_BEFORE" "$SOURCE_SHA" -- "$file")"
+                  HUNK_COUNT="$(grep -c '^@@' <<< "$COMPOSE_DIFF" || true)"
+                  if [ "$HUNK_COUNT" -ne 1 ] || ! grep -Fq "# Grafana" <<< "$COMPOSE_DIFF"; then
+                    FULL=true
+                  else
+                    SERVICES="$SERVICES grafana"
+                  fi ;;
+                "$PLATFORM_ROOT/.env")
+                  ENV_LINES="$(git diff --unified=0 "$EVENT_BEFORE" "$SOURCE_SHA" -- "$file" |
+                    grep -E '^[-+][^-+]' || true)"
+                  if [ -z "$ENV_LINES" ] ||
+                     grep -Ev '^[-+](GRAFANA_[A-Za-z0-9_]+=|[[:space:]]*$)' <<< "$ENV_LINES"; then
+                    FULL=true
+                  else
+                    SERVICES="$SERVICES grafana"
                   fi ;;
                 *) FULL=true ;;
               esac
@@ -338,6 +356,7 @@ jobs:
           )"
 
           PREFIX="phase3 - information/techx-corp-platform/src/"
+          PLATFORM_ROOT="phase3 - information/techx-corp-platform"
           SERVICES=""
           FULL=false
 
@@ -350,7 +369,26 @@ jobs:
                 if grep -Fqw -- "$service" <<< "$ALL_SERVICES"; then
                   SERVICES="$SERVICES $service"
                 else
+                    FULL=true
+                fi
+                ;;
+              "$PLATFORM_ROOT/docker-compose.yml")
+                COMPOSE_DIFF="$(git -C "$GITHUB_WORKSPACE" diff --unified=3 "$EVENT_BEFORE" "$SOURCE_SHA" -- "$file")"
+                HUNK_COUNT="$(grep -c '^@@' <<< "$COMPOSE_DIFF" || true)"
+                if [ "$HUNK_COUNT" -ne 1 ] || ! grep -Fq "# Grafana" <<< "$COMPOSE_DIFF"; then
                   FULL=true
+                else
+                  SERVICES="$SERVICES grafana"
+                fi
+                ;;
+              "$PLATFORM_ROOT/.env")
+                ENV_LINES="$(git -C "$GITHUB_WORKSPACE" diff --unified=0 "$EVENT_BEFORE" "$SOURCE_SHA" -- "$file" |
+                  grep -E '^[-+][^-+]' || true)"
+                if [ -z "$ENV_LINES" ] ||
+                   grep -Ev '^[-+](GRAFANA_[A-Za-z0-9_]+=|[[:space:]]*$)' <<< "$ENV_LINES"; then
+                  FULL=true
+                else
+                  SERVICES="$SERVICES grafana"
                 fi
                 ;;
               *)
@@ -431,7 +469,9 @@ jobs:
           echo "Building local linux/amd64 candidate: $SERVICE"
           docker buildx bake -f docker-compose.yml "$SERVICE" \
             --set "${SERVICE}.platform=linux/amd64" \
-            --set "${SERVICE}.output=type=docker"
+            --set "${SERVICE}.output=type=docker" \
+            --set "${SERVICE}.cache-from=type=gha,scope=${SERVICE}" \
+            --set "${SERVICE}.cache-to=type=gha,mode=max,scope=${SERVICE}"
 
       - name: Install Trivy
         if: steps.scope.outputs.mode != 'none'
@@ -493,7 +533,9 @@ jobs:
           set +a
 
           docker buildx bake -f docker-compose.yml --push "$SERVICE" \
-            --set "${SERVICE}.platform=$BUILD_PLATFORMS"
+            --set "${SERVICE}.platform=$BUILD_PLATFORMS" \
+            --set "${SERVICE}.cache-from=type=gha,scope=${SERVICE}" \
+            --set "${SERVICE}.cache-to=type=gha,mode=max,scope=${SERVICE}"
 
       - name: Build and push pre-scanned changed service images only
         if: steps.scope.outputs.mode == 'scoped'
@@ -507,7 +549,9 @@ jobs:
           set +a
 
           docker buildx bake -f docker-compose.yml --push "$SERVICE" \
-            --set "${SERVICE}.platform=$BUILD_PLATFORMS"
+            --set "${SERVICE}.platform=$BUILD_PLATFORMS" \
+            --set "${SERVICE}.cache-from=type=gha,scope=${SERVICE}" \
+            --set "${SERVICE}.cache-to=type=gha,mode=max,scope=${SERVICE}"
 
       - name: Resolve pushed image metadata
         if: steps.scope.outputs.mode != 'none'
@@ -664,6 +708,8 @@ jobs:
           REPORT_ROOT="$GITHUB_WORKSPACE/trivy-reports/post-push"
           mkdir -p "$REPORT_ROOT"
 
+          expected_platform_count="$(printf '%s' "$BUILD_PLATFORMS" | tr ',' '\n' | grep -c .)"
+
           service_count="$(jq '.services | length' approved-images.json)"
 
           for ((index = 0; index < service_count; index++)); do
@@ -671,6 +717,8 @@ jobs:
             digest="$(jq -r ".services[$index].digest" approved-images.json)"
             image="${ECR_REGISTRY}/${ECR_REPOSITORY}@${digest}"
 
+            # `< /dev/null` on both trivy invocations is defensive hardening
+            # so nothing inside this loop can ever read from its stdin.
             while IFS= read -r platform; do
               safe_platform="${platform//\//-}"
               report="$REPORT_ROOT/${service}-${safe_platform}.json"
@@ -682,7 +730,7 @@ jobs:
                 --format json \
                 --output "$report" \
                 --no-progress \
-                "$image"
+                "$image" < /dev/null
 
               echo "Enforcing zero ${TRIVY_SEVERITIES} findings for $image ($platform)"
               trivy image \
@@ -691,8 +739,22 @@ jobs:
                 --severity "$TRIVY_SEVERITIES" \
                 --exit-code 1 \
                 --no-progress \
-                "$image"
-            done < <(printf '%s' "$BUILD_PLATFORMS" | tr ',' '\n')
+                "$image" < /dev/null
+            # `printf '%s\n'` (not `'%s'`) is required: without the trailing
+            # newline, `tr ',' '\n'` leaves the last platform unterminated,
+            # and `read -r` returns non-zero on an unterminated final line —
+            # `while read` then skips that iteration's body entirely instead
+            # of running it. That silently dropped the last platform in
+            # BUILD_PLATFORMS from every post-push scan since 2026-07-16: for
+            # a two-platform build only the amd64 report was ever produced,
+            # arm64 never was, even though nothing else in this step failed.
+            done < <(printf '%s\n' "$BUILD_PLATFORMS" | tr ',' '\n')
+
+            actual_platform_count="$(find "$REPORT_ROOT" -maxdepth 1 -type f -name "${service}-*.json" | wc -l)"
+            if [[ "$actual_platform_count" -ne "$expected_platform_count" ]]; then
+              echo "::error::${service} produced ${actual_platform_count} post-push Trivy report(s) but BUILD_PLATFORMS='${BUILD_PLATFORMS}' requires ${expected_platform_count}; failing closed" >&2
+              exit 1
+            fi
           done
 
       - name: Upload post-push Trivy reports
