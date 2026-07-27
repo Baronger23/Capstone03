@@ -1,0 +1,56 @@
+# Non-secret runtime config for shopping-copilot.
+#
+# ⚠️ Deviations from AIO02's DEPLOYMENT-SPEC k8s-deployment.yaml (which was written against
+# the PRE-Mandate-#8 world) - all deliberate:
+#   * NO DB_PASSWORD / DB_CONNECTION_STRING here. The old spec hardcoded password=otelp in a
+#     tracked ConfigMap+Secret; committing real secret values is a disqualify-level rule for
+#     TF3. DB creds come from the RDS-managed ExternalSecret techx-tf3-postgres-conn, injected
+#     as DB_CONNECTION_STRING in deployment.yaml.
+#   * DB_HOST / VALKEY point at the MANAGED stores (RDS + ElastiCache), not the in-cluster
+#     postgresql/valkey-cart Services - those were turned off in Mandate #8 §8 and no longer
+#     resolve. VALKEY_URL is a secret (rediss:// with auth token) injected in deployment.yaml.
+#   * CORS locked to the Cloudflare Access hostname instead of "*".
+# The gRPC/HTTP microservices below ARE still in-cluster (app tier, not datastores).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shopping-copilot-config
+  namespace: techx-tf3
+  labels:
+    app: shopping-copilot
+data:
+  # ── LLM backend (Bedrock, APAC inference profile) ────────────────
+  BEDROCK_MODEL_ID: "apac.amazon.nova-lite-v1:0"
+  BEDROCK_REGION: "ap-southeast-1"
+
+  # ── Guardrails ───────────────────────────────────────────────────
+  BEDROCK_GUARDRAIL_ID: "3ab7r29x59x4"
+  BEDROCK_GUARDRAIL_VERSION: "DRAFT"
+  BEDROCK_GUARDRAIL_REGION: "us-east-1"
+
+  # ── RAG Knowledge Base ───────────────────────────────────────────
+  BEDROCK_KB_ID: "UCTITOWFHE"
+  BEDROCK_KB_DATA_SOURCE_ID: "OJQNE88GXV"
+  REVIEWS_DATA_SOURCE_ID: "M2YA7L7GEA"
+  PRODUCTS_S3_BUCKET: "techx-products-catalog-2026"
+
+  # ── Database (RDS PostgreSQL - Mandate #8) ───────────────────────
+  # Host/port/name only, for any code path that reads them individually. The authoritative
+  # credentialed DSN is DB_CONNECTION_STRING, injected from Secret in deployment.yaml.
+  DB_HOST: "techx-tf3-postgres.czwcs2ocww3q.ap-southeast-1.rds.amazonaws.com"
+  DB_PORT: "5432"
+  DB_NAME: "otel"
+  DB_SSLMODE: "require"
+
+  # ── gRPC / HTTP microservices (in-cluster app tier) ──────────────
+  CATALOG_ADDR: "product-catalog.techx-tf3.svc.cluster.local:8080"
+  CART_ADDR: "cart.techx-tf3.svc.cluster.local:8080"
+  REVIEWS_ADDR: "product-reviews.techx-tf3.svc.cluster.local:3551"
+  RECO_ADDR: "recommendation.techx-tf3.svc.cluster.local:8080"
+  CURRENCY_ADDR: "currency.techx-tf3.svc.cluster.local:8080"
+  SHIPPING_ADDR: "http://shipping.techx-tf3.svc.cluster.local:8080"
+
+  # ── App ──────────────────────────────────────────────────────────
+  # Locked to the SSO-fronted hostname (see cloudflare-access.tf). Not "*".
+  CORS_ALLOWED_ORIGINS: "https://copilot.arthur-ngo.org"
+  LOG_LEVEL: "INFO"

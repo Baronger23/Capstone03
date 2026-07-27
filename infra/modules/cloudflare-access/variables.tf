@@ -64,3 +64,18 @@ variable "internal_ui_routes" {
   }))
   default = {}
 }
+
+variable "blocked_paths" {
+  description = <<-EOT
+    Per-hostname URL paths to hard-block at the tunnel edge (cloudflared returns 404 before
+    the request ever reaches the in-cluster Service), even for authenticated SSO users. Used
+    to fence off unauthenticated debug/introspection endpoints on an otherwise-exposed UI.
+    Each entry: hostname + a cloudflared path regex (e.g. "^/(debug|docs)"). Rendered BEFORE
+    internal_ui_routes so first-match wins.
+  EOT
+  type = list(object({
+    hostname = string
+    path     = string
+  }))
+  default = []
+}
