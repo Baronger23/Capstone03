@@ -143,7 +143,10 @@ jobs:
             --push \
             shopping-copilot
           DIGEST="$(jq -r '.["containerimage.digest"]' meta.json)"
-          [ -n "$DIGEST" ] && [ "$DIGEST" != null ] || { echo "FAIL: no digest resolved" >&2; exit 1; }
+          if [ -z "$DIGEST" ] || [ "$DIGEST" = null ]; then
+            echo "FAIL: no digest resolved" >&2
+            exit 1
+          fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install Cosign
