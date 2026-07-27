@@ -15,6 +15,13 @@ on:
         description: "Optional space-separated production services for a scoped canary build"
         required: false
         default: ""
+      backfill_digests:
+        description: >-
+          Backfill only. Space-separated <service>=<sha256:digest> pairs of existing
+          index digests that need legacy Cosign evidence. Skips build/push entirely
+          and never promotes; leave empty for a normal build.
+        required: false
+        default: ""
 
   push:
     branches: [main]
@@ -107,11 +114,31 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
           SOURCE_REF: ${{ github.ref }}
           INPUT_SERVICES: ${{ inputs.services }}
+          INPUT_BACKFILL: ${{ inputs.backfill_digests }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$SOURCE_REF" != refs/heads/main ]; then
             echo "FAIL: production image promotion may only be dispatched from main" >&2
             exit 1
+          fi
+
+          # A backfill re-signs digests that are already released, so it must not
+          # build, push, or promote anything. Shutting the build matrix down here
+          # also keeps the aggregate and image-bump jobs from running.
+          if [ -n "${INPUT_BACKFILL// }" ]; then
+            if [ -n "${INPUT_SERVICES// }" ]; then
+              echo "FAIL: backfill_digests and services are mutually exclusive" >&2
+              exit 1
+            fi
+            {
+              echo "source_sha=$SOURCE_SHA"
+              echo "source_short_sha=$(git rev-parse --short=7 "$SOURCE_SHA")"
+              echo "mode=none"
+              echo "services="
+              echo "matrix=[]"
+            } >> "$GITHUB_OUTPUT"
+            echo "Backfill requested; build matrix disabled."
+            exit 0
           fi
           SOURCE_SHORT_SHA="$(git rev-parse --short=7 "$SOURCE_SHA")"
           read -r -a ALL_SERVICE_ARRAY <<< "$ALL_SERVICES"
@@ -1455,5 +1482,81 @@ jobs:
         with:
           name: promotion-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: promotion-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+  # Re-signs first-party index digests that are already released but only carry
+  # OCI 1.1 referrer evidence, which Kyverno verifyImages cannot read. Lives in
+  # this workflow file on purpose: the ClusterPolicy pins the keyless identity to
+  # build-push-ecr.yml@refs/heads/main, so evidence produced from any other
+  # workflow file would be rejected at admission.
+  backfill-evidence:
+    if: github.event_name == 'workflow_dispatch' && inputs.backfill_digests != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Refuse to backfill from anywhere but main
+        env:
+          SOURCE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$SOURCE_REF" != refs/heads/main ]; then
+            echo "FAIL: backfill signs production digests and may only run from main" >&2
+            exit 1
+          fi
+
+      - name: Checkout source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # Must match the release path: ClusterPolicy verifyImages reads the
+          # legacy OCI layout, which v3 replaces with Sigstore bundle referrers.
+          cosign-release: v2.6.2
+
+      - name: Backfill Cosign signature and CycloneDX evidence
+        env:
+          BACKFILL_DIGESTS: ${{ inputs.backfill_digests }}
+          BUILD_PLATFORMS: ${{ inputs.platforms }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/backfill-cosign-evidence.sh \
+            --pairs "$BACKFILL_DIGESTS" \
+            --registry "$ECR_REGISTRY" \
+            --repository "$ECR_REPOSITORY" \
+            --platforms "$BUILD_PLATFORMS" \
+            --source-sha "$SOURCE_SHA" \
+            --identity "https://github.com/${GITHUB_WORKFLOW_REF}" \
+            --evidence-root "$GITHUB_WORKSPACE/backfill-evidence"
+
+      - name: Upload backfill evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backfill-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: backfill-evidence/
           if-no-files-found: error
           retention-days: 90
