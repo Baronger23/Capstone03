@@ -35,6 +35,15 @@ PLUGIN_PATCH = (
     / "patches"
     / "opensearch-grpc-1.82.1.patch"
 )
+OPENSEARCH_DATASOURCE = (
+    REPO
+    / "phase3 - information"
+    / "techx-corp-chart"
+    / "grafana"
+    / "provisioning"
+    / "datasources"
+    / "opensearch.yaml"
+)
 PREMERGE_WORKFLOW = REPO / ".github" / "workflows" / "verify-grafana-image.yml"
 PLUGIN_PATH = "/opt/grafana/plugins"
 PLUGIN_SETTINGS = {
@@ -158,6 +167,16 @@ def test_pm176_base_values_do_not_declare_runtime_plugins():
         "reporting_enabled": False,
     }
     assert grafana["grafana.ini"]["plugins"] == PLUGIN_SETTINGS
+
+
+def test_pm176_opensearch_datasource_uses_daily_time_pattern():
+    datasource = yaml.safe_load(OPENSEARCH_DATASOURCE.read_text(encoding="utf-8"))
+    item = datasource["datasources"][0]
+
+    assert item["uid"] == "webstore-logs"
+    assert item["type"] == "grafana-opensearch-datasource"
+    assert item["jsonData"]["database"] == "[otel-logs-]YYYY-MM-DD"
+    assert item["jsonData"]["pplEnabled"] is True
 
 
 def test_pm176_smoke_script_is_read_only_and_syntax_valid():
