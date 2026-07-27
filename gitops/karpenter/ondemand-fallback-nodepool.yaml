@@ -50,10 +50,11 @@ spec:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 10m
     budgets:
+      # Fallback must scale back down when it is no longer needed; only block
+      # voluntary drift replacement during guarded production windows.
       - nodes: "0"
         reasons:
           - Drifted
-          - Underutilized
 ---
 apiVersion: karpenter.k8s.aws/v1
 kind: EC2NodeClass
