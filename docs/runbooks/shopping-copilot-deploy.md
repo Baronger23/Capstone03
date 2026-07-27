@@ -111,22 +111,24 @@ Resolved on our side — no AIO02 change needed:
   vanilla OTel-demo ports and are WRONG for our chart (`:8080`, reviews `:3551`). We override
   all six `*_ADDR` in the ConfigMap with the correct cluster ports.
 
+Confirmed from platform source (2026-07-27):
+- **RDS schema** — `product-catalog/main.go` queries `FROM catalog.products` and
+  `product-reviews/database.py` queries `FROM reviews.productreviews`. Both services run live
+  on RDS `otel` using the same RDS-managed master creds we inject into the copilot, so those
+  schemas exist and the master user can read them. The copilot's SQL tools hit the same tables.
+
 Still to confirm / accept — do not block a first deploy (graceful degradation or hardening):
-1. **RDS schema (LIVE CHECK).** App queries `catalog.products` / `reviews.productreviews` with
-   `search_path=catalog,reviews,public`. Verify those exist in RDS `otel` and the master user
-   can read them (psql via tunnel, or the app's `scripts/check_db_schema.py`). If missing, the
-   SQL search tool degrades; RAG + gRPC tools still work.
-2. **RAG Knowledge Base health.** `BEDROCK_KB_ID=UCTITOWFHE` backs onto a vector store;
+1. **RAG Knowledge Base health.** `BEDROCK_KB_ID=UCTITOWFHE` backs onto a vector store;
    OpenSearch Serverless was turned off for cost. If gone, RAG Flow-2 → SQL-only.
-3. **`/metrics` not implemented.** No `/metrics` route/prometheus client despite spec §7.4.
+2. **`/metrics` not implemented.** No `/metrics` route/prometheus client despite spec §7.4.
    Scrape annotation removed; SLO/alert claims are unbacked until AIO02 adds it.
-4. **Debug endpoints.** `/debug/sessions|session|cache|ratelimit` + `/docs` are unauthenticated
+3. **Debug endpoints.** `/debug/sessions|session|cache|ratelimit` + `/docs` are unauthenticated
    and dump all users' sessions. Cloudflare Access gates the hostname (SSO allowlist only);
    ask AIO02 for a flag to disable `/debug/*` in prod.
-5. **Bedrock ARNs.** IRSA scoped to the contract's model/guardrail/KB IDs; if AIO02 promotes
+4. **Bedrock ARNs.** IRSA scoped to the contract's model/guardrail/KB IDs; if AIO02 promotes
    the guardrail out of `DRAFT` or moves the KB/model, update the locals in
    `shopping-copilot-bedrock.tf`.
-6. **NetworkPolicy.** Deliberately NOT added (Mandate #5 batch caused the 20/07 outage; CDO01
+5. **NetworkPolicy.** Deliberately NOT added (Mandate #5 batch caused the 20/07 outage; CDO01
    is rebuilding it). Add copilot egress (RDS/ElastiCache/Bedrock/gRPC) when that lands.
 
 ## Rollback
