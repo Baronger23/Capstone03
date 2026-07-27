@@ -58,6 +58,12 @@ set `GF_PLUGINS_PREINSTALL_DISABLED=true`; setting
 `GF_PLUGINS_PREINSTALL` to an empty value is insufficient because Grafana 13
 otherwise starts its default catalog installer.
 
+The provisioned OpenSearch datasource must use
+`database: "[otel-logs-]YYYY-MM-DD"`. Grafana's OpenSearch health endpoint can
+treat a literal `otel-logs-*` value as an index name even when matching daily
+indices exist; dashboard PPL queries may continue to use
+`source=otel-logs-*`.
+
 ## Non-destructive runtime gate
 
 Run the smoke test with the current Grafana egress state:
