@@ -21,3 +21,17 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+  # Kyverno's admission webhook mutates ClusterPolicy after apply, writing back
+  # server-side defaults (skipBackgroundRequests, validate.allowExistingViolations,
+  # verifyImages.useCache, attestor signatureAlgorithm, ...) under its own field
+  # manager "kyverno". Those fields are absent from Git, so ArgoCD reports OutOfSync
+  # forever. Ignoring everything owned by the "kyverno" field manager (works because
+  # ServerSideApply is enabled) makes the app Synced and is resilient to future
+  # Kyverno default additions. RespectIgnoreDifferences keeps a manual/self-heal sync
+  # from stripping those fields back out (which Kyverno would immediately re-add).
+  ignoreDifferences:
+    - group: kyverno.io
+      kind: ClusterPolicy
+      managedFieldsManagers:
+        - kyverno
