@@ -13,6 +13,9 @@ spec:
     targetRevision: 3.8.2
     helm:
       values: |
+        kyverno-api:
+          labels:
+            app.kubernetes.io/managed-by: argocd
         admissionController:
           replicas: 3
           rbac:
@@ -114,14 +117,6 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: kyverno
-  # Helm renders an empty labels map on these chart-owned CRDs, while the API
-  # server omits an empty map when persisting the object. Ignore only that
-  # cosmetic metadata difference; CRD spec drift must remain visible.
-  ignoreDifferences:
-    - group: apiextensions.k8s.io
-      kind: CustomResourceDefinition
-      jsonPointers:
-        - /metadata/labels
   syncPolicy:
     automated:
       enabled: true
