@@ -153,7 +153,10 @@ def enrich_culprit_with_upstream_check(trigger_service: str, lookback_minutes: i
 
     return trigger_service
 
+last_slo_alert_timestamp = 0.0
+
 async def active_metrics_polling_loop():
+    global last_slo_alert_timestamp
     logger.info("Starting Active Metrics Polling Loop (Mode B)...")
     await asyncio.sleep(5)  # Đợi uvicorn khởi tạo xong cổng kết nối
     while ACTIVE_POLLING_ENABLED:
@@ -179,7 +182,11 @@ async def active_metrics_polling_loop():
             is_breached = detector.check_slo_burn_rate()
             
             if is_breached:
-                logger.warning("SLO Burn Rate breach detected via Active Polling!")
+                if now_ts - last_slo_alert_timestamp < 300:
+                    logger.info(f"SLO Burn Rate breach detected but throttling to prevent alert fatigue (cooldown: {300 - (now_ts - last_slo_alert_timestamp):.1f}s remaining).")
+                else:
+                    last_slo_alert_timestamp = now_ts
+                    logger.warning("SLO Burn Rate breach detected via Active Polling!")
                 
                 # Check xem đã có cảnh báo sớm ML trong cache chưa để nâng cấp
                 proactive_inc_id = None
@@ -537,12 +544,15 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
     llm_action_cmd = diagnosis.get("action_command", "")
     llm_rollback_cmd = diagnosis.get("rollback_command", "")
     
-    if llm_action_cmd and llm_action_cmd.startswith("kubectl -n techx-tf3"):
+    VALID_K8S_SERVICES = {"frontend", "checkout", "payment", "product-catalog", "product-reviews", "shipping", "recommendation", "email", "flagd", "ad", "cart", "quote"}
+    target_service_in_cmd = next((s for s in VALID_K8S_SERVICES if f"deployment/{s}" in llm_action_cmd or f"deploy/{s}" in llm_action_cmd), None)
+    
+    if llm_action_cmd and llm_action_cmd.startswith("kubectl -n techx-tf3") and target_service_in_cmd:
         action_command = llm_action_cmd
-        rollback_command = llm_rollback_cmd if llm_rollback_cmd else f"kubectl -n techx-tf3 rollout undo deployment/{culprit_service}"
-    elif culprit_service == "checkout":
-        action_command = "kubectl -n techx-tf3 rollout restart rollout/checkout-rollout"
-        rollback_command = "kubectl -n techx-tf3 rollout undo rollout/checkout-rollout"
+        rollback_command = llm_rollback_cmd if llm_rollback_cmd else f"kubectl -n techx-tf3 rollout undo deployment/{target_service_in_cmd}"
+    elif culprit_service in VALID_K8S_SERVICES:
+        action_command = f"kubectl -n techx-tf3 rollout restart deployment/{culprit_service}"
+        rollback_command = f"kubectl -n techx-tf3 rollout undo deployment/{culprit_service}"
     else:
         COMMAND_TEMPLATES = {
             "scale":       "kubectl -n techx-tf3 rollout restart deployment/{service}" if culprit_service in ["payment", "product-reviews", "recommendation", "product-catalog"] else "kubectl -n techx-tf3 scale deploy/{service} --replicas=2",

@@ -124,8 +124,8 @@ class LLMDiagnostician:
     def retrieve_relevant_playbooks_from_aws(self, query_text: str, k: int = 2) -> str:
         """Kéo tri thức trực tiếp từ Cloud-native Amazon Bedrock Knowledge Base."""
         try:
-            logger.info(f"Querying AWS Bedrock Knowledge Base (ID: {self.kb_id})...")
-            runtime_client = boto3.client("bedrock-agent-runtime", region_name=self.region)
+            bedrock_region = os.getenv("BEDROCK_AWS_REGION", "us-east-1")
+            runtime_client = boto3.client("bedrock-agent-runtime", region_name=bedrock_region)
             response = runtime_client.retrieve(
                 knowledgeBaseId=self.kb_id,
                 retrievalQuery={
