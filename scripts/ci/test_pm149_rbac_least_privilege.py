@@ -323,16 +323,21 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
         "phase3 - information/techx-corp-chart/values.schema.json",
         "phase3 - information/techx-corp-chart/templates/serviceaccount.yaml",
         "phase3 - information/techx-corp-chart/templates/_objects.tpl",
-        "scripts/ci/test_pm149_rbac_least_privilege.py",
-        "docs/evidence/mandate-17/pm-149-rbac-least-privilege.md",
-        "scripts/ci/test_pm176_grafana_immutable_runtime.py",
-        "scripts/ci/test_workflow_image_bump_contract.py",
-        "scripts/pm-176-grafana-smoke.sh",
+            "scripts/ci/test_pm149_rbac_least_privilege.py",
+            "docs/evidence/mandate-17/pm-149-rbac-least-privilege.md",
+            "scripts/ci/test_pm176_grafana_immutable_runtime.py",
+            "scripts/ci/test_workflow_image_bump_contract.py",
+            "scripts/ci/action-pins.lock.json",
+            "scripts/pm-176-grafana-smoke.sh",
         "phase3 - information/techx-corp-platform/src/grafana/Dockerfile",
         "docs/runbooks/pm-176-grafana-immutable-rollout.md",
         "docs/evidence/pm-176/01-pre-networkpolicy-runtime-test.md",
         "docs/evidence/pm-176/02-post-pr473-default-preinstall-failure.md",
         "docs/evidence/pm-176/03-post-pr474-plugin-signature-failure.md",
+        "docs/evidence/pm-176/04-post-pr475-trivy-block.md",
+        ".github/workflows/verify-grafana-image.yml",
+        "docs/adr/0014-pm-176-derived-opensearch-plugin.md",
+        "phase3 - information/techx-corp-platform/src/grafana/patches/opensearch-grpc-1.82.1.patch",
     }
     # PM-149 content files (excluding the test itself and docs).
     # Only enforce scope guard when the PR is actually a PM-149 content PR.
@@ -344,14 +349,19 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
     # runtime Grafana plugin installer. Do not classify that unrelated change
     # as PM-149 content merely because both mandates use the same values file.
     pm176_paths = {
-        "scripts/ci/test_pm176_grafana_immutable_runtime.py",
-        "scripts/ci/test_workflow_image_bump_contract.py",
-        "scripts/pm-176-grafana-smoke.sh",
+            "scripts/ci/test_pm176_grafana_immutable_runtime.py",
+            "scripts/ci/test_workflow_image_bump_contract.py",
+            "scripts/ci/action-pins.lock.json",
+            "scripts/pm-176-grafana-smoke.sh",
         "phase3 - information/techx-corp-platform/src/grafana/Dockerfile",
         "docs/runbooks/pm-176-grafana-immutable-rollout.md",
         "docs/evidence/pm-176/01-pre-networkpolicy-runtime-test.md",
         "docs/evidence/pm-176/02-post-pr473-default-preinstall-failure.md",
         "docs/evidence/pm-176/03-post-pr474-plugin-signature-failure.md",
+        "docs/evidence/pm-176/04-post-pr475-trivy-block.md",
+        ".github/workflows/verify-grafana-image.yml",
+        "docs/adr/0014-pm-176-derived-opensearch-plugin.md",
+        "phase3 - information/techx-corp-platform/src/grafana/patches/opensearch-grpc-1.82.1.patch",
     }
     if changed & pm176_paths:
         pm149_content.discard("phase3 - information/techx-corp-chart/values.yaml")

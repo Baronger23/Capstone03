@@ -14,9 +14,10 @@ The deploy source is `main` through ArgoCD. Do not use `helm upgrade`,
 - `native-admission-policies` and `techx-corp` are both `Synced/Healthy`.
 - The operator has `kubectl exec`, `kubectl port-forward`, and read access to
   the Grafana namespace.
-- `AWS_PROFILE=default` in WSL is the active `tf3-production-readonly`
-  session for account `197826770971`. An operator profile is required for the
-  destructive recreation gate.
+- `AWS_PROFILE=techx-new` in WSL is the active production session for account
+  `197826770971`. Confirm with `aws sts get-caller-identity` before any
+  cluster command. An operator profile is required for the destructive
+  recreation gate.
 
 ## Static/render gate
 
@@ -43,11 +44,19 @@ ECR `tag@sha256` image reference. The rendered `grafana.ini` must also contain:
 
 ```ini
 [plugins]
+allow_loading_unsigned_plugins = grafana-opensearch-datasource
 preinstall_disabled = true
 preinstall_auto_update = false
 plugin_admin_enabled = false
 plugin_admin_external_manage_enabled = false
 ```
+
+The PR must also pass `.github/workflows/verify-grafana-image.yml`. This
+read-only check builds both `linux/amd64` and `linux/arm64`, blocks any
+HIGH/CRITICAL Trivy finding, and runs an amd64 startup smoke. The smoke must
+set `GF_PLUGINS_PREINSTALL_DISABLED=true`; setting
+`GF_PLUGINS_PREINSTALL` to an empty value is insufficient because Grafana 13
+otherwise starts its default catalog installer.
 
 ## Non-destructive runtime gate
 
@@ -74,6 +83,10 @@ Required PASS results:
 - Datasource health is successful.
 - Startup log contains no runtime download/install attempt for any plugin.
 - Startup log contains no modified/invalid plugin signature or validation error.
+- The image contains `TF3-PROVENANCE` with
+  `trust_model=tf3-derived-unsigned`, and no `MANIFEST.txt` remains beside the
+  rebuilt backend. The outer image digest/SBOM/Cosign controls do not claim to
+  be an upstream Grafana plugin signature.
 
 `BLOCKED` means the operator permission or tool is missing; it is not a pass.
 Resolve it or attach the output as incomplete evidence.

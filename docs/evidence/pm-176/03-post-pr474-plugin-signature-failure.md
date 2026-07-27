@@ -43,3 +43,7 @@ locks the plugin directory read-only.
 
 The smoke test also fails on modified/invalid signature messages, not only
 runtime installer activity.
+
+This initial corrective action was subsequently blocked by the Trivy gate
+because the signed upstream backend contained four fixed HIGH findings. See
+`04-post-pr475-trivy-block.md` for the superseding design.
