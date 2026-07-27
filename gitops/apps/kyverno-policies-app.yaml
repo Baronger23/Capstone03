@@ -22,16 +22,21 @@ spec:
     syncOptions:
       - ServerSideApply=true
       - RespectIgnoreDifferences=true
-  # Kyverno's admission webhook mutates ClusterPolicy after apply, writing back
-  # server-side defaults (skipBackgroundRequests, validate.allowExistingViolations,
-  # verifyImages.useCache, attestor signatureAlgorithm, ...) under its own field
-  # manager "kyverno". Those fields are absent from Git, so ArgoCD reports OutOfSync
-  # forever. Ignoring everything owned by the "kyverno" field manager (works because
-  # ServerSideApply is enabled) makes the app Synced and is resilient to future
-  # Kyverno default additions. RespectIgnoreDifferences keeps a manual/self-heal sync
-  # from stripping those fields back out (which Kyverno would immediately re-add).
+  # Kyverno's admission webhook injects server-side defaults into ClusterPolicy at
+  # admission time. These fields are absent from Git AND unowned in managedFields
+  # (the webhook mutates in-request, so no field manager claims them) — which is why
+  # managedFieldsManagers ignore does NOT work here. The exact added paths below were
+  # obtained by deep-diffing the live objects against these manifests; keep this list
+  # in sync if a Kyverno upgrade adds new defaults. RespectIgnoreDifferences stops a
+  # manual/self-heal sync from stripping them back out (Kyverno would re-add them).
   ignoreDifferences:
     - group: kyverno.io
       kind: ClusterPolicy
-      managedFieldsManagers:
-        - kyverno
+      jqPathExpressions:
+        - .spec.admission
+        - .spec.emitWarning
+        - .spec.rules[].skipBackgroundRequests
+        - .spec.rules[].validate.allowExistingViolations
+        - .spec.rules[].verifyImages[].useCache
+        - .spec.rules[].verifyImages[].attestors[].entries[].signatureAlgorithm
+        - .spec.rules[].verifyImages[].attestations[].attestors[].entries[].signatureAlgorithm
