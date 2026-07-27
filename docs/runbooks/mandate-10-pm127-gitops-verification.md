@@ -86,6 +86,12 @@ unable to inspect the cluster or ECR.
 
 ### Apply only the PM-127 IRSA prerequisite
 
+Status: completed by production Terraform
+[run #29972575137](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/actions/runs/29972575137).
+Both the saved-plan apply and the live IAM role/policy verification steps
+passed. The instructions below remain the audit trail for how that scoped
+change was performed.
+
 The automatic plan for the PR #349 merge showed the two expected Kyverno IAM
 resources together with unrelated production changes, including a bastion
 replacement and datastore/audit updates. Do not apply that full plan as part
@@ -120,7 +126,9 @@ prove both live IAM objects exist. Keep `scope: full` for normal, separately
 reviewed infrastructure releases; it is not the PM-127 rollout path.
 
 After the infrastructure owner applies the reviewed Terraform plan, merge the
-controller enablement PR and observe ArgoCD without forcing a sync:
+controller enablement PR and observe ArgoCD without forcing a sync. In the
+current rollout stage, controller auto-sync is enabled while policy auto-sync
+remains disabled:
 
 ```sh
 kubectl -n argocd get application kyverno kyverno-policies -o wide
@@ -142,10 +150,10 @@ Expected ordering and state:
 - both policies are `Ready` and remain `Audit`.
 
 Terraform and Argo are separate reconcilers. Argo sync waves cannot prove that
-the Terraform IAM role already exists. The preparation branch therefore keeps
-automated reconciliation disabled for both child Applications. Do not manually
-sync them. Enable the controller through a PR only after IAM is applied, and
-enable Audit policies through a later PR only after controller health is proven.
+the Terraform IAM role already exists. The scoped Terraform rollout established
+that prerequisite before this controller-only change enabled reconciliation for
+the `kyverno` child. Do not manually sync `kyverno-policies`; enable the Audit
+policies through a later PR only after controller health is proven.
 
 If Argo reports `ComparisonError`, inspect chart dependencies and the exact
 Git revision before touching the cluster. Do not bypass GitOps with a manual
