@@ -59,11 +59,13 @@ Kyverno policy; it must not carry a second hardcoded image list.
 
 ## Required identity and connectivity
 
-Use the production account profile before any AWS or Kubernetes command:
+Use a configured production-account credential before any AWS or Kubernetes
+command. In this WSL environment the default credential chain is the approved
+read-only identity; do not assume a profile name that is not configured:
 
 ```sh
-export AWS_PROFILE=techx-new
 export AWS_REGION=ap-southeast-1
+aws sts get-caller-identity
 ```
 
 With the SSM port-forward already running on local port 8443, configure the
@@ -211,7 +213,12 @@ before Enforce. Never backfill by signing from a workstation.
 For a multi-platform release, the Kubernetes desired state pins the index digest
 while the runtime image ID may be a child digest. The workflow signs the index,
 attests each platform SBOM to its child, and publishes a signed index-to-platform
-mapping. Retrieval resolves the index before verifying the exact child SBOM.
+mapping. It also emits exactly one legacy CycloneDX compatibility attestation on
+the index for the current ClusterPolicy. ECR image tags are immutable, so
+re-attesting the same index with the same predicate type for the second platform
+would fail the release; the child attestations and signed mapping remain the
+authoritative platform evidence. Retrieval resolves the index before verifying
+the exact child SBOM.
 
 The ECR role is attached to the admission and reports controllers. The
 background controller is intentionally excluded because these PM-127 policies
