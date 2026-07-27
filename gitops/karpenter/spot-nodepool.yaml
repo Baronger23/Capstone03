@@ -43,11 +43,11 @@ spec:
       expireAfter: 168h
       terminationGracePeriod: 10m
   limits:
-    # Mandate 13 cần thêm đúng 1 elastic spot node để hot path đang Pending có
-    # thể bung thêm capacity trên Spot mà không bật lại on-demand fallback.
+    # Keep the amd64 Spot pool capped at two steady burst nodes; the
+    # On-Demand fallback remains emergency capacity, not steady headroom.
     cpu: "12"
     memory: 48Gi
-    nodes: 3
+    nodes: 2
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 3m
