@@ -865,7 +865,6 @@ jobs:
             manifest_raw="$MANIFEST_ROOT/${service}.json"
             platform_map="$PLATFORM_ROOT/${service}.json"
             index_mapping="$PREDICATE_ROOT/${service}-index-release-mapping.json"
-            mapping_verify_report="$VERIFY_ROOT/${service}-index-mapping.jsonl"
 
             echo "Resolving OCI platform children for $index_image"
             docker buildx imagetools inspect --raw "$index_image" > "$manifest_raw"
@@ -959,7 +958,6 @@ jobs:
                 --arg child_verification "${child_verify_report#"$GITHUB_WORKSPACE/"}" \
                 --arg index_verification "$index_verification_path" \
                 --arg index_mapping "${index_mapping#"$GITHUB_WORKSPACE/"}" \
-                --arg mapping_verification "${mapping_verify_report#"$GITHUB_WORKSPACE/"}" \
                 '{
                   service: $service,
                   indexImage: $index_image,
@@ -975,8 +973,7 @@ jobs:
                   predicatePath: $predicate,
                   childVerificationPath: $child_verification,
                   indexVerificationPath: $index_verification,
-                  indexMappingPath: $index_mapping,
-                  indexMappingVerificationPath: $mapping_verification
+                  indexMappingPath: $index_mapping
                 }' >> "$SUMMARY"
             done < <(jq -c '.platforms[]' "$platform_map")
             jq -s \
@@ -1004,17 +1001,14 @@ jobs:
                 }))
               }' "$SUMMARY" > "$index_mapping"
 
-            echo "Attesting index-to-platform SBOM mapping on $index_image"
-            cosign attest \
-              --yes \
-              --type "$INDEX_PREDICATE_TYPE" \
-              --predicate "$index_mapping" \
-              "$index_image"
-            cosign verify-attestation \
-              --type "$INDEX_PREDICATE_TYPE" \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              --certificate-identity "$EXPECTED_IDENTITY" \
-              "$index_image" > "$mapping_verify_report"
+            # ECR tag immutability allows exactly one legacy `.att` write per
+            # subject digest, and Cosign's legacy layout stores every predicate
+            # type for a digest under that single tag. The index already carries
+            # the CycloneDX attestation above, so attesting the mapping here
+            # would be a second write to the same tag and fail with TAG_INVALID.
+            # The mapping stays available as a release-evidence artifact, and
+            # every index-to-platform link remains signed inside each child
+            # CycloneDX attestation (techx.indexDigest/subjectDigest/platform).
           done
 
           jq -s \

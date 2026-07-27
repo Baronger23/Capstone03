@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -25,7 +26,6 @@ def test_workflow_uses_exact_github_oidc_identity_for_sbom():
     assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in WORKFLOW
     assert 'predicateType: "https://cyclonedx.org/bom"' in WORKFLOW
     assert "sbom-index.json" in WORKFLOW
-    assert "sbom-index/v1" in WORKFLOW
 
 
 def test_workflow_uses_clusterpolicy_compatible_cosign_storage():
@@ -63,3 +63,17 @@ def test_workflow_emits_one_index_sbom_reference_for_immutable_ecr():
     assert WORKFLOW.count(
         'echo "Attesting CycloneDX SBOM reference on index $index_image ($platform)"'
     ) == 1
+
+
+def test_workflow_writes_the_index_attestation_tag_exactly_once():
+    """ECR immutable tags accept one `.att` write per subject digest, and the
+    Cosign legacy layout stores every predicate type for a digest under that one
+    tag. A second `cosign attest` on the index -- whatever its --type -- fails
+    with TAG_INVALID, so the index may only ever be attested once (cyclonedx).
+    """
+    sbom_step = WORKFLOW[WORKFLOW.index("Generate, attest, and verify CycloneDX SBOMs"):]
+    attest_targets = re.findall(r'cosign attest \\\n(?:\s+--[^\n]*\\\n)*\s+"\$(\w+)"', sbom_step)
+    assert attest_targets.count("index_image") == 1
+    # The mapping is still built as a release-evidence artifact, so the variable
+    # survives; only pushing it to the registry as a second attestation is banned.
+    assert '--type "$INDEX_PREDICATE_TYPE"' not in sbom_step
