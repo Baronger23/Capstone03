@@ -296,7 +296,13 @@ components:
     replicas: 2        # web khách thấy, traffic HTTP cao nhất
     resources:
       requests:
-        cpu: 100m
+        # PM-152 evidence: actual CPU usage tại 410-user breakpoint = 218m/pod.
+        # Request cũ 100m quá thấp so với actual → HPA báo utilization 200%+ nhưng
+        # mỗi pod vẫn bị throttle vì Linux CFS bóp đúng mức limit.
+        # Tăng request lên 200m để HPA có baseline phản ánh đúng actual load,
+        # tránh scale pod không cần thiết trong khi bottleneck là per-pod throttling.
+        # Không đụng limit (giữ 500m) và không đổi memory — không có OOM signal.
+        cpu: 200m
         memory: 100Mi
       limits:
         cpu: 500m
@@ -355,7 +361,10 @@ components:
         memory: 32Mi
       limits:
         cpu: 500m
-        memory: 64Mi
+        # PM-152 evidence: DB pool peak 14 open / 11 in-use connections.
+        # Go runtime + 14 DB connections + request buffers: 64Mi quá sát.
+        # Tăng lên 128Mi để có headroom, tránh OOMKill khi tải tăng dồn về catalog.
+        memory: 128Mi
     readinessProbe:
       grpc:
         port: 8080

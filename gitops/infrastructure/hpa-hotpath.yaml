@@ -18,7 +18,7 @@ spec:
   scaleTargetRef:
     { apiVersion: apps/v1, kind: Deployment, name: frontend-proxy }
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 12
   metrics:
     - type: Resource
       resource:
@@ -42,10 +42,15 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: frontend-hpa
   namespace: techx-tf3
+  annotations:
+    # PM-153 (Mandate-19): tăng maxReplicas 8→12 để frontend có đủ replica headroom
+    # khi breakpoint ~410 users — PM-152 evidence cho thấy 8 replicas đã đạt max
+    # trong lúc CPU throttling xảy ra. Không tăng node, chỉ cho HPA scale rộng hơn
+    # trên elastic Spot NodePool hiện có. target 75% (từ 65%) để pack hiệu quả hơn.
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: frontend }
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 12
   metrics:
     - type: Resource
       resource:
@@ -73,11 +78,11 @@ spec:
   scaleTargetRef:
     { apiVersion: apps/v1, kind: Deployment, name: product-catalog }
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 12
   metrics:
     - type: Resource
       resource:
-        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+        { name: cpu, target: { type: Utilization, averageUtilization: 75 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
