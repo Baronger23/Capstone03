@@ -157,6 +157,13 @@ that prerequisite before this controller-only change enabled reconciliation for
 the `kyverno` child. Do not manually sync `kyverno-policies`; enable the Audit
 policies through a later PR only after controller health is proven.
 
+The first controller sync may report `OutOfSync` for the Kyverno
+`policies.kyverno.io` CRDs because Helm renders `metadata.labels: {}` while the
+Kubernetes API omits an empty labels map. The approved follow-up ignores only
+that JSON pointer for Kyverno chart CRDs. It does not ignore CRD `spec` or any
+policy resource. Re-check the Application after reconciliation; any remaining
+diff outside `/metadata/labels` is a real drift and must be investigated.
+
 If Argo reports `ComparisonError`, inspect chart dependencies and the exact
 Git revision before touching the cluster. Do not bypass GitOps with a manual
 apply.
