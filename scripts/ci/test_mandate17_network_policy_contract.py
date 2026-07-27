@@ -225,7 +225,12 @@ def test_grafana_policy_uses_post_dnat_pod_peers_and_private_api_subnets():
         "network-policy-grafana.yaml", "grafana-network-policy"
     )
     staged = load_policy("01-grafana.yaml")
-    api_subnets = {"10.0.0.0/20", "10.0.16.0/20", "10.0.32.0/20"}
+    api_subnets = {
+        "172.20.0.1/32",
+        "10.0.0.0/20",
+        "10.0.16.0/20",
+        "10.0.32.0/20",
+    }
 
     assert ingress_ports_from_source(active, "cloudflared") == {3000}
     for policy in (active, staged):
@@ -255,6 +260,9 @@ def test_grafana_policy_uses_post_dnat_pod_peers_and_private_api_subnets():
         assert policy["metadata"]["annotations"][
             "mandate-17.techx.io/kubernetes-api-endpoint-evidence"
         ] == "2026-07-27:10.0.23.132,10.0.8.89"
+        assert policy["metadata"]["annotations"][
+            "mandate-17.techx.io/kubernetes-api-service-evidence"
+        ] == "2026-07-27:kubernetes.default.svc=172.20.0.1"
 
 
 def test_staged_inventory_is_one_policy_per_file():
