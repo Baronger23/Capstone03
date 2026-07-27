@@ -193,6 +193,21 @@ The first-party policy needs all of the following to succeed:
 - non-empty CycloneDX components with TechX index/child/platform/source metadata
 - ECR read access for the Kyverno admission/reports controllers
 
+The producer and admission consumer must also use the same Cosign registry
+storage contract. The build workflow pins Cosign `v2.6.2` because Kyverno
+`ClusterPolicy.spec.rules[].verifyImages` reads the legacy Cosign OCI layout.
+Cosign v3 defaults to OCI 1.1 Sigstore bundle referrers; an ECR referrer with
+artifact type `application/vnd.dev.sigstore.bundle.v0.3+json` does not by itself
+prove that this ClusterPolicy can find the signature. A PolicyReport message of
+`no signatures found` remains a real Audit failure even when that new-format
+referrer exists.
+
+Do not remove the Cosign version pin without either proving live ClusterPolicy
+compatibility or migrating through a separately reviewed ImageValidatingPolicy
+rollout. Current and rollback digests created with the incompatible format must
+receive workflow-owned legacy signature and CycloneDX attestation backfill
+before Enforce. Never backfill by signing from a workstation.
+
 For a multi-platform release, the Kubernetes desired state pins the index digest
 while the runtime image ID may be a child digest. The workflow signs the index,
 attests each platform SBOM to its child, and publishes a signed index-to-platform

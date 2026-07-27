@@ -28,6 +28,13 @@ def test_workflow_uses_exact_github_oidc_identity_for_sbom():
     assert "sbom-index/v1" in WORKFLOW
 
 
+def test_workflow_uses_clusterpolicy_compatible_cosign_storage():
+    installer = WORKFLOW.index("sigstore/cosign-installer@")
+    signing = WORKFLOW.index("Sign and verify approved image digests with keyless Cosign")
+    install_block = WORKFLOW[installer:signing]
+    assert "cosign-release: v2.6.2" in install_block
+
+
 def test_workflow_signs_before_generating_or_attesting_sbom():
     signing = WORKFLOW.index("Sign and verify approved image digests with keyless Cosign")
     generation = WORKFLOW.index("Generate, attest, and verify CycloneDX SBOMs")
