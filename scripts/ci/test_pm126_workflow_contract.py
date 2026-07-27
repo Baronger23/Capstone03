@@ -46,7 +46,7 @@ class SecureDeliveryWorkflowContractTests(unittest.TestCase):
 
     def test_all_external_actions_and_scanner_images_are_immutable(self):
         action_refs = re.findall(r"^\s*uses:\s*([^\s#]+)", WORKFLOW_TEXT, re.MULTILINE)
-        self.assertEqual(len(action_refs), 7)
+        self.assertEqual(len(action_refs), 8)
         for action_ref in action_refs:
             self.assertRegex(action_ref, r"^[^@]+@[0-9a-f]{40}$")
         scanner_refs = re.findall(
@@ -54,7 +54,11 @@ class SecureDeliveryWorkflowContractTests(unittest.TestCase):
             WORKFLOW_TEXT,
             re.MULTILINE,
         )
-        self.assertEqual(len(scanner_refs), 3)
+        self.assertEqual(len(scanner_refs), 2)
+        self.assertIn(
+            "aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567",
+            WORKFLOW_TEXT,
+        )
 
     def test_three_scans_always_run_and_publish_artifacts(self):
         iac = job_block("iac_misconfiguration", "secret_scan")
@@ -69,7 +73,9 @@ class SecureDeliveryWorkflowContractTests(unittest.TestCase):
         self.assertIn("--minimum-severity HIGH", iac)
         self.assertIn("--scanners secret", secret)
         self.assertIn("--severity HIGH,CRITICAL", secret)
-        self.assertIn("/src\n", secret)
+        self.assertIn("version: v0.72.0", secret)
+        self.assertIn("--disable-telemetry", secret)
+        self.assertIn("--output artifacts/secrets/raw.json", secret)
         self.assertNotIn("raw.json\n", secret.split("path: |", 1)[-1].split("if-no-files-found", 1)[0])
         self.assertIn("--config p/owasp-top-ten", sast)
         self.assertIn("--severity ERROR", sast)
