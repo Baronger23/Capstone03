@@ -13,6 +13,9 @@ spec:
     targetRevision: 3.8.2
     helm:
       values: |
+        kyverno-api:
+          labels:
+            app.kubernetes.io/managed-by: argocd
         admissionController:
           replicas: 3
           rbac:
@@ -116,7 +119,7 @@ spec:
     namespace: kyverno
   syncPolicy:
     automated:
-      enabled: false
+      enabled: true
       prune: true
       selfHeal: true
     syncOptions:

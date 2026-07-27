@@ -59,11 +59,13 @@ Kyverno policy; it must not carry a second hardcoded image list.
 
 ## Required identity and connectivity
 
-Use the production account profile before any AWS or Kubernetes command:
+Use a configured production-account credential before any AWS or Kubernetes
+command. In this WSL environment the default credential chain is the approved
+read-only identity; do not assume a profile name that is not configured:
 
 ```sh
-export AWS_PROFILE=techx-new
 export AWS_REGION=ap-southeast-1
+aws sts get-caller-identity
 ```
 
 With the SSM port-forward already running on local port 8443, configure the
@@ -85,6 +87,12 @@ unable to inspect the cluster or ECR.
 ## Post-merge GitOps observation
 
 ### Apply only the PM-127 IRSA prerequisite
+
+Status: completed by production Terraform
+[run #29972575137](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/actions/runs/29972575137).
+Both the saved-plan apply and the live IAM role/policy verification steps
+passed. The instructions below remain the audit trail for how that scoped
+change was performed.
 
 The automatic plan for the PR #349 merge showed the two expected Kyverno IAM
 resources together with unrelated production changes, including a bastion
@@ -120,7 +128,9 @@ prove both live IAM objects exist. Keep `scope: full` for normal, separately
 reviewed infrastructure releases; it is not the PM-127 rollout path.
 
 After the infrastructure owner applies the reviewed Terraform plan, merge the
-controller enablement PR and observe ArgoCD without forcing a sync:
+controller enablement PR and observe ArgoCD without forcing a sync. In the
+current rollout stage, controller auto-sync is enabled while policy auto-sync
+remains disabled:
 
 ```sh
 kubectl -n argocd get application kyverno kyverno-policies -o wide
@@ -132,20 +142,31 @@ kubectl get crd clusterpolicies.kyverno.io
 Expected ordering and state:
 
 - `kyverno-app.yaml` sync wave 10 creates the controller and CRDs.
-- `kyverno-policies-app.yaml` sync wave 20 creates the two PM-127 policies.
+- `kyverno-policies-app.yaml` remains auto-sync disabled at this stage; neither
+  PM-127 ClusterPolicy is created yet.
 - admission and reports controller service accounts have the dedicated ECR
   read-role annotation because admission verifies new requests and reports
   performs background scans.
 - background and cleanup service accounts do not receive that annotation.
 - admission has three replicas and reports has two replicas, each with a PDB
   and topology constraints.
-- both policies are `Ready` and remain `Audit`.
+- the controller Application is `Synced` and `Healthy`; policy readiness is a
+  gate for the later policy-only rollout, where both policies remain `Audit`.
 
 Terraform and Argo are separate reconcilers. Argo sync waves cannot prove that
-the Terraform IAM role already exists. The preparation branch therefore keeps
-automated reconciliation disabled for both child Applications. Do not manually
-sync them. Enable the controller through a PR only after IAM is applied, and
-enable Audit policies through a later PR only after controller health is proven.
+the Terraform IAM role already exists. The scoped Terraform rollout established
+that prerequisite before this controller-only change enabled reconciliation for
+the `kyverno` child. Do not manually sync `kyverno-policies`; enable the Audit
+policies through a later PR only after controller health is proven.
+
+The first controller sync may report `OutOfSync` for the Kyverno
+`policies.kyverno.io` CRDs because Helm renders `metadata.labels: {}` while the
+Kubernetes API omits an empty labels map. An initial `ignoreDifferences`
+workaround did not clear this status on Argo CD v3.4.5. The canonical
+remediation sets a stable label through the chart's `kyverno-api.labels` value,
+so the API server persists the desired metadata. No CRD fields are ignored:
+re-check the Application after reconciliation and investigate every remaining
+diff as real drift.
 
 If Argo reports `ComparisonError`, inspect chart dependencies and the exact
 Git revision before touching the cluster. Do not bypass GitOps with a manual
@@ -174,10 +195,30 @@ The first-party policy needs all of the following to succeed:
 - non-empty CycloneDX components with TechX index/child/platform/source metadata
 - ECR read access for the Kyverno admission/reports controllers
 
+The producer and admission consumer must also use the same Cosign registry
+storage contract. The build workflow pins Cosign `v2.6.2` because Kyverno
+`ClusterPolicy.spec.rules[].verifyImages` reads the legacy Cosign OCI layout.
+Cosign v3 defaults to OCI 1.1 Sigstore bundle referrers; an ECR referrer with
+artifact type `application/vnd.dev.sigstore.bundle.v0.3+json` does not by itself
+prove that this ClusterPolicy can find the signature. A PolicyReport message of
+`no signatures found` remains a real Audit failure even when that new-format
+referrer exists.
+
+Do not remove the Cosign version pin without either proving live ClusterPolicy
+compatibility or migrating through a separately reviewed ImageValidatingPolicy
+rollout. Current and rollback digests created with the incompatible format must
+receive workflow-owned legacy signature and CycloneDX attestation backfill
+before Enforce. Never backfill by signing from a workstation.
+
 For a multi-platform release, the Kubernetes desired state pins the index digest
 while the runtime image ID may be a child digest. The workflow signs the index,
 attests each platform SBOM to its child, and publishes a signed index-to-platform
-mapping. Retrieval resolves the index before verifying the exact child SBOM.
+mapping. It also emits exactly one legacy CycloneDX compatibility attestation on
+the index for the current ClusterPolicy. ECR image tags are immutable, so
+re-attesting the same index with the same predicate type for the second platform
+would fail the release; the child attestations and signed mapping remain the
+authoritative platform evidence. Retrieval resolves the index before verifying
+the exact child SBOM.
 
 The ECR role is attached to the admission and reports controllers. The
 background controller is intentionally excluded because these PM-127 policies

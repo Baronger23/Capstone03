@@ -770,6 +770,10 @@ jobs:
       - name: Install Cosign
         if: steps.scope.outputs.mode != 'none'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # ClusterPolicy verifyImages consumes Cosign's legacy OCI signature
+          # layout; v3 defaults to OCI 1.1 Sigstore bundle referrers.
+          cosign-release: v2.6.2
 
       - name: Sign and verify approved image digests with keyless Cosign
         if: steps.scope.outputs.mode != 'none'
@@ -871,6 +875,11 @@ jobs:
               --expected-platforms "$BUILD_PLATFORMS" \
               --output "$platform_map"
 
+            # ECR tag immutability permits only one legacy CycloneDX
+            # attestation for an index digest. Child attestations remain
+            # platform-specific and the signed mapping covers every child.
+            index_reference_emitted=false
+            index_verification_path=""
             while IFS= read -r platform_entry; do
               platform="$(jq -r '.platform' <<< "$platform_entry")"
               child_digest="$(jq -r '.digest' <<< "$platform_entry")"
@@ -912,22 +921,27 @@ jobs:
                 --certificate-identity "$EXPECTED_IDENTITY" \
                 "$child_image" > "$child_verify_report"
 
-              # Keep a signed index-level CycloneDX reference for the current
-              # admission policy while child attestations remain authoritative
-              # for runtime-platform retrieval.
-              echo "Attesting CycloneDX SBOM reference on index $index_image ($platform)"
-              cosign attest \
-                --yes \
-                --type cyclonedx \
-                --predicate "$predicate" \
-                "$index_image"
+              # Keep one signed index-level CycloneDX reference for the
+              # admission policy. Re-attesting the same index and predicate
+              # type for the other platform would overwrite an immutable ECR
+              # attestation tag and fail the release.
+              if [ "$index_reference_emitted" = false ]; then
+                echo "Attesting CycloneDX SBOM reference on index $index_image ($platform)"
+                cosign attest \
+                  --yes \
+                  --type cyclonedx \
+                  --predicate "$predicate" \
+                  "$index_image"
 
-              echo "Verifying index CycloneDX SBOM reference for $index_image ($platform)"
-              cosign verify-attestation \
-                --type cyclonedx \
-                --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-                --certificate-identity "$EXPECTED_IDENTITY" \
-                "$index_image" > "$index_verify_report"
+                echo "Verifying index CycloneDX SBOM reference for $index_image ($platform)"
+                cosign verify-attestation \
+                  --type cyclonedx \
+                  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                  --certificate-identity "$EXPECTED_IDENTITY" \
+                  "$index_image" > "$index_verify_report"
+                index_verification_path="${index_verify_report#"$GITHUB_WORKSPACE/"}"
+                index_reference_emitted=true
+              fi
 
               jq -nc \
                 --arg service "$service" \
@@ -943,7 +957,7 @@ jobs:
                 --arg identity "$EXPECTED_IDENTITY" \
                 --arg predicate "${predicate#"$GITHUB_WORKSPACE/"}" \
                 --arg child_verification "${child_verify_report#"$GITHUB_WORKSPACE/"}" \
-                --arg index_verification "${index_verify_report#"$GITHUB_WORKSPACE/"}" \
+                --arg index_verification "$index_verification_path" \
                 --arg index_mapping "${index_mapping#"$GITHUB_WORKSPACE/"}" \
                 --arg mapping_verification "${mapping_verify_report#"$GITHUB_WORKSPACE/"}" \
                 '{
