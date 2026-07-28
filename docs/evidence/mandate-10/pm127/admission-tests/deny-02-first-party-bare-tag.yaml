@@ -1,6 +1,10 @@
 # EXPECT DENY (allow-approved-external-image-digests): first-party repository but
 # pinned by tag alone. Without a digest there is nothing to verify, so the image
 # falls to the external rule and is denied for not being in the catalogue.
+#
+# securityContext satisfies PodSecurity "restricted" so PodSecurity does not
+# reject the pod before Kyverno evaluates it. Without this the request is
+# refused for the wrong reason and proves nothing about image policy.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -10,7 +14,16 @@ metadata:
     pm127-admission-test: "true"
 spec:
   restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: probe
       image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:01011a2-30186442291-checkout
       command: ["sleep", "300"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
