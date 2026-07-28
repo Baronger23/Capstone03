@@ -8,13 +8,16 @@
 
 **Mức độ:** suy giảm một tính năng không critical; chưa có bằng chứng storefront/checkout bị downtime
 
-**Trạng thái:** nguyên nhân sự cố đã khoanh vùng; **P2 và một phần P3 đã triển khai (28/07/2026, xem
-§11)**; P0/P1/P4/P5 và phần còn lại của P3 (tách deployment/service AI riêng) **vẫn chưa làm** — incident
-**chưa đủ điều kiện đóng** theo §8.
+**Trạng thái:** nguyên nhân sự cố đã khoanh vùng; **P2 và một phần P3 đã được ĐỀ XUẤT qua
+[PR #531](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/pull/531) (xem §11) — PR chưa merge, chưa
+build image, chưa deploy, KHÔNG có gì đang chạy trên cluster/production khác với trước**. P0/P1/P4/P5 và
+phần còn lại của P3 (tách executor/deployment AI riêng thật) **vẫn chưa làm** — incident **chưa đủ điều
+kiện đóng** theo §8.
 
-**Loại thay đổi của tài liệu này:** ban đầu docs-only; §11 bổ sung 28/07/2026 sau khi PR code thực sự áp
-dụng P2 + bulkhead nội-process cho P3 (không đổi manifest/HPA/cluster — chỉ app code, đi qua PR riêng,
-build/deploy qua pipeline hiện có).
+**Loại thay đổi của tài liệu này:** ban đầu docs-only; §11 bổ sung 28/07/2026 mô tả một PR code đề xuất
+P2 + admission-control nội-process cho P3 (không đổi manifest/HPA/cluster — chỉ app code). PR đã qua một
+vòng self-review + một vòng review độc lập tìm ra nhiều gap thật (xem §11) — **PR vẫn đang chờ review từ
+người trước khi merge**, chưa merge nghĩa là chưa vào pipeline build/deploy.
 
 ---
 
@@ -454,8 +457,9 @@ là tách đường AI chậm khỏi đường đọc review nhanh bằng parall
 
 ## 11. Cập nhật triển khai (28/07/2026)
 
-Đã làm, đi qua PR (không đổi manifest/HPA/cluster, chỉ app code — build/deploy qua pipeline
-`build-push-ecr.yml` + bump-image PR hiện có, không tay `helm upgrade`):
+**Đề xuất trong [PR #531](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/pull/531), CHƯA merge**
+(không đổi manifest/HPA/cluster, chỉ app code — khi merge sẽ đi qua pipeline `build-push-ecr.yml` +
+bump-image PR hiện có, không tay `helm upgrade`):
 
 - **P2 — phân loại lỗi ở frontend, giữ semantics:**
   [`pages/api/product-reviews/[productId]/index.ts`](<../../phase3%20-%20information/techx-corp-platform/src/frontend/pages/api/product-reviews/[productId]/index.ts>)
@@ -470,40 +474,83 @@ là tách đường AI chậm khỏi đường đọc review nhanh bằng parall
     nuốt thành "thành công" và rơi về `[]` — đúng anti-pattern §6/P2 cấm ("không trả 200 [] âm thầm"), chỉ
     khác là ở tầng client thay vì route handler. Đã thêm kiểm tra `!response.ok` → `throw`. Đã rà toàn bộ
     `pages/api/*` (grep `res.status(4`/`res.status(5`) xác nhận không có route nào cố ý dựa vào hành vi cũ.
-- **P3 — bulkhead (một phần, interim, KHÔNG phải fix đầy đủ):**
+- **P3 — admission control (một phần, interim, KHÔNG phải bulkhead thật):**
   [`product_reviews_server.py`](<../../phase3%20-%20information/techx-corp-platform/src/product-reviews/product_reviews_server.py>)
   thêm `threading.BoundedSemaphore` (`AI_ASSISTANT_MAX_CONCURRENCY`, mặc định `4`, env-tunable) quanh
-  `AskProductAIAssistant`: tối đa 4 AI call chạy đồng thời trong `ThreadPoolExecutor(max_workers=10)`
-  dùng chung, đảm bảo còn ≥6 worker rảnh cho `GetProductReviews`/`GetAverageProductReviewScore`. Vượt cap
-  → chờ tối đa `AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS` (mặc định 2s) rồi shed nhanh bằng
-  `FALLBACK_SUMMARY_MESSAGE` có sẵn, không giữ worker treo hết 15s deadline AI. **Đây KHÔNG phải P3 đầy đủ**
-  (deployment/service AI riêng theo §6-P3) — vẫn cùng 1 process/pod, vẫn cạnh CPU/scheduling. Không đổi
-  `max_workers` (đúng khuyến nghị §6: không dùng tăng worker làm fix mặc định).
+  `AskProductAIAssistant`. Vượt cap → chờ tối đa `AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS` (mặc định
+  **0.05s**, xem lý do đổi từ 2s ở §11.1 blocker 1) rồi shed nhanh bằng `FALLBACK_SUMMARY_MESSAGE` có sẵn.
+  **Đây KHÔNG đảm bảo "≥6 worker luôn rảnh cho reads"** — semaphore chỉ chạy TRONG handler, tức SAU khi
+  `ThreadPoolExecutor` (FIFO) đã phát task cho 1 worker rồi; nó không sắp lại thứ tự queue dùng chung. Dưới
+  backlog AI lớn, read RPC vẫn phải chờ phía sau các task AI đã nộp trước nó trong cùng queue — xem số đo
+  thật ở §11.1. Không đổi `max_workers` (đúng khuyến nghị §6: không dùng tăng worker làm fix mặc định).
+  **P3 đầy đủ (tách executor/service AI riêng thật) vẫn CHƯA làm** — cần routing change + canary, không
+  làm trong PR này.
 - **Câu hỏi rate-limit ở `values-prod.yaml` (Mandate #19, `frontend-proxy`):** đã kiểm tra —
   `BROWSE_RATE_LIMIT_ENFORCED_PERCENT` và `LOCAL_RATE_LIMIT_ENFORCED_PERCENT` đều `"0"` (shadow mode,
   không enforce), nên **không phải nguyên nhân** của lỗi trong postmortem này. Đây cũng là component
   `frontend-proxy` (Envoy, biên browse traffic) chứ không nằm trên đường gọi `frontend → product-reviews`
   qua gRPC nội bộ.
 
-### Test local đã chạy trước khi đề xuất deploy (chưa chạy trên cluster/production)
+### 11.1 Review độc lập trên PR #531 (28/07/2026) — 5 gap tìm được, đã xử lý
 
-- `tsc --noEmit`: sạch.
-- `next build` (production build thật): thành công, cả hai route sửa đều compile/bundle bình thường.
-- Chạy `next start` cục bộ với `PRODUCT_REVIEWS_ADDR` trỏ vào địa chỉ đen (blackhole) +
-  `PRODUCT_REVIEWS_DEADLINE_MS=300` để ép DEADLINE_EXCEEDED thật: cả hai endpoint trả đúng
-  `503 { "error": "DEPENDENCY_UNAVAILABLE" }`; trang `/product/:id` (SSR) vẫn `200` — xác nhận claim
-  §1.2 "widget lỗi, trang chính không downtime" vẫn đúng sau khi vá.
-- Không import/chạy được `product_reviews_server.py` cục bộ — `database.py` mở `psycopg2` pool thật tới
-  `DB_CONNECTION_STRING` ngay lúc import module, không có Postgres/RDS cục bộ để trỏ vào. Thay vào đó
-  đã viết script cô lập (chỉ dùng `threading` chuẩn) tái tạo đúng logic semaphore/shed và bắn 30 request
-  đồng thời: `max_observed_concurrency` giữ đúng ở cap 4, không thread nào treo, semaphore không rò permit
-  sau khi drain hết. Không thay thế được test tích hợp thật (cần cluster + Bedrock + RDS).
+Một review độc lập (không phải người viết PR) chấm **NO-GO** với 5 blocker cụ thể. Cả 5 đều verify được và
+đúng; đã sửa và push lên cùng PR:
+
+1. **Semaphore là admission control, không phải bulkhead thật — CONFIRMED bằng grpc server thật, không
+   phải giả lập.** `BoundedSemaphore` chỉ acquire được SAU KHI `ThreadPoolExecutor` dùng chung đã phát RPC
+   cho 1 worker theo FIFO; nó không chặn được một backlog AI lớn xếp hàng trước 1 read RPC trong cùng
+   queue. Đã dựng lại bằng `grpc.server(futures.ThreadPoolExecutor(max_workers=10))` thật (không phải
+   `threading.Semaphore` tự chế) chạy đúng pattern cap=4/admission=0.05s, bắn N request AI đồng thời rồi đo
+   độ trễ 1 `FastRead` đến giữa lúc burst:
+
+   | N request AI đồng thời | Độ trễ FastRead đo được |
+   |---|---|
+   | 10 | ~34 ms |
+   | 30 | ~178 ms |
+   | 100 | **~758 ms — VƯỢT** `PRODUCT_REVIEWS_DEADLINE_MS=500ms` |
+
+   Kết luận: mitigation này giúp thật với burst vừa (≤30 AI request đồng thời), nhưng **không đảm bảo**
+   dưới backlog AI lớn/bền — đúng như blocker nêu. Đã sửa comment trong code + tài liệu này để không còn
+   overclaim "đảm bảo ≥6 worker rảnh" — giờ ghi rõ đây là admission control có giới hạn, P3 đầy đủ (tách
+   executor/service) vẫn là fix cần làm để có isolation thật.
+2. **React Query retry mặc định (3 lần, backoff) có thể tự khuếch đại tải vào đúng lúc dependency đang
+   quá tải** — mở widget 1 lần có thể bắn tới 4 lần × 2 query = 8 request trong lúc outage. Đã sửa
+   [`ProductReview.provider.tsx`](<../../phase3%20-%20information/techx-corp-platform/src/frontend/providers/ProductReview.provider.tsx>):
+   thêm `retry` riêng cho cả 2 query — **không retry khi lỗi có `status === 503`** (đã biết dependency
+   unavailable, retry ngay chỉ tổ tạo thêm tải), lỗi khác vẫn được retry tối đa 2 lần như trước.
+3. **Trạng thái ghi "đã triển khai" trong khi PR chưa merge** — sai, đã sửa dòng trạng thái đầu tài liệu +
+   phần mở §11 thành "đề xuất qua PR #531, chưa merge/build/deploy".
+4. **Tài liệu ghi admission timeout mặc định 2s trong khi code đã đổi thành 0.05s** (từ lần tự-review
+   trước) — tài liệu bị quên cập nhật sau khi sửa code. Đã đồng bộ lại, hiện tài liệu và code đều ghi
+   `0.05s`.
+5. **`Request.ts` gọi `JSON.parse` trước khi kiểm tra `response.ok`** — một response lỗi không đảm bảo là
+   JSON (vd 500/502 dạng HTML từ framework) sẽ làm `JSON.parse` ném `SyntaxError` thô, mất luôn HTTP status
+   mà bản vá này cần giữ lại. Đã bọc `try/catch` quanh `JSON.parse`, giữ `response.status` dù body không
+   parse được. Verify bằng HTTP server thật (không mock) với đúng 4 case blocker yêu cầu — JSON error, text
+   error, empty 204, success — cả 4 pass (xem §11.2).
+
+### 11.2 Test local đã chạy (chưa chạy trên cluster/production)
+
+- `tsc --noEmit`: sạch (chạy lại sau mọi sửa ở §11.1).
+- `next build` (production build thật): thành công (chạy lại sau mọi sửa).
+- `next start` cục bộ với `PRODUCT_REVIEWS_ADDR` trỏ vào địa chỉ đen (blackhole) +
+  `PRODUCT_REVIEWS_DEADLINE_MS=300`: cả hai endpoint vẫn trả đúng `503 { "error": "DEPENDENCY_UNAVAILABLE" }`
+  sau khi thêm retry policy; trang `/product/:id` (SSR) vẫn `200` — không regression.
+- `utils/Request.ts` biên dịch riêng (`tsc` standalone) rồi chạy với 1 HTTP server thật (Node `http`,
+  không mock `fetch`) qua đúng 4 case blocker 5 nêu — JSON error (503), text/HTML error (500), empty
+  success (204), success (200) — cả 4 đúng như kỳ vọng, không còn `SyntaxError` rò ra ngoài.
+- Blocker 1: dựng `grpc.server` + `ThreadPoolExecutor` THẬT (không phải giả lập bằng `threading.Semaphore`
+  tay) để đo, số liệu ở bảng §11.1.
+- Không import/chạy được `product_reviews_server.py` nguyên bản cục bộ — `database.py` mở `psycopg2` pool
+  thật tới `DB_CONNECTION_STRING` ngay lúc import module, không có Postgres/RDS cục bộ để trỏ vào. Không
+  thay thế được test tích hợp thật (cần cluster + Bedrock + RDS).
 - Chưa chạy: pytest/integration cho product-reviews trên cluster thật, load test Locust theo runbook §7,
   `helm template` (không cần — không đổi chart/values lần này).
 
 ### Còn thiếu để đóng incident theo §8
 
-P0 (evidence pack tái tạo được), P1 (pre-scale runbook cho lần load test kế tiếp), P3 đầy đủ (deployment/
-service AI riêng + canary), P4 (đo startup/readiness, connection distribution), P5 (deadline review theo
-p99 đo được) — **chưa làm trong lần này**, cần PR/runbook riêng theo đúng thứ tự §6 (thêm capacity trước,
-không đổi nhiều biến cùng lúc).
+P0 (evidence pack tái tạo được), P1 (pre-scale runbook cho lần load test kế tiếp), P3 đầy đủ (tách
+executor/deployment AI riêng thật + canary — §11.1 blocker 1 cho thấy đây KHÔNG phải optional, admission
+control không đủ dưới backlog lớn), P4 (đo startup/readiness, connection distribution), P5 (deadline
+review theo p99 đo được) — **chưa làm trong lần này**, cần PR/runbook riêng theo đúng thứ tự §6 (thêm
+capacity trước, không đổi nhiều biến cùng lúc). PR #531 vẫn cần review từ người trước khi merge.

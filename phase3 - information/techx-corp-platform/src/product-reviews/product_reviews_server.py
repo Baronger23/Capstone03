@@ -62,25 +62,32 @@ judge_provider = None
 judge_region = "us-east-1"
 judge_timeout_seconds = 3.0
 
-# Postmortem 0016 bulkhead: GetProductReviews/GetAverageProductReviewScore and
-# AskProductAIAssistant share ONE ThreadPoolExecutor (max_workers=10, see __main__).
-# AskProductAIAssistant can block for seconds on Bedrock/judge; without an admission
-# cap, a burst of AI questions can occupy every worker and starve the fast read RPCs
-# that a browsing user is actually waiting on (the failure mode this postmortem
-# documents). This caps AI concurrency so at least (max_workers - the cap) workers
-# stay free for reads, and sheds load fast on the existing "AI is busy" message.
+# Postmortem 0016 — ADMISSION CONTROL, NOT A TRUE BULKHEAD. Read this before
+# touching the two constants below.
 #
-# The admission wait below MUST stay short: a request that fails to acquire still
-# blocks its own grpc worker thread for up to that long before shedding, so a large
-# enough burst of AI calls can transiently fill every worker anyway while they all
-# wait to be shed — the same starvation this is meant to prevent, just capped at the
-# timeout instead of the full 15s AI deadline. A 2s default would have reopened that
-# gap under a big enough burst (e.g. 10 simultaneous AI requests): 4 doing real work,
-# 6 blocked up to 2s each in acquire() with zero workers left for reads in that
-# window. Kept deliberately small (default 50ms) so the worst case is negligible
-# rather than proportional to AI backlog size. A full fix (separate deployment/
-# thread pool per RPC class) is postmortem action item P3 (docs/postmortem/0016-...);
-# this is the safe interim mitigation that needs no new deployment or routing change.
+# GetProductReviews/GetAverageProductReviewScore and AskProductAIAssistant share
+# ONE ThreadPoolExecutor (max_workers=10, see __main__), and that executor
+# dispatches queued RPCs to workers in FIFO order. This semaphore only runs INSIDE
+# the handler — i.e. AFTER a task has already been popped off that FIFO queue and
+# handed a worker. It bounds how long an admitted-but-over-cap AI call can hold
+# that worker before shedding (down to ~AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS
+# instead of the full 15s AI deadline), which meaningfully helps under a moderate
+# AI burst. It does NOT reorder the shared queue, so it cannot stop a fast read RPC
+# from queueing behind however many AI calls were already submitted ahead of it —
+# under a big enough AI backlog, reads still wait, just proportional to backlog
+# size instead of to AI call duration.
+#
+# Measured with a real grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+# running this exact pattern (cap=4, admission_timeout=0.05s), firing N concurrent
+# SlowAI calls and timing one FastRead call landing mid-burst:
+#   N=10  -> ~34ms   (fine)
+#   N=30  -> ~178ms  (fine)
+#   N=100 -> ~758ms  (EXCEEDS the frontend's 500ms PRODUCT_REVIEWS_DEADLINE_MS)
+# So this is a real mitigation for moderate bursts, not a guarantee under a large
+# sustained AI backlog. The durable fix is still postmortem action item P3 in full
+# (separate thread pool / deployment for AskProductAIAssistant so it has its own
+# queue, not just its own semaphore) — that needs a routing change and canary,
+# tracked separately, not shipped here.
 AI_ASSISTANT_MAX_CONCURRENCY = int(os.environ.get('AI_ASSISTANT_MAX_CONCURRENCY', '4'))
 AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS = float(os.environ.get('AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS', '0.05'))
 ai_assistant_semaphore = threading.BoundedSemaphore(AI_ASSISTANT_MAX_CONCURRENCY)

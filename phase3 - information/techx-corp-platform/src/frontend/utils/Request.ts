@@ -25,7 +25,16 @@ const request = async <T>({
   });
 
   const responseText = await response.text();
-  const parsed = responseText ? JSON.parse(responseText) : undefined;
+  // PM-0016 review: an error response isn't guaranteed to be JSON (e.g. a
+  // framework-level 500/502 can come back as an HTML/text error page). Parsing
+  // unconditionally would throw a raw SyntaxError instead of the classified
+  // Error below, losing the HTTP status this fix exists to preserve.
+  let parsed: unknown;
+  try {
+    parsed = responseText ? JSON.parse(responseText) : undefined;
+  } catch {
+    parsed = undefined;
+  }
 
   // PM-0016: a non-2xx response must reject even when it carries a valid JSON
   // body (e.g. a structured `{ error }` payload) — otherwise callers can't tell
