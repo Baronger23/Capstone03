@@ -34,7 +34,7 @@ COPY --from=builder /install /usr/local
 #   wheel 0.45.1 -> 0.46.2 (CVE-2026-24049), jaraco.context 5.3.0 -> 6.1.0 (CVE-2026-23949)
 RUN pip install --no-cache-dir --upgrade "wheel>=0.46.2" "jaraco.context>=6.1.0" \
     && rm -rf /usr/local/lib/python3.11/site-packages/wheel-0.45.1.dist-info \
-              /usr/local/lib/python3.11/site-packages/jaraco.context-5.3.0.dist-info
+              /usr/local/lib/python3.11/site-packages/jaraco*context-5.3.0.dist-info
 
 # Copy toàn bộ source code của copilot
 COPY src/       ./src/
