@@ -1,7 +1,7 @@
 # ADR 0016 - Mandate #20: RDS PITR restore drill for CDO02 backup/recovery proof
 
 **Ngày:** 2026-07-28  
-**Người quyết định (ký):** Phucdo - CDO02 (Reliability + Operations)  
+**Người quyết định (ký):** Nguyễn Đỗ Hoàng Phúc - CDO02 (Reliability + Operations)  
 **Directive:** `MANDATE-20-dr-backup-restore.md` - Backup/Restore DR  
 **Trạng thái:** Accepted for drill execution - chưa claim Mandate #20 Done khi chưa có evidence restore thật  
 **Tham chiếu:** `docs/docx_cdo02/mandate-20-rds-pitr-restore-solution.md`
@@ -144,4 +144,5 @@ Vì vậy CDO02 chỉ claim: **ready to execute Mandate #20 RDS PITR restore dri
 
 ## Chữ ký
 
-Phucdo - CDO02 (Reliability + Operations) - 2026-07-28
+Nguyễn Đỗ Hoàng Phúc - CDO02 (Reliability + Operations) - 2026-07-28
+
