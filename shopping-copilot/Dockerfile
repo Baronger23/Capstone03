@@ -27,6 +27,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy đã-cài packages từ builder
 COPY --from=builder /install /usr/local
 
+# Patch fixable HIGH CVEs in build tooling that ships in the base image's SYSTEM
+# site-packages (not covered by requirements.txt, and left behind as stale dist-info when
+# the builder's patched copy is layered on top). Upgrade to the fixed versions and delete
+# the old dist-info so Trivy's fixable gate sees only the patched versions.
+#   wheel 0.45.1 -> 0.46.2 (CVE-2026-24049), jaraco.context 5.3.0 -> 6.1.0 (CVE-2026-23949)
+RUN pip install --no-cache-dir --upgrade "wheel>=0.46.2" "jaraco.context>=6.1.0" \
+    && rm -rf /usr/local/lib/python3.11/site-packages/wheel-0.45.1.dist-info \
+              /usr/local/lib/python3.11/site-packages/jaraco.context-5.3.0.dist-info
+
 # Copy toàn bộ source code của copilot
 COPY src/       ./src/
 COPY static/    ./static/
