@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -44,9 +46,16 @@ POLICY_NAMESPACE = "techx-tf3"
 # once AIO02 pins it; the check fails if an entry stops being needed, so the
 # list cannot rot.
 KNOWN_UNRESOLVED = {
+    # Still bare tags, so nothing pins what they resolve to.
     "197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/tf-2-ai-engine:IF-v25",
     "197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/tf-2-ai-engine:IF-v63",
-    "197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/shopping-copilot@sha256:REPLACE_WITH_CI_DIGEST",
+    # AIO02 pinned this to a real digest, so it already meets the external bar
+    # and only needs a catalogue entry. Adding another team's image to a
+    # catalogue that records TF3 review is their call, not ours, so it stays
+    # here until they confirm. It cannot move to the first-party policy as
+    # things stand: build-push-copilot.yml signs with Cosign but generates no
+    # CycloneDX attestation, and that policy requires both.
+    "197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/shopping-copilot@sha256:589cb03016ae370a0532066601d1d3c8306a18112cc0e24563182aae5089a3d8",
 }
 
 # Kept in sync with the policy precondition: the optional :<tag> covers Grafana,
@@ -57,15 +66,37 @@ FIRST_PARTY = re.compile(
 )
 
 
+def run(cmd: list[str]) -> str:
+    """Run a command, surfacing stderr when it fails.
+
+    Swallowing helm's stderr turns a readable "missing dependencies" message
+    into a bare CalledProcessError with no cause, which is what made the first
+    CI failure of this check undiagnosable from the log.
+    """
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit(
+            f"FAIL: {' '.join(cmd[:2])} exited {result.returncode}\n{result.stderr.strip()}"
+        )
+    return result.stdout
+
+
 def render(chart: Path, values: Path) -> set[str]:
-    result = subprocess.run(
-        ["helm", "template", "techx-corp", str(chart), "-f", str(values)],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    """Render the chart the way ArgoCD does.
+
+    charts/*.tgz and Chart.lock are both gitignored, so a fresh checkout has no
+    subcharts and `helm template` alone fails. Dependencies are fetched into a
+    copy so the working tree is left untouched - the same approach
+    test_runtime_hardening.py already uses.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        chart_copy = Path(tmp) / chart.name
+        shutil.copytree(chart, chart_copy)
+        run(["helm", "dependency", "build", str(chart_copy)])
+        stdout = run(["helm", "template", "techx-corp", str(chart_copy), "-f", str(values)])
+
     images: set[str] = set()
-    for doc in yaml.safe_load_all(result.stdout):
+    for doc in yaml.safe_load_all(stdout):
         images |= walk(doc)
     return images
 
