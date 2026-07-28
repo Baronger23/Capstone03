@@ -97,19 +97,19 @@ static_resources:
                                 # burst (100 tokens) while measuring a sustained
                                 # fill rate of 50 RPS/proxy. Recalibrate both from
                                 # the measured new ceiling after the after-run.
-                                 max_tokens: 100
-                                 tokens_per_fill: 50
-                                 fill_interval: 1s
-                               filter_enabled:
-                                 runtime_key: browse_rate_limit_enabled
-                                 default_value:
-                                   numerator: 100   # ON: Envoy đếm để có stat
-                                   denominator: HUNDRED
-                               filter_enforced:
-                                 runtime_key: browse_rate_limit_enforced
-                                 default_value:
-                                   numerator: 0     # SHADOW: observe would-be shedding without returning 429
-                                   denominator: HUNDRED
+                                max_tokens: 100
+                                tokens_per_fill: 50
+                                fill_interval: 1s
+                              filter_enabled:
+                                runtime_key: browse_rate_limit_enabled
+                                default_value:
+                                  numerator: 100   # ON: Envoy đếm để có stat
+                                  denominator: HUNDRED
+                              filter_enforced:
+                                runtime_key: browse_rate_limit_enforced
+                                default_value:
+                                  numerator: 0     # SHADOW: observe would-be shedding without returning 429
+                                  denominator: HUNDRED
                               response_headers_to_add:
                                 # Distinguishes intentional shedding from backend failures.
                                 - header:
