@@ -9,7 +9,7 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 ALLOWED_SERVICES = {
-    "accounting", "ad", "cart", "checkout", "currency", "email",
+    "accounting", "ad", "aiops-engine", "cart", "checkout", "currency", "email",
     "fraud-detection", "frontend", "frontend-proxy", "image-provider",
     "kafka", "llm", "load-generator", "payment", "product-catalog",
     "product-reviews", "quote", "recommendation", "shipping", "flagd-ui",

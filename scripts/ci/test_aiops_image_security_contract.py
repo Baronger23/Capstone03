@@ -8,16 +8,65 @@ DOCKERFILE = REPO_ROOT / "aiops-engine" / "Dockerfile"
 KUBECTL_BUILDER_GO_MOD = REPO_ROOT / "aiops-engine" / "kubectl-builder" / "go.mod"
 KUBECTL_BUILDER_MAIN = REPO_ROOT / "aiops-engine" / "kubectl-builder" / "main.go"
 DEDICATED_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build-push-aiops.yml"
+COMMON_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build-push-ecr.yml"
+COMPOSE_FILE = (
+    REPO_ROOT / "phase3 - information" / "techx-corp-platform" / "docker-compose.yml"
+)
+DOCKERIGNORE = REPO_ROOT / "aiops-engine" / ".dockerignore"
 
 
-def test_dedicated_gate_matches_common_zero_high_critical_policy():
-    workflow = DEDICATED_WORKFLOW.read_text()
+def test_aiops_uses_common_first_party_pipeline_without_auto_promotion():
+    workflow = COMMON_WORKFLOW.read_text()
 
+    assert not DEDICATED_WORKFLOW.exists()
     assert not TRIVYIGNORE.exists()
+    assert '- "aiops-engine/**"' in workflow
+    assert re.search(r"\bALL_SERVICES:.*?\baiops-engine\b", workflow, re.DOTALL)
+    assert len(
+        re.findall(
+            r'git(?: -C "\$GITHUB_WORKSPACE")? diff --name-only.*?"aiops-engine"',
+            workflow,
+            re.DOTALL,
+        )
+    ) == 2
+    assert workflow.count('"aiops-engine"|"aiops-engine/"*') == 2
+    assert workflow.count("--excluded-service aiops-engine") == 2
+    assert workflow.count(
+        'BAKE_ALLOW+=(--allow "fs.read=$GITHUB_WORKSPACE/aiops-engine")'
+    ) == 3
+    assert (
+        "timeout-minutes: "
+        "${{ matrix.service == 'aiops-engine' && 90 || 60 }}"
+    ) in workflow
     assert "--ignore-unfixed" not in workflow
     assert "--ignorefile" not in workflow
     assert '--severity "$TRIVY_SEVERITIES"' in workflow
     assert "--exit-code 1" in workflow
+
+
+def test_aiops_bake_target_uses_repository_root_context_and_dockerignore():
+    compose = COMPOSE_FILE.read_text()
+    assert re.search(
+        r"(?ms)^  # AIOps engine\n"
+        r"  aiops-engine:\n"
+        r"    image: \$\{IMAGE_NAME\}:\$\{DEMO_VERSION\}-aiops-engine\n"
+        r"    profiles: \[aiops-build\]\n"
+        r"    build:\n"
+        r"      context: ../../aiops-engine\n"
+        r"      dockerfile: Dockerfile\n"
+        r"      cache_from:\n"
+        r"        - \$\{IMAGE_NAME\}:\$\{IMAGE_VERSION\}-aiops-engine\n",
+        compose,
+    )
+
+    ignored = {
+        line.strip()
+        for line in DOCKERIGNORE.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "models/*.joblib" in ignored
+    assert "scratch/" in ignored
+    assert "venv/" in ignored
 
 
 def test_dockerfile_builds_patched_stable_kubectl_without_changing_command_surface():

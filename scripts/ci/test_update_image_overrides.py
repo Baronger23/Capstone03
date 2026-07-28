@@ -268,6 +268,35 @@ def test_t29_excluded_service(tmp_path):
     txt = Path(v).read_text()
     assert "digest: sha256:old" in txt # unchanged
 
+
+def test_aiops_is_valid_build_evidence_but_excluded_from_helm_values(tmp_path):
+    data = valid_manifest_base()
+    data["services"][0]["name"] = "aiops-engine"
+    data["services"][0]["tag"] = "1234567-aiops-engine"
+    v, m = setup_env(tmp_path, manifest_data=data)
+
+    res = run_updater(
+        v,
+        m,
+        extra_args=[
+            "--excluded-service",
+            "aiops-engine",
+            "--expected-services",
+            "aiops-engine",
+        ],
+    )
+
+    assert res.returncode == 0
+    assert "digest: sha256:old" in Path(v).read_text()
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert summary["skipped"] == [
+        {
+            "service": "aiops-engine",
+            "reason": "excluded-from-production-values",
+        }
+    ]
+
+
 def test_t30_noop(tmp_path):
     v_data = "components:\n  ad:\n    imageOverride:\n      digest: sha256:0000000000000000000000000000000000000000000000000000000000000000\n"
     v, m = setup_env(tmp_path, values_data=v_data)
