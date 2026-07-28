@@ -12,8 +12,8 @@ Cột *Bằng chứng* ghi thứ tự chạy lại được, không phải khẳ
 | # | DoD | Trạng thái | Bằng chứng |
 |---|---|---|---|
 | 1 | Mọi image tự build có SBOM, tra được theo digest **bằng 1 lệnh** | ✅ | `scripts/ci/get-sbom.sh <digest> --platform linux/amd64 --metadata` → CycloneDX, components > 0. **21/21** digest first-party. Wrapper tự chặn cosign sai version |
-| 2 | `kubectl get clusterpolicy` cho **cả 2 policy**: `Enforce/Ready=True` | 🟡 1/2 | `allow-approved-external-image-digests` = **`Enforce/True`** (live). `verify-first-party-signatures` = merged (#540), **chờ sync** |
-| 3 | Deploy image chưa ký / sai identity → **bị từ chối**, message rõ | ⏳ | 7 fixture sẵn ở `admission-tests/`. Chạy sau khi sync 7B |
+| 2 | `kubectl get clusterpolicy` cho **cả 2 policy**: `Enforce/Ready=True` | ✅ **2/2** | `allow-approved-external-image-digests` = `Enforce/True`; `verify-first-party-signatures` = `Enforce/True`. Cả hai **live trên cluster** |
+| 3 | Deploy image chưa ký / sai identity → **bị từ chối**, message rõ | ⏳ | 7 fixture sẵn ở `admission-tests/`. Cần người có quyền tạo pod chạy — role `tf3-production-readonly` không tạo được pod kể cả `--dry-run=server` |
 | 4 | **0 false-positive** trên PolicyReport cho image hợp lệ đang chạy sống | ✅ | 40 pod: first-party **30 pass / 0 fail**; external **0 bị chặn**. Vi phạm còn lại đều là **true positive trên resource đã chết** |
 
 ---
@@ -67,6 +67,27 @@ Chi tiết + lệnh từng bước: [`provenance-walkthrough.md`](provenance-wal
 | Storefront (`frontend-proxy`) | 2/2 `Running` |
 | `flagd` | `2/2 Running` — cơ chế đọc flag **không đổi** |
 | Admission denial do policy | **0** |
+| Kyverno controller | admission 3/3 · background 1/1 · reports 2/2 — đều `Running` |
+
+### ⚠️ Cảnh báo `PolicyViolation` vẫn xuất hiện — và đó là đúng
+
+Sau khi Enforce, event vẫn liên tục báo, ví dụ:
+
+```
+replicaset/accounting-5fcd9488db   no signatures found (sha256:8fc8a91f…)
+replicaset/checkout-rollout-84b9cddbcd   no signatures found (sha256:993f61d6…)
+```
+
+**Không phải cụm đang hỏng.** Toàn bộ là ReplicaSet **đã chết** (`DESIRED=0`, 12-13 ngày tuổi) mà background scan vẫn quét. Deployment sống trỏ digest đã ký:
+
+| Deployment | RS sống | Digest | |
+|---|---|---|---|
+| `accounting` | `accounting-796d8ffd88` 1/1 | `32aeb5e0…` | ✅ đã ký |
+| `checkout-rollout` | `checkout-rollout-6c986b459` 2/2 | — | ✅ đã ký |
+
+Enforce chặn ở **admission**, tức lúc tạo pod. ReplicaSet chết không tạo pod nào nên không có gì bị chặn.
+
+Đây là **true positive trên resource chết** — cùng loại với mục F #4. Đừng đọc số violation thô rồi kết luận; **chỉ đo trên pod `Running`**.
 
 ---
 
