@@ -25,10 +25,21 @@ const request = async <T>({
   });
 
   const responseText = await response.text();
+  const parsed = responseText ? JSON.parse(responseText) : undefined;
 
-  if (!!responseText) return JSON.parse(responseText);
+  // PM-0016: a non-2xx response must reject even when it carries a valid JSON
+  // body (e.g. a structured `{ error }` payload) — otherwise callers can't tell
+  // a real dependency failure from a successful empty/degraded payload.
+  if (!response.ok) {
+    const message = parsed && typeof parsed === 'object' && 'error' in parsed
+      ? String((parsed as { error: unknown }).error)
+      : `Request failed with status ${response.status}`;
+    const error = new Error(message) as Error & { status: number };
+    error.status = response.status;
+    throw error;
+  }
 
-  return undefined as unknown as T;
+  return parsed as T;
 };
 
 export default request;

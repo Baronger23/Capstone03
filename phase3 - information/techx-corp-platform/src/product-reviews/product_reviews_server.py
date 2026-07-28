@@ -6,6 +6,7 @@
 # Python
 import os
 import json
+import threading
 from concurrent import futures
 import random
 
@@ -60,6 +61,21 @@ judge_model = None
 judge_provider = None
 judge_region = "us-east-1"
 judge_timeout_seconds = 3.0
+
+# Postmortem 0016 bulkhead: GetProductReviews/GetAverageProductReviewScore and
+# AskProductAIAssistant share ONE ThreadPoolExecutor (max_workers=10, see __main__).
+# AskProductAIAssistant can block for seconds on Bedrock/judge; without an admission
+# cap, a burst of AI questions can occupy every worker and starve the fast read RPCs
+# that a browsing user is actually waiting on (the failure mode this postmortem
+# documents). This caps AI concurrency so at least (max_workers - the cap) workers
+# stay free for reads, and sheds load fast on the existing "AI is busy" message
+# rather than queuing indefinitely on the semaphore, which would just move the
+# starvation here. A full fix (separate deployment/thread pool per RPC class) is
+# postmortem action item P2/P3 (docs/postmortem/0016-...); this is the safe interim
+# mitigation that needs no new deployment or routing change.
+AI_ASSISTANT_MAX_CONCURRENCY = int(os.environ.get('AI_ASSISTANT_MAX_CONCURRENCY', '4'))
+AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS = float(os.environ.get('AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS', '2.0'))
+ai_assistant_semaphore = threading.BoundedSemaphore(AI_ASSISTANT_MAX_CONCURRENCY)
 
 FALLBACK_SUMMARY_MESSAGE = "The AI is busy right now. Please try again later."
 UNVERIFIED_SUMMARY_MESSAGE = "The summary cannot be verified. Please try again later."
@@ -265,7 +281,23 @@ class ProductReviewService(demo_pb2_grpc.ProductReviewServiceServicer):
 
     def AskProductAIAssistant(self, request, context):
         logger.info(f"Receive AskProductAIAssistant for product id:{request.product_id}, question: {request.question}")
-        return get_ai_assistant_response(request.product_id, request.question)
+
+        if not ai_assistant_semaphore.acquire(timeout=AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS):
+            logger.warning(
+                f"AskProductAIAssistant: concurrency limit ({AI_ASSISTANT_MAX_CONCURRENCY}) reached, "
+                f"shedding load for product_id:{request.product_id}"
+            )
+            with tracer.start_as_current_span("ask_product_ai_assistant_shed") as span:
+                span.set_attribute("app.product.id", request.product_id)
+                span.set_status(Status(StatusCode.ERROR, description="ai_concurrency_limit_reached"))
+            response = demo_pb2.AskProductAIAssistantResponse()
+            response.response = FALLBACK_SUMMARY_MESSAGE
+            return response
+
+        try:
+            return get_ai_assistant_response(request.product_id, request.question)
+        finally:
+            ai_assistant_semaphore.release()
 
     def Check(self, request, context):
         try:
