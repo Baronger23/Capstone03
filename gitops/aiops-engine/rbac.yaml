@@ -1,0 +1,68 @@
+# Role + RoleBinding cho aiops-engine.
+#
+# QUAN TRỌNG: nội dung này lấy từ LIVE STATE, không phải từ file
+# AIOps/aiops-engine/k8s/rbac.yaml trong repo AIO02. Bản repo đó rộng hơn
+# (thêm pods/exec: create và pods: delete) và bind vào ServiceAccount "default"
+# — nếu ai apply đè sẽ nới rộng quyền cho mọi workload không chỉ định SA.
+# Sau khi vào GitOps, selfHeal sẽ tự revert những lần apply như vậy.
+#
+# Quyền ghi giới hạn ở scale/patch Deployment và Argo Rollout (gồm checkout-rollout);
+# pods/services/namespaces chỉ đọc.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aiops-engine-role
+  namespace: techx-tf3
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/name: aiops-engine
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - deployments/scale
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
+  - argoproj.io
+  resources:
+  - rollouts
+  - rollouts/scale
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  - services
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aiops-engine-rolebinding
+  namespace: techx-tf3
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/name: aiops-engine
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aiops-engine-role
+subjects:
+- kind: ServiceAccount
+  name: aiops-engine
+  namespace: techx-tf3
