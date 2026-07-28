@@ -1,5 +1,17 @@
 # PriorityClass cho job huấn luyện — CLUSTER-SCOPED, không thuộc techx-tf3.
-# Đảm bảo training job nhường tài nguyên cho pod production khi cụm chật.
+#
+# TÊN GỌI ĐÁNH LỪA: "low-priority" nhưng value: 1000 CAO HƠN toàn bộ 44 pod đang
+# chạy trong techx-tf3 — không pod production nào đặt priorityClassName, tất cả
+# đều ở priority mặc định 0. Hệ quả: 19:00 UTC Chủ Nhật hằng tuần, nếu scheduler
+# không xếp được pod training (500m CPU / 512Mi) vì cụm chật, nó sẽ PREEMPT (evict)
+# một pod production bất kỳ — checkout, cart, payment... — chứ không phải "nhường"
+# như tên và comment cũ ngụ ý (preemptionPolicy: PreemptLowerPriority nghĩa là
+# job này được phép giành chỗ của pod ưu tiên thấp hơn nó, tức gần như mọi pod).
+#
+# value và preemptionPolicy là IMMUTABLE trong Kubernetes: muốn sửa phải xoá
+# PriorityClass rồi tạo lại, không sửa được bằng một commit thường. Đây là quyết
+# định riêng, để Phase 2/3 xử lý (đổi tên + hạ value dưới 0, hoặc đổi
+# preemptionPolicy: Never).
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
