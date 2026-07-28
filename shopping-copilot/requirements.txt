@@ -55,6 +55,14 @@ psycopg2-binary>=2.9.0
 redis>=5.0.0              # Valkey/Redis client cho session + cache trên EKS production
 
 # ══════════════════════════════════════
+# Security pins (Trivy gate — CVEs with an available fix)
+# ══════════════════════════════════════
+# Transitive deps pulled into the image; pin to the patched versions so the pre-push
+# Trivy gate (fixable HIGH/CRITICAL) passes. Bump as new fixes land.
+jaraco.context>=6.1.0    # CVE-2026-23949 (path traversal) fixed in 6.1.0
+wheel>=0.46.2            # CVE-2026-24049 fixed in 0.46.2
+
+# ══════════════════════════════════════
 # Testing
 # ══════════════════════════════════════
 
