@@ -97,18 +97,18 @@ static_resources:
                                 # burst (100 tokens) while measuring a sustained
                                 # fill rate of 50 RPS/proxy. Recalibrate both from
                                 # the measured new ceiling after the after-run.
-                                max_tokens: 100
-                                tokens_per_fill: 50
-                                fill_interval: 1s
+                                max_tokens: ${BROWSE_RATE_LIMIT_MAX_TOKENS}
+                                tokens_per_fill: ${BROWSE_RATE_LIMIT_TOKENS_PER_FILL}
+                                fill_interval: ${BROWSE_RATE_LIMIT_FILL_INTERVAL}
                               filter_enabled:
                                 runtime_key: browse_rate_limit_enabled
                                 default_value:
-                                  numerator: 100   # ON: Envoy đếm để có stat
+                                  numerator: ${BROWSE_RATE_LIMIT_ENABLED_PERCENT}
                                   denominator: HUNDRED
                               filter_enforced:
                                 runtime_key: browse_rate_limit_enforced
                                 default_value:
-                                  numerator: 0     # SHADOW: observe would-be shedding without returning 429
+                                  numerator: ${BROWSE_RATE_LIMIT_ENFORCED_PERCENT}
                                   denominator: HUNDRED
                               response_headers_to_add:
                                 # Distinguishes intentional shedding from backend failures.
@@ -124,7 +124,7 @@ static_resources:
                       delay:
                         header_delay: {}
                         percentage:
-                          numerator: 100
+                          numerator: ${LOCAL_RATE_LIMIT_ENABLED_PERCENT}
                   # Mandate-19 (load-shedding): Local rate limit filter — in-process
                   # token bucket chạy trực tiếp trong Envoy, không cần Redis external.
                   # Global bucket đặt cực cao (10 000/s) vì việc giới hạn thực tế
@@ -149,7 +149,7 @@ static_resources:
                       filter_enforced:
                         runtime_key: local_rate_limit_enforced
                         default_value:
-                          numerator: 0     # SHADOW: no route is rejected during the observation stage
+                          numerator: ${LOCAL_RATE_LIMIT_ENFORCED_PERCENT}
                           denominator: HUNDRED
                   - name: envoy.filters.http.router
                     typed_config:

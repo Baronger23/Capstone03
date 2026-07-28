@@ -1444,6 +1444,25 @@ components:
     imageOverride: # mandate-01: gỡ route Envoy - xem comment imageOverride đầu components:
       digest: sha256:6b8243bbf1d91d1bc195703fdbe2e8029a948c38b5717efec8b41ecf1847b3f0
       tag: 43dcf62-29569108433-frontend-proxy
+    # Mandate #19 staged promotion knobs. Keep shadow (enforced=0) for the first
+    # rollout, then change only BROWSE_RATE_LIMIT_ENFORCED_PERCENT in reviewed
+    # stages 5 -> 25 -> 50 -> 100 after every gate passes. The global fallback
+    # remains shadow because protected routes use its non-binding 10k/s bucket.
+    envOverrides:
+      - name: BROWSE_RATE_LIMIT_MAX_TOKENS
+        value: "100"
+      - name: BROWSE_RATE_LIMIT_TOKENS_PER_FILL
+        value: "50"
+      - name: BROWSE_RATE_LIMIT_FILL_INTERVAL
+        value: "1s"
+      - name: BROWSE_RATE_LIMIT_ENABLED_PERCENT
+        value: "100"
+      - name: BROWSE_RATE_LIMIT_ENFORCED_PERCENT
+        value: "0"
+      - name: LOCAL_RATE_LIMIT_ENABLED_PERCENT
+        value: "100"
+      - name: LOCAL_RATE_LIMIT_ENFORCED_PERCENT
+        value: "0"
     resources:
       requests:
         cpu: 50m

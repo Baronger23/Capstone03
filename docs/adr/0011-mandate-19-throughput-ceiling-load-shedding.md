@@ -103,6 +103,10 @@ token_bucket:
   max_tokens: 100
   tokens_per_fill: 50
 ```
+These values are injected from the reviewed `frontend-proxy.envOverrides` in
+`values-prod.yaml`. Promotion changes the enforced percentage without changing
+route logic or rebuilding a different Envoy policy.
+
 After shadow counters and protected-route matching are verified, enforcement
 must be promoted gradually in a separate reviewed change. Directive #19 is not
 considered complete until sustained enforced overload shows intentional browse

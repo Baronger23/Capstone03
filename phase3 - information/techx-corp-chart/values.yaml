@@ -581,6 +581,22 @@ components:
         value: "4317"
       - name: OTEL_COLLECTOR_PORT_HTTP
         value: "4318"
+      # Mandate #19 defaults: observe would-be browse shedding without rejecting.
+      # Production overrides make each promotion stage explicit and reviewable.
+      - name: BROWSE_RATE_LIMIT_MAX_TOKENS
+        value: "100"
+      - name: BROWSE_RATE_LIMIT_TOKENS_PER_FILL
+        value: "50"
+      - name: BROWSE_RATE_LIMIT_FILL_INTERVAL
+        value: "1s"
+      - name: BROWSE_RATE_LIMIT_ENABLED_PERCENT
+        value: "100"
+      - name: BROWSE_RATE_LIMIT_ENFORCED_PERCENT
+        value: "0"
+      - name: LOCAL_RATE_LIMIT_ENABLED_PERCENT
+        value: "100"
+      - name: LOCAL_RATE_LIMIT_ENFORCED_PERCENT
+        value: "0"
     resources:
       limits:
         memory: 65Mi
