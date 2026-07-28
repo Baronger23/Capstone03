@@ -1,0 +1,57 @@
+# Mandate 20 evidence index
+
+Evidence index cho Mandate #20 Backup/Restore DR.
+
+**ADR:** `docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md`  
+**Runbook:** `docs/runbooks/mandate-20-rds-pitr-drill.md`  
+**Solution:** `docs/docx_cdo02/mandate-20-rds-pitr-restore-solution.md`
+
+## Current status
+
+```text
+CDO02 design/ADR: ready
+RDS PITR drill evidence: pending
+CDO01 security/delete-permission verdict: pending
+Mandate #20 overall: not Done until restore drill evidence exists
+```
+
+## Evidence files
+
+Add drill records here after execution:
+
+| File | Purpose |
+|---|---|
+| `rds-pitr-drill-YYYYMMDD.md` | Main RDS restore drill result |
+| `rds-pitr-drill-YYYYMMDD-raw/` | Raw CLI/SQL output and screenshots, if needed |
+
+## Required evidence fields
+
+Each drill record must include:
+
+```text
+Git baseline:
+AWS caller/account/region:
+RDS source inventory:
+T_good_commit:
+T_restore:
+T_corrupt_commit:
+DB drill identifier:
+Restore start/end:
+RTO measured:
+Production corrupt query:
+Restored DB GOOD query:
+Cleanup result:
+Mentor/PM witness:
+```
+
+## Coverage matrix status
+
+| Store / state | Status | Evidence |
+|---|---|---|
+| RDS PostgreSQL | Pending drill | PITR restore record required |
+| ElastiCache Valkey | Pending coverage verdict | Snapshot/restore evidence or accepted cart-state strategy |
+| MSK Kafka | Pending coverage verdict | Retention/replay or order reconciliation explanation |
+| DynamoDB lock | Pending exclusion/verdict | Exclude if Terraform lock only |
+| EBS legacy | Pending M8/M18 decision | Do not use as M20 proof unless ownership is clarified |
+| GitOps/IaC state | Pending coverage verdict | Git/state/versioning/Object Lock evidence if claimed |
+| IAM/KMS/delete permission | CDO01 dependency | Security verdict required |
