@@ -12,6 +12,18 @@ Cả hai ClusterPolicy đều `match.any[].resources.namespaces: [techx-tf3]`.
 
 Manifest trong thư mục này đều ghi cứng `namespace: techx-tf3`.
 
+## ⚠️ Fixture phải thoả PodSecurity `restricted`
+
+Namespace `techx-tf3` bật `pod-security.kubernetes.io/enforce=restricted`. PodSecurity là **admission plugin dựng sẵn của Kubernetes**, chạy độc lập với Kyverno.
+
+Nếu pod thiếu `securityContext`, **PSA chặn trước** và Kyverno không kịp chấm. Lúc đó `deny-*` vẫn "lỗi" nhưng **sai lý do** — không chứng minh được gì về image policy; còn `allow-*` thì bị từ chối oan.
+
+Đã xảy ra ở lần chạy đầu: 5/6 case bị PSA chặn, chỉ `deny-01` cho ra kết quả thật.
+
+Mọi fixture nay đều đặt đủ: `runAsNonRoot` · `runAsUser: 10001` · `seccompProfile: RuntimeDefault` · `allowPrivilegeEscalation: false` · `capabilities.drop: [ALL]`.
+
+**Cách nhận biết kết quả sai:** message nhắc `violates PodSecurity "restricted"` → PSA chặn, không phải Kyverno. Message hợp lệ phải nêu tên policy (`verify-first-party-signatures` hoặc `allow-approved-external-image-digests`).
+
 ## Các file này KHÔNG được ArgoCD quản lý
 
 Chúng nằm dưới `docs/`, còn ArgoCD chỉ theo dõi `gitops/`. Nên không có nguy cơ bị sync nhầm vào cluster.

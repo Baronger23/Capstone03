@@ -2,6 +2,10 @@
 # Cosign signature and a CycloneDX attestation whose sourceSha points at the
 # commit it was actually built from. Proves the policy admits valid workloads
 # rather than blocking everything.
+#
+# securityContext satisfies PodSecurity "restricted" so PodSecurity does not
+# reject the pod before Kyverno evaluates it. Without this the request is
+# refused for the wrong reason and proves nothing about image policy.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -11,7 +15,16 @@ metadata:
     pm127-admission-test: "true"
 spec:
   restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: probe
       image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp@sha256:5035d76864dab66825703705d7c7af5ecccb5842750100bc3b4b0f0fe0bfa696
       command: ["sleep", "300"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
