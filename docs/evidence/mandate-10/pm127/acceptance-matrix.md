@@ -13,7 +13,7 @@ Cột *Bằng chứng* ghi thứ tự chạy lại được, không phải khẳ
 |---|---|---|---|
 | 1 | Mọi image tự build có SBOM, tra được theo digest **bằng 1 lệnh** | ✅ | `scripts/ci/get-sbom.sh <digest> --platform linux/amd64 --metadata` → CycloneDX, components > 0. **21/21** digest first-party. Wrapper tự chặn cosign sai version |
 | 2 | `kubectl get clusterpolicy` cho **cả 2 policy**: `Enforce/Ready=True` | ✅ **2/2** | `allow-approved-external-image-digests` = `Enforce/True`; `verify-first-party-signatures` = `Enforce/True`. Cả hai **live trên cluster** |
-| 3 | Deploy image chưa ký / sai identity → **bị từ chối**, message rõ | ⏳ | 7 fixture sẵn ở `admission-tests/`. Cần người có quyền tạo pod chạy — role `tf3-production-readonly` không tạo được pod kể cả `--dry-run=server` |
+| 3 | Deploy image chưa ký / sai identity → **bị từ chối**, message rõ | ✅ | **6/6 case đúng kỳ vọng** — [`admission-test-results-2026-07-28.md`](admission-test-results-2026-07-28.md). `deny-01`: image `techx-corp` thật chưa ký → `verify-first-party-signatures ... no signatures found` |
 | 4 | **0 false-positive** trên PolicyReport cho image hợp lệ đang chạy sống | ✅ | 40 pod: first-party **30 pass / 0 fail**; external **0 bị chặn**. Vi phạm còn lại đều là **true positive trên resource đã chết** |
 
 ---
@@ -23,7 +23,7 @@ Cột *Bằng chứng* ghi thứ tự chạy lại được, không phải khẳ
 | # | Yêu cầu | Trạng thái | Bằng chứng |
 |---|---|---|---|
 | 1 | PR với CI đỏ → **chặn merge** | ✅ | PM-126: branch protection require `Secure delivery gate`, `required_approvals: 1`. PR #350/#351 bị `BLOCKED` thật |
-| 2 | Deploy image chưa ký → **admission từ chối** | 🟡 | 7A live; 7B chờ sync + chạy test |
+| 2 | Deploy image chưa ký → **admission từ chối** | ✅ | Cả 2 policy `Enforce`; `deny-01` bị từ chối bởi `verify-first-party-signatures`, `deny-03`/`deny-04` bởi policy external. Workload hợp lệ vẫn được chấp nhận (`allow-01`, `allow-02`) |
 | 3 | Chỉ vào pod đang chạy → **truy ngược full provenance** | ✅ | `provenance-walkthrough.md` — chuỗi đầy đủ cho pod `quote` |
 | — | SBOM + provenance, ký cosign | ✅ | 21/21 digest có chữ ký keyless + CycloneDX 2 platform |
 | — | Reference theo **digest**, cấm floating tag | ✅ | drift check `exit 0`: **11/11** external pin digest, khớp catalog từng ký tự |
@@ -101,18 +101,24 @@ Enforce chặn ở **admission**, tức lúc tạo pod. ReplicaSet chết không
 | **Đếm số fail thô của report** | Gộp cả ReplicaSet đã chết → 46 fail trong khi runtime chỉ có 20 vấn đề | Chỉ đo trên pod `Running` |
 | **Dùng danh sách `.sig` cache** | Snapshot lạc hậu (29 vs 31) → báo nhầm 2 ReplicaSet sống là chưa ký, suýt chặn 7B | Verify trực tiếp bằng cosign |
 | **Digest đã ghi `.att` không sửa lại được** | ECR immutable chỉ cho ghi 1 lần/subject → `quote` phải **rebuild**, không vá được | Pre-flight từ chối cả lô nếu digest đã có `.att` |
+| **Test bị tầng admission khác chặn trước** | `techx-tf3` có **3 tầng trước Kyverno**. Ở 2 lần chạy đầu, case `deny-*` **vẫn "lỗi"** nhưng do PodSecurity / resource VAP — rất dễ đọc nhầm là đã pass, trong khi Kyverno chưa hề được gọi | Fixture thoả đủ 3 tầng; message hợp lệ **phải nêu tên policy đang test** |
 
 ---
 
 ## G. Còn lại
 
-| Việc | Ai làm |
-|---|---|
-| Sync `kyverno-policies` (1 ClusterPolicy, `prune=False`) → 7B live | Người có quyền ghi |
-| Chạy 7 case trong `admission-tests/` **trong `techx-tf3`** | Người có quyền tạo pod |
-| Merge #539 (provenance walkthrough) | — |
+**Không còn hạng mục nào thuộc DoD PM-127.** Cả 4 DoD và 3 yêu cầu Directive #10 đều đã có bằng chứng.
 
-Role `tf3-production-readonly` không patch được Application lẫn tạo pod, nên hai việc đầu phải người khác thực hiện.
+Hai việc **ngoài phạm vi** phát hiện được trong quá trình làm, nên chuyển thành ticket riêng:
+
+| Việc | Vì sao ngoài phạm vi |
+|---|---|
+| CronJob `aiops-anomaly-training` **Failed 2 lần liên tiếp** (7 ngày và 42 giờ trước) | Hỏng sẵn từ trước, không liên quan supply chain. Của AIO02 |
+| **266 ReplicaSet** trong `techx-tf3`, 79 cái tham chiếu digest chưa ký | Nên đặt `revisionHistoryLimit` để dọn. Không ảnh hưởng runtime |
+
+### Ghi chú về `deny-05` (ephemeral container)
+
+Chưa chạy vì không apply được bằng manifest — cần `kubectl debug` trên pod đang chạy. Nhánh `ephemeralContainers` của policy **đã được khoá bằng unit test** (`test_external_policy_defers_every_first_party_form_to_the_signature_policy`) và **đã chứng minh hoạt động trên thực tế**: chính nó bắt được 3 container `nicolaka/netshoot` bỏ quên trên pod `fraud-detection` ngày 28/07.
 
 ---
 
