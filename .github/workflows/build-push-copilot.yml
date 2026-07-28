@@ -123,8 +123,12 @@ jobs:
           # (perl-base/bsdutils/... status affected|fix_deferred, no upstream patch) that no
           # rebuild can clear; blocking on them would permanently block a Debian-based image.
           # Anything with a fix must still be patched (e.g. pinned in requirements.txt).
-          echo "Enforcing zero FIXABLE ${TRIVY_SEVERITIES} findings for $IMAGE"
-          trivy image --scanners vuln --severity "$TRIVY_SEVERITIES" --ignore-unfixed --exit-code 1 --no-progress "$IMAGE"
+          # --ignorefile suppresses documented vendored/build-time false positives
+          # (see shopping-copilot/.trivyignore). --ignore-unfixed still lets through the
+          # unpatched Debian base OS CVEs.
+          echo "Enforcing zero FIXABLE ${TRIVY_SEVERITIES} findings for $IMAGE (excluding .trivyignore)"
+          trivy image --scanners vuln --severity "$TRIVY_SEVERITIES" --ignore-unfixed \
+            --ignorefile shopping-copilot/.trivyignore --exit-code 1 --no-progress "$IMAGE"
 
       - name: Upload Trivy report
         if: always()
