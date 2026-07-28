@@ -9,6 +9,14 @@ ENVOY = (
     ROOT
     / "phase3 - information/techx-corp-platform/src/frontend-proxy/envoy.tmpl.yaml"
 )
+ENVOY_DOCKERFILE = (
+    ROOT
+    / "phase3 - information/techx-corp-platform/src/frontend-proxy/Dockerfile"
+)
+ENVOY_ENTRYPOINT = (
+    ROOT
+    / "phase3 - information/techx-corp-platform/src/frontend-proxy/entrypoint.sh"
+)
 PROFILE = (
     ROOT
     / "phase3 - information/techx-corp-platform/src/load-generator/mandate19_locustfile.py"
@@ -43,13 +51,19 @@ def test_browse_shadow_mode_and_checkout_funnel_precedes_catch_all():
     assert checkout < browse and cart < browse and detail < browse
 
     browse_block = _block(text, "name: browse_shedable", "http_filters:")
-    assert "max_tokens: 100" in browse_block
-    assert "tokens_per_fill: 50" in browse_block
-    assert re.search(
-        r"filter_enabled:[\s\S]*?numerator:\s+100", browse_block
+    assert "max_tokens: ${BROWSE_RATE_LIMIT_MAX_TOKENS}" in browse_block
+    assert (
+        "tokens_per_fill: ${BROWSE_RATE_LIMIT_TOKENS_PER_FILL}" in browse_block
     )
     assert re.search(
-        r"filter_enforced:[\s\S]*?numerator:\s+0", browse_block
+        r"filter_enabled:[\s\S]*?numerator:\s+"
+        r"\$\{BROWSE_RATE_LIMIT_ENABLED_PERCENT\}",
+        browse_block,
+    )
+    assert re.search(
+        r"filter_enforced:[\s\S]*?numerator:\s+"
+        r"\$\{BROWSE_RATE_LIMIT_ENFORCED_PERCENT\}",
+        browse_block,
     )
     assert "x-techx-load-shed" in browse_block
 
@@ -58,9 +72,9 @@ def test_browse_rate_limit_yaml_indentation_is_valid():
     lines = ENVOY.read_text(encoding="utf-8").splitlines()
     expected_indents = {
         "token_bucket:": 30,
-        "max_tokens: 100": 32,
-        "tokens_per_fill: 50": 32,
-        "fill_interval: 1s": 32,
+        "max_tokens: ${BROWSE_RATE_LIMIT_MAX_TOKENS}": 32,
+        "tokens_per_fill: ${BROWSE_RATE_LIMIT_TOKENS_PER_FILL}": 32,
+        "fill_interval: ${BROWSE_RATE_LIMIT_FILL_INTERVAL}": 32,
         "filter_enabled:": 30,
         "runtime_key: browse_rate_limit_enabled": 32,
         "filter_enforced:": 30,
@@ -81,6 +95,30 @@ def test_browse_rate_limit_yaml_indentation_is_valid():
         assert len(matching) == 1, f"expected one {marker!r} in browse config"
         actual = len(matching[0]) - len(matching[0].lstrip())
         assert actual == expected, f"{marker!r} indent={actual}, expected={expected}"
+
+
+def test_rate_limit_promotion_knobs_are_explicit_and_build_validated():
+    prod = VALUES.read_text(encoding="utf-8")
+    proxy = prod[prod.index("  frontend-proxy:") :]
+    expected_prod_values = {
+        "BROWSE_RATE_LIMIT_MAX_TOKENS": "100",
+        "BROWSE_RATE_LIMIT_TOKENS_PER_FILL": "50",
+        "BROWSE_RATE_LIMIT_FILL_INTERVAL": "1s",
+        "BROWSE_RATE_LIMIT_ENABLED_PERCENT": "100",
+        "BROWSE_RATE_LIMIT_ENFORCED_PERCENT": "0",
+        "LOCAL_RATE_LIMIT_ENABLED_PERCENT": "100",
+        "LOCAL_RATE_LIMIT_ENFORCED_PERCENT": "0",
+    }
+    dockerfile = ENVOY_DOCKERFILE.read_text(encoding="utf-8")
+    entrypoint = ENVOY_ENTRYPOINT.read_text(encoding="utf-8")
+    for name, value in expected_prod_values.items():
+        yaml_pair = rf"name:\s+{name}\s+value:\s+[\"']{re.escape(value)}[\"']"
+        assert re.search(yaml_pair, proxy)
+        assert f"{name}={value}" in dockerfile
+        assert f'${{{name}:={value}}}' in entrypoint
+    assert "envoy --mode validate" in dockerfile
+    assert "envoy --mode validate" in entrypoint
+    assert 'ENTRYPOINT ["./entrypoint.sh"]' in dockerfile
 
 
 def test_overload_profile_separates_shedable_and_protected_streams():

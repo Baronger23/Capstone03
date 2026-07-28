@@ -5,13 +5,15 @@ load-shedding enforcement. A merge to `main` must not combine all stages.
 
 ## Stage 1 — shadow observation
 
-Configuration:
+Configuration is promoted through
+`components.frontend-proxy.envOverrides` in `values-prod.yaml`; the Envoy image
+does not need a source edit for every stage:
 
 ```yaml
-filter_enabled:
-  numerator: 100
-filter_enforced:
-  numerator: 0
+- name: BROWSE_RATE_LIMIT_ENABLED_PERCENT
+  value: "100"
+- name: BROWSE_RATE_LIMIT_ENFORCED_PERCENT
+  value: "0"
 ```
 
 Keep the browse token bucket at `max_tokens: 100` and
@@ -68,7 +70,8 @@ next stage is allowed only if:
 - unexpected 5xx/timeout, restart, OOM and Pending pods remain unchanged;
 - node count and node-set hash remain unchanged.
 
-The 5/25/50/100 values are rollout stages, not a substitute for calibration.
+Change only `BROWSE_RATE_LIMIT_ENFORCED_PERCENT` for the 5/25/50/100 promotion
+steps. The 5/25/50/100 values are rollout stages, not a substitute for calibration.
 Use the smallest available canary mechanism (Argo Rollouts or a separate
 stable/canary proxy deployment) before sending the stage to all proxies.
 
@@ -93,4 +96,3 @@ GET  /api/products       → would be shed when enforcement is enabled
 
 When enforcement is enabled, shed responses must contain
 `x-techx-load-shed: browse` and `x-envoy-ratelimited: true`.
-

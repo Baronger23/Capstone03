@@ -9,3 +9,6 @@ phase3 - information/techx-corp-platform/src/flagd-ui/config/dev.exs:generic-api
 phase3 - information/techx-corp-platform/src/flagd-ui/config/test.exs:generic-api-key:11
 phase3 - information/techx-corp-platform/docker-compose.yml:generic-api-key:707
 phase3 - information/techx-corp-platform/src/grafana/grafana.ini:generic-api-key:253
+# Public Valkey image tag captured in the Kubernetes node snapshot; this is
+# image metadata, not a credential. Keep the exception bound to this finding.
+377d88c191680b46b8e0d812f5b656b38d295820:before-nodes.json:generic-api-key:1270
