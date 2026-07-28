@@ -1248,14 +1248,14 @@ from typing import List
 
 class MetricPoint(BaseModel):
     timestamp: str
-    rps: float
-    cpu_usage: float
-    memory_usage: float
-    latency_p90: float
-    error_rate: float
-    client_error_rate: float
-    kafka_lag: float
-    label: int
+    rps: float = 100.0
+    cpu_usage: float = 0.10
+    memory_usage: float = 50.0
+    latency_p90: float = 0.05
+    error_rate: float = 0.0
+    client_error_rate: float = 0.0
+    kafka_lag: float = 0.0
+    label: int = 0
 
 class ReplayPayload(BaseModel):
     service: str
@@ -1593,13 +1593,14 @@ async def simulate_long_running(payload: LongRunningPayload):
                         "details": f"Telemetry returned to normal baseline on {svc}."
                     })
 
-        if replay_resp.get("metrics", {}).get("slo_breaches_detected", 0) > 0:
+        has_anomalies = any(r.get("error_rate", 0.0) >= 0.05 or r.get("latency_p90", 0.0) >= 0.30 for r in records)
+        if has_anomalies or replay_resp.get("metrics", {}).get("slo_breaches_detected", 0) > 0:
             active_service_incidents[svc] = {
                 "incident_id": inc_id,
                 "service": svc,
                 "status": "CONTINUOUS_ALERT_ACTIVE",
                 "baseline_frozen": detector.is_baseline_frozen(svc),
-                "slo_breaches": replay_resp["metrics"]["slo_breaches_detected"]
+                "slo_breaches": max(1, replay_resp.get("metrics", {}).get("slo_breaches_detected", 0))
             }
 
         results.append({
