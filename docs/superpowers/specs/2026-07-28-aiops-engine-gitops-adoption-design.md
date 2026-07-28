@@ -5,8 +5,11 @@
 - Thiết kế được duyệt trong hội thoại ngày 2026-07-28.
 - **Phase 0 đã thực thi** (xoá ingress public) — có xác nhận trực tiếp của user trong
   hội thoại, xem mục "Phase 0" bên dưới.
-- Phase 1–3 mới chỉ được duyệt ở mức thiết kế. Tài liệu này **không** cấp phép sync,
-  prune, patch hay bất kỳ mutation nào lên production; mỗi phase đi qua PR riêng.
+- **Phase 1 đã thực thi xong ngày 2026-07-28** — adopt `aiops-engine` vào ArgoCD qua
+  PR #519, merge lúc 09:40:30 UTC, commit `40078f0`. Không downtime — bằng chứng ở mục
+  "Phase 1" bên dưới. PR #521 (gỡ label `managed-by` giả) là follow-up ngay sau.
+- Phase 2–3 vẫn chỉ được duyệt ở mức thiết kế, **chưa cấp phép** mutation nào lên
+  production ngoài những gì Phase 1 đã làm; mỗi phase đi qua PR riêng.
 
 ## Mục tiêu
 
@@ -227,6 +230,69 @@ Rủi ro cần canh: `prune: true` + `selfHeal: true` nghĩa là bất kỳ tài
 `aiops-engine` nào tồn tại trong cluster mà không có trong git **sẽ bị xoá** ở lần sync
 đầu. Vì vậy bước 1 phải liệt kê đủ, và bước 3 (`kubectl diff` rỗng) là cổng chặn bắt buộc.
 
+**Kết quả thực thi (2026-07-28, PR #519, merge 09:40:30 UTC, commit `40078f0`).**
+
+Bằng chứng zero-downtime, so trước/sau merge:
+
+| Chỉ số | Trước merge | Sau merge |
+|---|---|---|
+| `deployment.kubernetes.io/revision` | 68 | 68 — không tăng |
+| Pod | `aiops-engine-7cb74684f8-svqjf` | cùng tên pod — không bị recreate |
+| RESTARTS | 0 | 0 |
+| READY | 1/1 | `true` |
+
+`argocd.argoproj.io/tracking-id` có mặt trên cả 7/7 tài nguyên sau sync. Gọi thử engine
+qua cổng nội bộ sau khi Application `Synced` vẫn trả
+`{"status":"success","mode":"SLACK_HUMAN_APPROVAL",...}` — hành vi không đổi so với
+trước khi adopt.
+
+PR #521 (follow-up ngay sau) gỡ label giả `app.kubernetes.io/managed-by: argocd` — nhãn
+này giờ đã đúng thật qua tracking-id nên không cần dán tay nữa.
+
+**Phát hiện mới — lộ ra khi adopt: CronJob training đang hỏng.**
+
+Sau sync, ArgoCD báo Application health = `Degraded`, dù `sync = Synced` và cả 7 tài
+nguyên đều `Synced` riêng lẻ. Nguyên nhân: hai Job con của `cronjob/aiops-anomaly-training`
+đang ở trạng thái `Failed`:
+
+| Job | Chạy cách đây | Kết quả |
+|---|---|---|
+| `aiops-anomaly-training-29741460` | 7 ngày | `Failed` |
+| `aiops-anomaly-training-29751540` | 38 giờ | `Failed` |
+
+Lý do fail: `DeadlineExceeded` — job chạy đủ `activeDeadlineSeconds: 3600` (1 giờ) rồi
+bị giết, không phải crash. Job thứ hai bắt đầu `2026-07-26T19:00:00Z`, fail lúc
+`20:00:00Z` — khớp đúng 3600 giây. Pod đã bị dọn (không còn log) nên không biết job treo
+ở bước nào.
+
+Nghi ngờ, chưa xác nhận: image CronJob là `IF-v25` trong khi engine chạy `IF-v63` — có
+thể incompatibility ở `train_anomaly_model_eks.py`; hoặc credential S3 retry vô hạn
+(cùng gốc với lỗ hổng 2 — static admin key, xem phần "Lỗ hổng 2" ở trên). Hệ quả: model
+anomaly detection hiện tại có thể đã cũ ít nhất 2 tuần.
+
+**Quyết định: cố ý KHÔNG xoá hai Job `Failed` này**, dù xoá đi là Application xanh
+(`Healthy`) ngay lập tức. Hai Job đó là bằng chứng của một pipeline đang hỏng — xoá bằng
+chứng trước khi điều tra là đi sai hướng. Đây là việc của AIO02, đã đưa vào "Việc cần
+AIO02 xác nhận" bên dưới.
+
+### Cảnh báo vận hành cho Phase 2/3 — `kubectl diff` không còn là cổng kiểm chứng sạch
+
+Từ khi ArgoCD adopt xong (sau Phase 1), `kubectl diff -f gitops/aiops-engine/` **luôn**
+hiện nhiễu cố định trên **mọi** tài nguyên trong thư mục, kể cả file không hề đụng tới:
+annotation `argocd.argoproj.io/tracking-id` bị hiện như đang "bị xoá", và `generation`
+tăng. Lý do: `kubectl diff` chạy dry-run apply phía client, không biết tới cơ chế
+annotation-tracking của ArgoCD — nó coi field ArgoCD tự thêm là field lạ cần gỡ đi.
+
+Đã kiểm chứng độc lập: dựng git worktree tạm ở commit trước khi có thay đổi thật, chạy
+lại `kubectl diff` ở đó — nhiễu y hệt, tức là đã có sẵn ở baseline, không phải do PR đang
+xét gây ra.
+
+**Hệ quả:** tiêu chí "`kubectl diff` rỗng = an toàn" (dùng làm cổng chặn bắt buộc ở
+Phase 1, bước 3) **không còn dùng được từ Phase 2 trở đi**. Thay bằng "diff có chọn
+lọc": chấp nhận đúng pattern nhiễu đã biết (tracking-id + generation) cộng đúng những
+dòng PR chủ đích đổi; bất kỳ dòng lạ nào khác ngoài hai nhóm đó là cảnh báo thật, phải
+dừng lại kiểm tra trước khi merge.
+
 ### Phase 2 — IRSA thật, giết static admin key
 
 Terraform trong `infra/live/production/`:
@@ -354,8 +420,12 @@ Song song, đề nghị AIO02 thêm kiểm tra `X-Slack-Signature` (HMAC với `
 2. CronJob training đang chạy `IF-v25` trong khi engine ở `IF-v63` — nâng cronjob lên
    `IF-v63` có an toàn không, hay `train_anomaly_model_eks.py` đã đổi interface?
    Và `k8s/rbac.yaml` trong repo AIO02 (rộng hơn live, bind sai SA `default`) có nên xoá?
-3. `chaos-engine` có kế hoạch deploy lên cluster không?
-4. Có đồng ý thêm xác thực chữ ký Slack ở tầng app không?
+3. Hai Job `aiops-anomaly-training-29741460` (7 ngày trước) và `-29751540` (38 giờ
+   trước) đều `Failed` do `DeadlineExceeded` (hết 3600s) — pipeline training treo ở
+   bước nào? Model anomaly hiện tại đã cũ bao lâu, và có đang ảnh hưởng chất lượng
+   phát hiện bất thường không?
+4. `chaos-engine` có kế hoạch deploy lên cluster không?
+5. Có đồng ý thêm xác thực chữ ký Slack ở tầng app không?
 
 ## Tham chiếu
 
