@@ -86,6 +86,14 @@ spec:
                 secretKeyRef:
                   name: shopping-copilot-valkey-url
                   key: url
+            # HMAC key for the write-confirmation gate (add-to-cart). Without it the app
+            # falls back to a predictable hardcoded default -> forgeable confirm tokens.
+            # Created out of band (never in git); see the deploy runbook.
+            - name: COPILOT_CONFIRMATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: shopping-copilot-confirmation
+                  key: secret
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false

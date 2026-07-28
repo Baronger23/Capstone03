@@ -30,6 +30,10 @@ data:
 
   # ── RAG Knowledge Base ───────────────────────────────────────────
   BEDROCK_KB_ID: "UCTITOWFHE"
+  # KB techx-products-kb-v2 (UCTITOWFHE) is ACTIVE in us-east-1, NOT ap-southeast-1 (verified
+  # 2026-07-27). The app's kb_client reads BEDROCK_KB_REGION (separate from BEDROCK_REGION);
+  # pin it explicitly so Retrieve() hits the right region regardless of the LLM region.
+  BEDROCK_KB_REGION: "us-east-1"
   BEDROCK_KB_DATA_SOURCE_ID: "OJQNE88GXV"
   REVIEWS_DATA_SOURCE_ID: "M2YA7L7GEA"
   PRODUCTS_S3_BUCKET: "techx-products-catalog-2026"

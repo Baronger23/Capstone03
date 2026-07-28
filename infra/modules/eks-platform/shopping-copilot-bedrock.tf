@@ -18,11 +18,13 @@ locals {
   copilot_inference_profile_id = "apac.amazon.nova-lite-v1:0"
   copilot_foundation_model_id  = "amazon.nova-lite-v1:0"
 
-  # Guardrail lives in us-east-1 (DRAFT). Retrieve() hits the Knowledge Base in the
-  # Bedrock runtime region.
+  # Guardrail AND the Knowledge Base both live in us-east-1 (verified 2026-07-27:
+  # KB UCTITOWFHE / techx-products-kb-v2 is ACTIVE in us-east-1, not ap-southeast-1). The
+  # app's kb_client defaults BEDROCK_KB_REGION to us-east-1, so Retrieve() targets us-east-1.
   copilot_guardrail_region = "us-east-1"
   copilot_guardrail_id     = "3ab7r29x59x4"
   copilot_kb_id            = "UCTITOWFHE"
+  copilot_kb_region        = "us-east-1"
 
   copilot_products_bucket = "techx-products-catalog-2026"
 }
@@ -87,7 +89,7 @@ resource "aws_iam_role_policy" "shopping_copilot_bedrock" {
         Sid      = "RetrieveFromKnowledgeBase"
         Effect   = "Allow"
         Action   = ["bedrock:Retrieve"]
-        Resource = ["arn:aws:bedrock:${local.copilot_bedrock_region}:${data.aws_caller_identity.current.account_id}:knowledge-base/${local.copilot_kb_id}"]
+        Resource = ["arn:aws:bedrock:${local.copilot_kb_region}:${data.aws_caller_identity.current.account_id}:knowledge-base/${local.copilot_kb_id}"]
       },
       {
         # Read-only: copilot reads product data for the KB / catalog fallback. PutObject

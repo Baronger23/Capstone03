@@ -66,10 +66,24 @@ Replace `sha256:REPLACE_WITH_CI_DIGEST` in `gitops/shopping-copilot/deployment.y
 digest from step 2. Commit + merge. (Until this is a real digest the pod stays
 ImagePullBackOff — harmless to everything else.)
 
+### 3b. Create the confirmation-secret out of band (one-time, never in git)
+The write-confirmation HMAC key. Without it the app uses a predictable hardcoded default and
+add-to-cart confirm tokens become forgeable. Same out-of-band pattern as the flagd/cloudflared
+tokens (a random value, created directly in the cluster):
+```sh
+export AWS_PROFILE=techx-new
+kubectl -n techx-tf3 create secret generic shopping-copilot-confirmation \
+  --from-literal=secret="$(openssl rand -hex 32)"
+```
+Rotate by recreating the secret and restarting the deployment. (The DB and Valkey secrets are
+handled automatically by ExternalSecrets — only this one is manual, because there is no
+upstream source for it.)
+
 ### 4. Let ArgoCD sync
 `techx-corp-bootstrap` picks up `gitops/apps/shopping-copilot-app.yaml`; the new `shopping-copilot`
-Application syncs `gitops/shopping-copilot/`. The `shopping-copilot-valkey-url` ExternalSecret
-is synced by the existing `flagd-secret-sync` app (it watches `gitops/secrets`).
+Application syncs `gitops/shopping-copilot/`. The `shopping-copilot-valkey-url` and
+`shopping-copilot-db` ExternalSecrets are synced by the existing `flagd-secret-sync` app (it
+watches `gitops/secrets`).
 
 ### 5. Verify (via SSM tunnel or kubectl.arthur-ngo.org)
 ```sh
@@ -111,28 +125,37 @@ Resolved on our side — no AIO02 change needed:
   vanilla OTel-demo ports and are WRONG for our chart (`:8080`, reviews `:3551`). We override
   all six `*_ADDR` in the ConfigMap with the correct cluster ports.
 
-Confirmed from platform source (2026-07-27):
+Confirmed / fixed on our side (2026-07-27):
 - **RDS schema** — `product-catalog/main.go` queries `FROM catalog.products` and
   `product-reviews/database.py` queries `FROM reviews.productreviews`. Both services run live
   on RDS `otel` using the same RDS-managed master creds we inject into the copilot, so those
   schemas exist and the master user can read them. The copilot's SQL tools hit the same tables.
+- **RAG Knowledge Base — ALIVE, region corrected.** `UCTITOWFHE` (techx-products-kb-v2) is
+  ACTIVE in **us-east-1**, not ap-southeast-1 as the spec implied. The app's `kb_client` reads
+  `BEDROCK_KB_REGION` (default us-east-1); we pin it explicitly and scope the IRSA `bedrock:Retrieve`
+  to the us-east-1 KB ARN. RAG Flow-2 works. (An orphan KB `VGXRPNYPPA` in DELETE_UNSUCCESSFUL
+  is unrelated — a cost-cleanup item.)
+- **Write-confirmation HMAC key** — `confirmation.py` defaults to a predictable literal if
+  `COPILOT_CONFIRMATION_SECRET` is unset (forgeable add-to-cart tokens). We inject it from the
+  out-of-band `shopping-copilot-confirmation` secret (step 3b), so the default is never used.
+- **DB password default** — `connect.py` hardcodes `otelp` as the `DB_PASSWORD` fallback (dead
+  self-hosted cred); we always set `DB_PASSWORD` from the RDS secret, so the fallback is never hit.
 
-Still to confirm / accept — do not block a first deploy (graceful degradation or hardening):
-1. **RAG Knowledge Base health.** `BEDROCK_KB_ID=UCTITOWFHE` backs onto a vector store;
-   OpenSearch Serverless was turned off for cost. If gone, RAG Flow-2 → SQL-only.
-2. **`/metrics` not implemented.** No `/metrics` route/prometheus client despite spec §7.4.
-   Scrape annotation removed; SLO/alert claims are unbacked until AIO02 adds it.
-3. **Debug endpoints — blocked at the edge (our side).** `/debug/*` (dumps all users'
+Still to confirm / accept — do not block a first deploy (hardening, need app code):
+1. **`/metrics` not implemented.** No `/metrics` route/prometheus client despite spec §7.4.
+   Scrape annotation removed; SLO/alert claims are unbacked until AIO02 adds it. (Cannot be
+   synthesized from the platform side — the `copilot_*` counters are internal to the app.)
+2. **Debug endpoints — blocked at the edge (our side).** `/debug/*` (dumps all users'
    sessions/cache) and `/docs` (Swagger) are unauthenticated in the app. We hard-block them at
    the tunnel: `blocked_paths` in `cloudflare-access.tf` makes cloudflared return 404 for
    `^/(debug|docs)` on `copilot.arthur-ngo.org` before the request reaches the pod, even for
    SSO users. In-cluster direct access to `shopping-copilot:8001/debug` is still open (same
    trust boundary as every other Service; NetworkPolicy is the tool, deferred). Full in-app
    disable (an `ENABLE_DEBUG=false` flag) remains an AIO02 hardening ask.
-4. **Bedrock ARNs.** IRSA scoped to the contract's model/guardrail/KB IDs; if AIO02 promotes
+3. **Bedrock ARNs.** IRSA scoped to the contract's model/guardrail/KB IDs; if AIO02 promotes
    the guardrail out of `DRAFT` or moves the KB/model, update the locals in
    `shopping-copilot-bedrock.tf`.
-5. **NetworkPolicy.** Deliberately NOT added (Mandate #5 batch caused the 20/07 outage; CDO01
+4. **NetworkPolicy.** Deliberately NOT added (Mandate #5 batch caused the 20/07 outage; CDO01
    is rebuilding it). Add copilot egress (RDS/ElastiCache/Bedrock/gRPC) when that lands.
 
 ## Rollback
