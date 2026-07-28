@@ -14,6 +14,7 @@ from remediation_handler import RemediationHandler
 from slack_notifier import SlackNotifier
 from alert_correlator import AlertCorrelator
 from audit_logger import audit_logger
+from drift_detector import drift_detector
 
 
 # Setup logging
@@ -1454,6 +1455,56 @@ async def simulate_replay(payload: ReplayPayload):
         ],
         "causal_reasoning": f"[Directive #26 Causal Inference] Root cause identified as '{service}' based on time-series first-drift priority and call-graph depth.",
         "details": results_detail
+    }
+
+class DriftReplayPayload(BaseModel):
+    surface: str = "isolation_forest_metrics"
+    baseline: List[dict] = []
+    data: List[dict]
+
+@app.post("/simulate/drift")
+async def simulate_drift(payload: DriftReplayPayload):
+    """
+    [DIRECTIVE #27 - MLOps Data & Model Drift Replay Gateway]
+    Cửa nhận chuỗi dữ liệu đầu vào từ Mentor để đánh giá khả năng phát hiện Data Drift & Model Quality Shift.
+    Sử dụng chỉ số Population Stability Index (PSI) và Kolmogorov-Smirnov (KS-Test).
+    """
+    import pandas as pd
+    import numpy as np
+
+    current_records = payload.data
+    if not current_records:
+        raise HTTPException(status_code=400, detail="Empty data list for drift evaluation")
+
+    current_df = pd.DataFrame(current_records)
+
+    # Nếu payload truyền kèm baseline tùy chỉnh từ Mentor
+    if payload.baseline:
+        base_df = pd.DataFrame(payload.baseline)
+        for col in base_df.columns:
+            if np.issubdtype(base_df[col].dtype, np.number):
+                drift_detector.set_baseline(col, base_df[col].values)
+    else:
+        # Nếu chưa có baseline, tạo baseline chuẩn ngầm định nếu chưa khởi tạo
+        for col in current_df.columns:
+            if col not in drift_detector.baselines and np.issubdtype(current_df[col].dtype, np.number):
+                # Baseline mặc định: phân phối chuẩn xung quanh giá trị trung bình 20 hàng đầu
+                head_vals = current_df[col].iloc[:min(20, len(current_df))].values
+                if len(head_vals) > 0:
+                    drift_detector.set_baseline(col, head_vals)
+
+    # Chạy thuật toán quét Data Drift
+    drift_result = drift_detector.detect_drift(current_df, psi_threshold=0.25)
+    
+    return {
+        "status": "evaluated",
+        "surface": payload.surface,
+        "drift_analysis": drift_result,
+        "summary": (
+            f"[Directive #27 Data Drift] Detected: {drift_result['drift_detected']} | "
+            f"Max PSI: {drift_result['overall_max_psi']} | "
+            f"Drifted Metrics Count: {len(drift_result['drifted_metrics'])}"
+        )
     }
 
 @app.get("/evaluate/live")
