@@ -276,7 +276,7 @@ components:
       # build từ code fallback + postcss fix). Re-apply PR #448 - từng merge rồi bị revert (#450)
       # như biện pháp phòng ngừa trong lúc ổn định PM-129 (bug tooling trace-provenance đa-arch,
       # KHÔNG phải lỗi supply-chain); image đã qua Trivy + Cosign. Đừng revert lại.
-      digest: sha256:6e91e6c017ebea643845b1e493fe1a85e455e23d59d3970022a342fcc8ffded6
+      digest: sha256:292d3e51367d5f809898e974e4798c5ebdb1145b925092983ed9e2055c226d3b
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -891,11 +891,11 @@ components:
               opentelemetry.io/name: product-reviews
     replicas: 2        # đứng sau tính năng AI tóm tắt review
     imageOverride: # CDO02 fix database.py + product_reviews_server.py - xem comment imageOverride đầu components:
-      digest: sha256:bbf660788c9c1b5881bd626f691e26e26a1d5774be13515ebbeefae481afe858
-      tag: 43dcf62-29569108433-product-reviews
+      digest: sha256:f7acf6a1c7ba3d26a56d3844d386c5a83916d3085db71976c13efce211930a7a
+      tag: bd49c9f-30366821052-product-reviews
     resources:
       requests:
-        cpu: 100m
+        cpu: 150m
         memory: 80Mi
       limits:
         cpu: 500m
@@ -1449,6 +1449,8 @@ components:
     # stages 5 -> 25 -> 50 -> 100 after every gate passes. The global fallback
     # remains shadow because protected routes use its non-binding 10k/s bucket.
     envOverrides:
+      - name: FRONTEND_HOST
+        value: frontend-headless
       - name: BROWSE_RATE_LIMIT_MAX_TOKENS
         value: "100"
       - name: BROWSE_RATE_LIMIT_TOKENS_PER_FILL

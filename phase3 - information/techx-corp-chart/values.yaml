@@ -912,7 +912,12 @@ components:
     enabled: true
     imageOverride:
       repository: "ghcr.io/open-feature/flagd"
-      tag: "v0.12.9"
+      # v0.12.9, pinned by the digest that tag currently resolves to, so the
+      # reference cannot follow an upstream retag. tag is dropped rather than
+      # kept alongside: the template renders repo@digest and ignores tag once a
+      # digest is set, so a leftover tag would look authoritative while doing
+      # nothing - and bumping it would silently have no effect.
+      digest: "sha256:e6cca86b29629a06806aa7954b4a9b5f291c30839c6ae4f815dc4ddcee4a0746"
     useDefault:
       env: true
     replicas: 1
@@ -1189,6 +1194,7 @@ opentelemetry-collector:
   enabled: true
   image:
     repository: "otel/opentelemetry-collector-contrib"
+    digest: "sha256:d57bfe8eee2378f31cb1193239fbcac521d54a5a071fca2bfc106916a32b892d"
   fullnameOverride: otel-collector
   mode: daemonset
   securityContext:
@@ -1345,6 +1351,7 @@ otelGateway:
   image:
     repository: "otel/opentelemetry-collector-contrib"
     tag: "0.151.0"
+    digest: "sha256:d57bfe8eee2378f31cb1193239fbcac521d54a5a071fca2bfc106916a32b892d"
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -1377,6 +1384,7 @@ otel-node-agent:
   image:
     repository: "otel/opentelemetry-collector-contrib"
     tag: "0.151.0"
+    digest: "sha256:d57bfe8eee2378f31cb1193239fbcac521d54a5a071fca2bfc106916a32b892d"
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
@@ -1501,6 +1509,9 @@ jaeger:
   enabled: true
   fullnameOverride: jaeger
   jaeger:
+    # PM-127: pin digest so allow-approved-external-image-digests (exact-string) matches.
+    image:
+      digest: "sha256:6266573208d665ce5c17483bce0a75d0806480d92c84766d288d0aee885ce708"
     storage:
       type: memory
     extraEnv:
@@ -1631,6 +1642,9 @@ prometheus:
     enabled: false
   server:
     fullnameOverride: prometheus
+    # PM-127: pin digest so allow-approved-external-image-digests (exact-string) matches.
+    image:
+      digest: "sha256:c0b857aead0d5793aa566adb8f49a9983d6f6031652098759d521a330cfa050f"
     extraFlags:
       - "enable-feature=exemplar-storage"
       - "web.enable-otlp-receiver"
@@ -1730,6 +1744,11 @@ grafana:
       serve_from_sub_path: true
   adminPassword: admin
   sidecar:
+    # PM-127: pin k8s-sidecar to digest so allow-approved-external-image-digests (exact-string)
+    # matches. grafana chart renders sidecar.image as quay.io/kiwigrid/k8s-sidecar:2.7.1@sha256:<sha>.
+    # Recreates the Grafana pod (plugins are baked into /opt by PM-176, no internet needed at start).
+    image:
+      sha: "5bc0c5634d4aae468e27e98bf1aae4f45d82fcbfd73baf4a9d3fb0699c62f83d"
     securityContext:
       runAsUser: 65534
       runAsGroup: 65534
@@ -1776,10 +1795,17 @@ otelLogsRetention:
   opensearchEndpoint: http://opensearch:9200
   # Reuse the exact image the OpenSearch pod already runs (has curl + date, already
   # vetted/pulled) so no new supply-chain surface is introduced. Keep digest-pinned.
-  image: opensearchproject/opensearch@sha256:b5dd1512af2a99748c942cfbbd7f32162623336b210667d0fc6333c6321f171d
+  image: opensearchproject/opensearch:3.6.0@sha256:b5dd1512af2a99748c942cfbbd7f32162623336b210667d0fc6333c6321f171d
 
 opensearch:
   enabled: true
+  # PM-127: opensearch subchart has no image.digest field and computes opensearch.majorVersion
+  # via semver(image.tag). Pin majorVersion explicitly so we can embed the digest in the tag;
+  # rendered image = opensearchproject/opensearch:3.6.0@sha256:... which matches the exact-digest
+  # allowlist. Verified via helm template.
+  majorVersion: "3"
+  image:
+    tag: "3.6.0@sha256:b5dd1512af2a99748c942cfbbd7f32162623336b210667d0fc6333c6321f171d"
   fullnameOverride: opensearch
   clusterName: demo-cluster
   nodeGroup: techx-corp
