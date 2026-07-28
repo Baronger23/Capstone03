@@ -1,82 +1,116 @@
-# ADR 0012 - Mandate 13: Spot + Graviton rollout khong tao SPOF
+# ADR 0012 - Mandate 13: Rollout Spot + Graviton không tạo SPOF
 
-**Ngay:** 24/07/2026
-**Nguoi quyet dinh (ky):** Ha Tay Nguyen
-**Trang thai:** De xuat rollout production
-**Pham vi:** Reliability + Cost + Operational Excellence cho Mandate 13
+**Ngày:** 24/07/2026  
+**Người quyết định (ký):** Hà Tây Nguyên  
+**Trạng thái:** Đã rollout production và đã có evidence interruption + scale-down  
+**Phạm vi:** Reliability + Cost Optimization + Operational Excellence cho Mandate 13
 
-## Boi canh
+## 1. Bối cảnh
 
-Production hien da co Spot that va nhieu workload critical path da chay tren Spot, nhung van con 3 gap:
+Production đã có Spot thật và một phần workload critical path đã chạy trên Spot, nhưng trước khi chốt Mandate 13 vẫn còn ba khoảng trống lớn:
 
-1. Spot chua vuot 50% ro rang theo huong evidence cua mandate
-2. Chua co arm64/Graviton live
-3. NodePool Spot dang bi freeze consolidation, nen khong the chung minh co xuong that
+1. Tỷ lệ Spot chưa vượt 50% theo cách nhìn evidence đủ thuyết phục.
+2. Chưa có arm64/Graviton chạy live trên production.
+3. NodePool Spot trước đó bị khóa khả năng co xuống, nên không thể quay được evidence scale-down đúng yêu cầu.
 
-Mot phuong an truoc do dua `recommendation` len arm64 tren pool Spot rieng da bi loai bo vi:
+Một phương án cũ từng thử đưa `recommendation` lên arm64 trên pool Spot riêng đã bị loại bỏ vì không an toàn:
 
-- `recommendation` chi co 1 replica
-- khong co PDB
-- neu mat 1 Spot node se tao SPOF moi
-- freeze consolidation lam hong yeu cau scale-down
+- `recommendation` chỉ có 1 replica
+- không có PDB
+- mất 1 Spot node sẽ tạo SPOF mới
+- pool bị freeze consolidation nên tự làm hỏng yêu cầu scale-down
 
-## Quyet dinh
+## 2. Quyết định
 
-Chon phuong an moi:
+Chọn phương án rollout production an toàn hơn, với mục tiêu mở đường cho evidence Mandate 13 nhưng không tạo rủi ro mới trên luồng khách hàng:
 
-1. tat nodegroup `stateful_1a` da rong o production
-2. ha baseline managed on-demand nodegroup tu `4 -> 3`
-3. bo freeze consolidation tren NodePool Spot hien co
-4. them NodePool `flash-sale-spot-arm64` cho Spot arm64
-5. chi opt-in `product-catalog` sang arm64
-6. right-size `load-generator` va nang memory request cho `prometheus`/`opensearch`
+1. tắt nodegroup `stateful_1a` đã rỗng trên production
+2. hạ baseline managed on-demand nodegroup từ `4 -> 3`
+3. bỏ cấu hình freeze consolidation trên NodePool Spot hiện có
+4. thêm NodePool `flash-sale-spot-arm64` cho Spot arm64
+5. chỉ opt-in `product-catalog` sang arm64
+6. right-size `load-generator` và chỉnh request bộ nhớ cho `prometheus` / `opensearch`
 
-## Tai sao chon `product-catalog`
+## 3. Vì sao chọn `product-catalog`
 
-`product-catalog` duoc chon thay vi `recommendation` vi:
+`product-catalog` được chọn thay vì `recommendation` vì:
 
-- da co `2 replicas`
-- da co PDB
-- da co topology spread hard theo zone/hostname
-- image dang deploy la OCI image index multi-arch
-- khong phai frontend ingress point duy nhat
-- khong tao SPOF moi khi mat 1 Spot node
+- đã có `2 replicas`
+- đã có PDB
+- đã có topology spread theo zone và hostname
+- image đang deploy là OCI image index multi-arch
+- không phải frontend ingress point duy nhất
+- không tạo SPOF mới khi mất 1 Spot node
 
-## Tai sao khong them on-demand arm64 fallback
+Nói ngắn gọn:
 
-Trong vong rollout nay, uu tien dau tien la:
+> Nếu buộc phải chọn một service để đưa Graviton live trước, `product-catalog` là điểm vào an toàn hơn `recommendation`.
 
-- khong tao SPOF
-- dat Graviton live
-- de Spot share vuot 50%
+## 4. Vì sao không thêm on-demand arm64 fallback ngay
 
-Neu them on-demand arm64 fallback ngay lap tuc, spot share co nguy co bi keo xuong va cost floor tang len.
-Voi `product-catalog` co 2 replica + PDB + spread theo node/zone, mat 1 Spot node van con replica con lai song, phu hop hon phuong an 1-replica truoc day.
+Trong vòng rollout này, thứ tự ưu tiên là:
 
-## Danh doi duoc chap nhan
+- không tạo SPOF
+- có Graviton live
+- đẩy được Spot share lên cao hơn
 
-- Khi mat 1 Spot node, `product-catalog` van song nho replica con lai, nhung replacement pod co the cho arm64 Spot moi len roi moi dat lai 2/2.
-- Giam baseline on-demand tu 4 xuong 3 van tao ap luc cho Spot/Karpenter, nhung an toan hon muc 4 xuong 2 trong rollout dau tien.
-- Viec nang request cho `prometheus` va `opensearch` co the lam scheduler chat hon tren giay, nhung doi lai giam rui ro memory pressure/evict khi test that.
-- Muc tieu cua thay doi nay la dat dung huong mandate va tao cua so quay evidence, khong claim san la da pass toan bo.
+Nếu thêm on-demand arm64 fallback ngay, floor cost sẽ tăng và evidence Spot share có nguy cơ xấu đi. Với `product-catalog` đang có 2 replica + PDB + spread, mất 1 Spot node vẫn còn replica còn lại phục vụ, phù hợp hơn phương án 1 replica trước đó.
 
-## Bat buoc evidence sau rollout
+## 5. Đánh đổi được chấp nhận
 
-Sau khi merge va sync production, phai thu duoc cac bang chung sau:
+- Khi mất 1 Spot node, `product-catalog` vẫn sống nhờ replica còn lại, nhưng replacement pod có thể phải chờ Spot arm64 mới lên rồi mới trở lại trạng thái 2/2.
+- Hạ baseline on-demand từ 4 xuống 3 tạo thêm áp lực cho Spot/Karpenter, nhưng vẫn an toàn hơn phương án hạ quá mạnh về 2.
+- Việc nâng request cho `prometheus` và `opensearch` làm scheduler chặt hơn trên giấy, nhưng đổi lại giảm rủi ro memory pressure và eviction khi test thật.
+- Mục tiêu của thay đổi này là mở đúng hướng để làm evidence, không đồng nghĩa tự động pass toàn bộ Mandate 13.
 
-1. `kubectl get nodes` cho thay co `arm64` live
-2. `kubectl get pods -o wide` cho thay `product-catalog` len node arm64
-3. Spot share > 50% trong evidence runtime/history phu hop
-4. Node count co xu huong co xuong that sau khi giam tai
-5. Dien tap mat 1 Spot node khong lam rot request khach hang
+## 6. Evidence bắt buộc sau rollout
 
-## Rollback
+Sau khi merge và sync production, cần khóa các nhóm bằng chứng sau để claim pass hoàn chỉnh:
 
-Neu rollout xau di:
+1. `kubectl get nodes` cho thấy có `arm64` live
+2. `kubectl get pods -o wide` cho thấy `product-catalog` đã lên node arm64
+3. tỷ lệ Spot > 50% được chốt theo cách đếm đã thống nhất
+4. node count có xu hướng co xuống thật sau khi hạ tải
+5. diễn tập mất 1 Spot node không làm rớt request khách hàng
 
-1. bo file override `values-mandate13.yaml`
-2. bo NodePool `flash-sale-spot-arm64`
-3. tra `node_desired_size/node_min_size` ve 4
-4. bat lai `enable_stateful_node_group` neu can
+## 7. Trạng thái thực tế tính đến ngày 25/07/2026
 
-Rollback phai qua GitOps/Terraform, khong sua tay production.
+Đến **25/07/2026**, rollout này đã khóa được các nhóm evidence chính:
+
+- production có Spot node thật
+- production có Spot arm64 thật
+- `flash-sale-spot` đã mở lên mức `3/3`
+- load test đã đi vào thật trên `browse / cart / checkout`
+- Grafana đã ghi nhận `Node count` tăng trong cửa sổ test
+- interruption demo trên Spot node thật đã được thực hiện bằng `cordon/drain`
+- terminal đã ghi nhận `evicting pod`
+- sau khi hạ tải, `Node count` đã co từ `10 -> 9`
+- Spot ratio tại thời điểm snapshot đạt:
+  - `5/9 = 55.6%` nếu tính cả node on-demand exception cho chaos tooling
+  - `5/8 = 62.5%` nếu loại node exception khỏi baseline app-tier
+
+Điểm cần trình bày rõ khi bảo vệ là:
+
+- 1 node on-demand hiện tại là **exception tạm thời** phục vụ chaos / fault injection
+- node exception này không đại diện cho baseline capacity dài hạn của fleet application
+
+## 8. Rollback
+
+Nếu rollout gây xấu production:
+
+1. bỏ file override liên quan Mandate 13
+2. bỏ NodePool `flash-sale-spot-arm64`
+3. trả `node_desired_size` / `node_min_size` về 4
+4. bật lại `enable_stateful_node_group` nếu thực sự cần
+
+Rollback phải đi qua GitOps / Terraform, không sửa tay trên production.
+
+## 9. Kết luận
+
+ADR này chốt rằng hướng rollout được chọn là:
+
+- tăng Spot nhưng không tạo SPOF mới
+- đưa Graviton live bằng service an toàn hơn
+- tạo điều kiện để quay evidence production thật
+
+ADR này là quyết định kiến trúc đã ký tên cho hướng rollout Mandate 13. Phần nghiệm thu production được chốt bằng evidence đi kèm trong thư mục `docs/evidence/mandate-13`.

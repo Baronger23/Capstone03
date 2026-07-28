@@ -296,7 +296,11 @@ components:
     replicas: 2        # web khách thấy, traffic HTTP cao nhất
     resources:
       requests:
-        cpu: 100m
+        # PM-152 measured ~218m CPU/pod at the failing stage. A 200m request gives
+        # the utilization-based HPA an honest denominator while retaining burst
+        # headroom under the unchanged 500m limit. This is scheduling/tuning on
+        # the existing node-set, not an increase in node capacity.
+        cpu: 200m
         memory: 100Mi
       limits:
         cpu: 500m
@@ -355,7 +359,10 @@ components:
         memory: 32Mi
       limits:
         cpu: 500m
-        memory: 64Mi
+        # PM-152 evidence: DB pool peak 14 open / 11 in-use connections.
+        # Go runtime + 14 DB connections + request buffers: 64Mi quá sát.
+        # Tăng lên 128Mi để có headroom, tránh OOMKill khi tải tăng dồn về catalog.
+        memory: 128Mi
     readinessProbe:
       grpc:
         port: 8080
