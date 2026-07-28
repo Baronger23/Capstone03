@@ -13,7 +13,7 @@ except ImportError:  # pragma: no cover - local unit-test fallback
 
 # Postgres
 import psycopg2
-from psycopg2.pool import ThreadedConnectionPool
+from psycopg2.pool import PoolError, ThreadedConnectionPool
 
 import time
 import logging
@@ -29,16 +29,25 @@ def must_map_env(key: str):
 db_connection_str = os.environ.get('DB_CONNECTION_STRING', '')
 db_pool = None
 
-# REL-05 / PM-0016 sizing note. This Postgres/RDS instance is SHARED with
-# product-catalog and accounting, and REL-05 records connection exhaustion on it as
-# a past incident cause. The upstream AIO02 branch hardcodes minconn=5/maxconn=30;
-# at HPA maxReplicas=6 that is up to 180 connections from product-reviews alone,
-# before the other two services. Defaults here stay conservative and are
-# env-tunable so they can be raised WITHOUT an image rebuild once the real RDS
-# max_connections has been checked against every service's pool. Raise these
-# together with GRPC_MAX_WORKERS in product_reviews_server.py, never alone.
-DB_POOL_MIN_CONN = int(os.environ.get('DB_POOL_MIN_CONN', '2'))
-DB_POOL_MAX_CONN = int(os.environ.get('DB_POOL_MAX_CONN', '15'))
+# REL-05 sizing. This RDS is SHARED with product-catalog and accounting, and REL-05
+# records connection exhaustion on it as a past incident cause.
+#
+# Measured 29/07/2026: the instance is db.t4g.micro (1 GiB), and the parameter group
+# sets max_connections = LEAST({DBInstanceClassMemory/9531392},5000) => ~112 total
+# for ALL services combined. product-catalog alone already sets SetMaxOpenConns(20)
+# with an HPA ceiling of 8 pods (up to 160), so the cluster is already
+# over-subscribed at theoretical max scale — this is a known latent risk, not
+# something this service should make worse.
+#
+# The upstream AIO02 branch hardcodes minconn=5/maxconn=30: at product-reviews' HPA
+# ceiling of 6 pods that is up to 180 connections from this service alone, well over
+# the whole instance budget. So the default here stays at 10 — the value already
+# running in production (REL-05) and known good — rather than any increase. Both are
+# env-tunable so they can be adjusted WITHOUT an image rebuild if the instance is
+# ever resized or the per-service budget is re-cut. Raise together with
+# GRPC_MAX_WORKERS in product_reviews_server.py, never alone.
+DB_POOL_MIN_CONN = int(os.environ.get('DB_POOL_MIN_CONN', '1'))
+DB_POOL_MAX_CONN = int(os.environ.get('DB_POOL_MAX_CONN', '10'))
 
 def init_db_pool(retries: int = 5, delay: float = 2.0):
     global db_pool
@@ -79,8 +88,30 @@ def get_db_connection():
             db_pool.putconn(conn, close=True)
             conn = db_pool.getconn()
         return conn
+    except PoolError:
+        # Pool EXHAUSTED is not a broken pool — every connection is simply in use.
+        # Rebuilding here (as the upstream AIO02 code did) would abandon the old
+        # pool WITHOUT closing it, leaking maxconn live connections, and would do so
+        # repeatedly under sustained load. On a shared RDS that is exactly the REL-05
+        # connection-exhaustion failure mode, and it would take product-catalog and
+        # accounting down with us. Fail this one request instead; the caller's error
+        # path and the gRPC deadline handle it, and the pool recovers on its own as
+        # in-flight requests return connections.
+        logger.warning(
+            "[DATABASE] Connection pool exhausted (maxconn=%s). Failing this request "
+            "rather than rebuilding the pool.", DB_POOL_MAX_CONN
+        )
+        raise
     except Exception as e:
+        # A genuinely broken pool (e.g. the DB went away). Close the old one before
+        # replacing it so its sockets are not leaked.
         logger.warning(f"[DATABASE] Pool connection failed, re-initializing pool: {e}")
+        old_pool = db_pool
+        if old_pool is not None:
+            try:
+                old_pool.closeall()
+            except Exception as close_exc:
+                logger.warning(f"[DATABASE] Error closing old pool: {close_exc}")
         init_db_pool()
         return db_pool.getconn()
 

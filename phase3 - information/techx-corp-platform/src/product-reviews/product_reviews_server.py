@@ -1861,13 +1861,15 @@ if __name__ == "__main__":
     logger = logging.getLogger('main')
     logger.addHandler(handler)
 
-    # Worker count is env-tunable and deliberately conservative by default. The
-    # upstream AIO02 branch hardcodes 50; this Postgres/RDS instance is SHARED with
-    # product-catalog and accounting, and REL-05 records connection exhaustion on
-    # that shared instance as a past incident cause. Worker count and DB pool size
-    # (see database.py) must be raised together and only after checking the real
-    # RDS max_connections against every service's pool — raise via env, no rebuild.
-    grpc_max_workers = int(os.environ.get('GRPC_MAX_WORKERS', '20'))
+    # Worker count is env-tunable and deliberately conservative. The upstream AIO02
+    # branch hardcodes 50; the shared RDS only allows ~112 connections in TOTAL
+    # across every service (db.t4g.micro, measured 29/07/2026 — see the sizing note
+    # in database.py), so this service's pool stays at 10 per pod. Keeping workers
+    # near the pool size avoids threads piling up behind an exhausted pool: a read
+    # RPC that cannot get a connection now fails fast with PoolError instead of the
+    # pool being rebuilt underneath it. Raise this together with DB_POOL_MAX_CONN,
+    # never alone.
+    grpc_max_workers = int(os.environ.get('GRPC_MAX_WORKERS', '12'))
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=grpc_max_workers))
     logger.info(f"gRPC server thread pool max_workers={grpc_max_workers}")
     service = ProductReviewService()
