@@ -8,11 +8,12 @@
 
 **Mức độ:** suy giảm một tính năng không critical; chưa có bằng chứng storefront/checkout bị downtime
 
-**Trạng thái:** nguyên nhân sự cố đã khoanh vùng; **P2 và một phần P3 đã được ĐỀ XUẤT qua
-[PR #531](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/pull/531) (xem §11) — PR chưa merge, chưa
-build image, chưa deploy, KHÔNG có gì đang chạy trên cluster/production khác với trước**. P0/P1/P4/P5 và
-phần còn lại của P3 (tách executor/deployment AI riêng thật) **vẫn chưa làm** — incident **chưa đủ điều
-kiện đóng** theo §8.
+**Trạng thái:** nguyên nhân sự cố đã khoanh vùng; **P2 + admission-control cho P3 đã LIVE trên production**
+(28/07/2026 — [PR #531](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/pull/531) merge → build → bump-image
+[#535](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/pull/535)/[#538](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/pull/538)
+merge → ArgoCD Synced/Healthy, verify qua `kubectl` — xem §11.4). **P4 đã đo bằng dữ liệu thật (§12).**
+P0, P1 (áp dụng thật), P3 đầy đủ (tách executor/deployment AI riêng), P5 **vẫn chưa làm** — incident
+**chưa đủ điều kiện đóng** theo §8.
 
 **Loại thay đổi của tài liệu này:** ban đầu docs-only; §11 bổ sung 28/07/2026 mô tả một PR code đề xuất
 P2 + admission-control nội-process cho P3 (không đổi manifest/HPA/cluster — chỉ app code). PR đã qua một
@@ -583,10 +584,72 @@ cho khớp thuật ngữ.
 Commit sửa vòng 2 + test (biên dịch/chạy `Request.ts` cũ và mới chống 1 HTTP server thật, `tsc --noEmit`,
 `next build`, live functional test qua `PRODUCT_REVIEWS_ADDR` đen) — không regression.
 
+### 11.4 Deploy thật (28/07/2026) — PR #531 + #533 (Trivy CVE) + #535/#538 (bump-image) đã merge
+
+PR #531 (P2 + admission control) đã được review và merge vào `main`. Build image sau merge fail Trivy
+gate vì 2 CVE HIGH sẵn có trong dependency (không liên quan code sửa): `brace-expansion` (CVE-2026-14257)
+và `postcss` (GHSA-r28c-9q8g-f849) — cả 2 đã có bản vá, xử lý ở PR #533 (bump version qua `overrides` có
+sẵn trong `package.json`). Build lại pass. Bot tạo PR bump-image #535 (`frontend`) và #538 (`product-reviews`,
+phải trigger `workflow_dispatch` scoped thủ công vì lần build đầu fail ở job `frontend` khiến job tạo PR bị
+skip dù `build-scan (product-reviews)` đã pass). Cả 2 đã merge, ArgoCD auto-sync **Synced/Healthy**, verify
+trực tiếp trên cluster (`kubectl`, profile read-only `nvtank-readonly`): `frontend` 3/3 Ready 0 restart
+(HPA đang scale theo CPU, không liên quan), `product-reviews` 2/2 Ready 0 restart, storefront CloudFront
+vẫn `200`. **P2 + admission control giờ đã LIVE trên production.**
+
+## 12. P4 — đo startup/readiness thật (28/07/2026, dữ liệu từ chính đợt rollout trên)
+
+Tận dụng đúng lúc rollout PR #531 lên production để đo P4 bằng dữ liệu thật thay vì suy đoán (nguồn:
+`kubectl get events`/`get pod -o json` qua tunnel SSM, profile read-only).
+
+### 12.1 Time-to-Ready breakdown — 2 pod đầu của `product-reviews`
+
+| Pod | Created→Scheduled (pending) | Pulling→Pulled | Started→Ready (app+probe) | **Tổng Created→Ready** |
+|---|---|---|---|---|
+| `...4d5wp` (pod đầu tiên) | **39s** (2 lần `FailedScheduling`: topology spread + taint + node affinity, phải chờ Karpenter tạo node mới) | 11.7s | 22s | **77s** |
+| `...vrxqm` (pod thứ hai) | **0s** (schedule tức thì — node từ Karpenter đã sẵn) | 5.6s | 21s | **29s** |
+
+**Bằng chứng trực tiếp cho khuyến nghị P1 (pre-scale):** pod ĐẦU của một scale event mất 77s để Ready,
+chủ yếu do phải chờ Karpenter launch node mới từ đầu (`elastic-ondemand-fallback-4lmlh`, node
+`ip-10-0-37-137` — instance `t3a.medium`, `capacity-type: on-demand`, tức Karpenter fallback từ spot sang
+on-demand lúc đó). Pod THỨ HAI, chạy ngay sau khi node đã tồn tại, chỉ mất 29s — nhanh hơn 2.7 lần. Đây
+đúng là cơ chế P1 khai thác: pre-scale trước khi bắn tải để "trả phí" node-provisioning TRƯỚC cửa sổ đo,
+không phải trong lúc đo.
+
+### 12.2 So sánh với `frontend`
+
+| Pod | Created→Scheduled | Pulling→Pulled | Started→Ready | Tổng |
+|---|---|---|---|---|
+| `...d4vlw` | 0s | 18.3s | 12s | 32s |
+| `...v79n7` | 0s | 18.2s | 11s | 31s |
+
+`frontend` không bị pending (schedule tức thì cả 2 lần) nhưng pull image chậm hơn `product-reviews` rõ
+rệt (~18s vs ~6-12s) — image `frontend` nặng hơn nhiều (227MB vs 65MB). App-start-to-Ready của `frontend`
+(~11-12s) cũng nhanh hơn `product-reviews` (~21-22s) — hợp lý vì `product-reviews` init nhiều hơn (gRPC
+server, Bedrock client, DB connection pool, flagd provider).
+
+### 12.3 Node headroom lúc đo
+
+`kubectl top nodes` lúc đo: CPU 1-19%, memory 3-58% trên các node hiện có — khớp với ghi nhận cost-review
+trước đó (cluster ~45% CPU **request** nhưng chỉ ~6.7% dùng thật). Nghĩa là nút thắt của time-to-Ready
+**không phải** thiếu CPU/memory trên node hiện có, mà là **thiếu sẵn 1 node mới khi cần** — đúng bản chất
+"capacity-arrival gap" §3 đã kết luận, giờ có số đo thật xác nhận thay vì suy luận định tính.
+
+### 12.4 Chưa đo được (cần thêm)
+
+- Connection distribution giữa các pod gRPC (P4 gốc có đề cập) — cần Prometheus/Grafana query per-pod
+  request rate trong lúc có tải thật, chưa làm ở đợt này vì không có tải đủ lớn tại thời điểm rollout.
+- Startup breakdown chi tiết BÊN TRONG container (`product-reviews` mất 21-22s giữa Started và Ready —
+  chưa tách được bao nhiêu là app init code chạy thật vs. bao nhiêu là do `readinessProbe`
+  `initialDelaySeconds:5, periodSeconds:10` tự nó làm chậm phép đo, vd. app có thể Ready ở giây thứ 16
+  nhưng probe attempt tiếp theo chỉ rơi vào giây 25 → số đo Ready là do lịch probe, không phải do app
+  chậm). Cần thêm log timestamp "server started" bên trong app để tách 2 nguyên nhân.
+
 ### Còn thiếu để đóng incident theo §8
 
-P0 (evidence pack tái tạo được), P1 (pre-scale runbook cho lần load test kế tiếp), P3 đầy đủ (tách
-executor/deployment AI riêng thật + canary — §11.1 blocker 1 cho thấy đây KHÔNG phải optional, admission
-control không đủ dưới backlog lớn), P4 (đo startup/readiness, connection distribution), P5 (deadline
-review theo p99 đo được) — **chưa làm trong lần này**, cần PR/runbook riêng theo đúng thứ tự §6 (thêm
-capacity trước, không đổi nhiều biến cùng lúc). PR #531 vẫn cần review từ người trước khi merge.
+- ✅ P4 — đã đo (§12), dữ liệu thật, đủ để dùng cho quyết định pre-scale ở P1.
+- P0 (evidence pack tái tạo được — cần 1 lần load test có kiểm soát để lấy Locust CSV + trace + Events
+  đúng cửa sổ, xác nhận fix có giảm `DEADLINE_EXCEEDED`), P1 (áp dụng runbook pre-scale cho lần load test
+  đó), P3 đầy đủ (tách executor/deployment AI riêng thật + canary — §11.1 blocker 1 cho thấy đây KHÔNG
+  phải optional, admission control không đủ dưới backlog lớn), P5 (deadline review theo p99 đo được từ
+  chính lần load test đó) — **chưa làm**, cần làm theo đúng thứ tự §6 (thêm capacity trước, không đổi
+  nhiều biến cùng lúc, không chạy load test production ngoài giờ đã thống nhất).
