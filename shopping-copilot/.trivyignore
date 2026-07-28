@@ -1,0 +1,13 @@
+# Trivy ignore list for the shopping-copilot image — vendored, build-time-only false positives.
+#
+# CVE-2026-24049 (wheel <0.46.2) and CVE-2026-23949 (jaraco.context <6.1.0) are reported
+# against copies VENDORED inside setuptools' build tooling:
+#   usr/local/lib/python3.11/site-packages/setuptools/_vendor/wheel-0.45.1.dist-info
+#   usr/local/lib/python3.11/site-packages/setuptools/_vendor/jaraco.context-5.3.0.dist-info
+# setuptools is a build tool and is never imported on the FastAPI runtime path, so these
+# bundled copies are not reachable at runtime. The standalone runtime packages ARE patched
+# (requirements.txt pins + the Dockerfile upgrade of wheel/jaraco.context).
+#
+# Re-review if the base image (python:3.11-slim) bumps its vendored setuptools.
+CVE-2026-24049
+CVE-2026-23949
