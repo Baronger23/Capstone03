@@ -7,3 +7,13 @@
 #
 # Mỗi mục PHẢI kèm: mã CVE, đường dẫn file bị báo, và một câu vì sao nó không khai thác
 # được. Không thêm mục nào chỉ để cho build xanh.
+
+# Vendored trong build tooling của setuptools, không nằm trên đường chạy của ứng dụng.
+# Trivy report từ run 30366047175 xác nhận hai finding ở:
+#   usr/local/lib/python3.10/site-packages/setuptools/_vendor/wheel-0.45.1.dist-info/METADATA
+#   usr/local/lib/python3.10/site-packages/setuptools/_vendor/jaraco.context-5.3.0.dist-info/METADATA
+# Đây không phải dependency do requirements.txt cài trực tiếp; source và runtime entrypoint
+# (uvicorn + main.py) không import hai package vendored này. Cùng hai finding đã được ghi
+# nhận cho shopping-copilot. Xác minh: 2026-07-28, Trivy v0.72.0.
+CVE-2026-24049
+CVE-2026-23949
