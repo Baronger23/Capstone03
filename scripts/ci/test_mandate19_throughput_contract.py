@@ -54,6 +54,35 @@ def test_browse_shadow_mode_and_checkout_funnel_precedes_catch_all():
     assert "x-techx-load-shed" in browse_block
 
 
+def test_browse_rate_limit_yaml_indentation_is_valid():
+    lines = ENVOY.read_text(encoding="utf-8").splitlines()
+    expected_indents = {
+        "token_bucket:": 30,
+        "max_tokens: 100": 32,
+        "tokens_per_fill: 50": 32,
+        "fill_interval: 1s": 32,
+        "filter_enabled:": 30,
+        "runtime_key: browse_rate_limit_enabled": 32,
+        "filter_enforced:": 30,
+        "runtime_key: browse_rate_limit_enforced": 32,
+        "response_headers_to_add:": 30,
+    }
+    browse_start = next(
+        index for index, line in enumerate(lines) if "name: browse_shedable" in line
+    )
+    filter_end = next(
+        index
+        for index, line in enumerate(lines[browse_start:], browse_start)
+        if line.strip() == "http_filters:"
+    )
+    browse_lines = lines[browse_start:filter_end]
+    for marker, expected in expected_indents.items():
+        matching = [line for line in browse_lines if line.strip() == marker]
+        assert len(matching) == 1, f"expected one {marker!r} in browse config"
+        actual = len(matching[0]) - len(matching[0].lstrip())
+        assert actual == expected, f"{marker!r} indent={actual}, expected={expected}"
+
+
 def test_overload_profile_separates_shedable_and_protected_streams():
     text = PROFILE.read_text(encoding="utf-8")
     assert "class BrowseOverloadUser" in text
