@@ -8,7 +8,7 @@ import InstrumentationMiddleware from '../../../../utils/telemetry/Instrumentati
 import { Empty, ProductReview } from '../../../../protos/demo';
 import ProductReviewService from '../../../../services/ProductReview.service';
 
-type TResponse = string | Empty | { error: string };
+type TResponse = string | Empty;
 
 const isDependencyUnavailable = (error: unknown): error is ServiceError =>
     typeof error === 'object' && error !== null && 'code' in error &&
@@ -25,10 +25,13 @@ const handler = async ({ method, query }: NextApiRequest, res: NextApiResponse<T
                 return res.status(200).json(averageScore);
             } catch (error) {
                 // PM-0016: same rationale as pages/api/product-reviews/[productId] — don't
-                // collapse a timed-out dependency into a fabricated score.
+                // collapse a timed-out dependency into a fabricated score. Plain text body
+                // (not JSON) so an old client bundle mid-rollout also throws instead of
+                // silently parsing it as a real score — see the longer comment in
+                // pages/api/product-reviews/[productId]/index.ts.
                 if (isDependencyUnavailable(error)) {
                     trace.getSpan(context.active())?.setAttribute('app.product_reviews.degraded', true);
-                    return res.status(503).json({ error: 'DEPENDENCY_UNAVAILABLE' });
+                    return res.status(503).send('DEPENDENCY_UNAVAILABLE');
                 }
                 throw error;
             }

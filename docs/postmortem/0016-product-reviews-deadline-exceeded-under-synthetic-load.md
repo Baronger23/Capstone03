@@ -547,6 +547,42 @@ Một review độc lập (không phải người viết PR) chấm **NO-GO** v�
 - Chưa chạy: pytest/integration cho product-reviews trên cluster thật, load test Locust theo runbook §7,
   `helm template` (không cần — không đổi chart/values lần này).
 
+### 11.3 Review vòng 2 trên PR #531 (28/07/2026) — 2 gap correctness/rollout mới, đã xử lý
+
+Vòng review thứ hai (sau khi 5 gap ở §11.1 đã sửa) đánh giá NO-GO nhẹ vì 2 vấn đề mới, cả 2 verify đúng:
+
+1. **Không tương thích old/new client trong rolling rollout — đây chính là điều §6-P2 gốc đã cảnh báo
+   trước ("nếu muốn đổi response contract, phải dùng contract tương thích ngược hoặc hai-phase rollout;
+   không đổi shape một lần trong lúc pod cũ và mới cùng tồn tại") mà lần triển khai đầu đã bỏ sót.**
+   `frontend` rollout `maxUnavailable:0, maxSurge:1` nên pod cũ/mới cùng tồn tại một lúc; body lỗi
+   `503 { error: "DEPENDENCY_UNAVAILABLE" }` (JSON) từ pod MỚI, nếu bị 1 tab trình duyệt đang chạy bundle
+   client CŨ nhận (do Service cân tải qua cả pod cũ/mới), sẽ bị `Request.ts` **phiên bản cũ** parse
+   `JSON.parse` vô điều kiện thành "thành công" → `ProductReview.provider.tsx` biến thành `[]` → hiển thị
+   "No reviews yet" — **đúng chính lỗi semantics PR này được tạo ra để ngăn**, chỉ là tái diễn qua đường
+   version-skew khi deploy thay vì qua Request.ts bug (đã vá ở §11.1 blocker 5).
+   **Đã sửa:** đổi body lỗi 503 từ JSON sang **plain text** (`res.status(503).send('DEPENDENCY_UNAVAILABLE')`)
+   ở cả hai route. `JSON.parse` trên chuỗi plain text KHÔNG hợp lệ JSON sẽ luôn ném lỗi — cả client cũ lẫn
+   mới đều `throw` đúng, không còn client nào "thành công" âm thầm. Verify bằng test thật: biên dịch riêng
+   cả bản `Request.ts` HIỆN TẠI và bản gốc TRƯỚC PR (`git show origin/main:...`) từ TypeScript, chạy cả
+   hai chống lại 1 HTTP server thật trả `503` plain text — cả bản cũ và bản mới đều `throw`, không còn
+   route nào "swallow" thành success.
+2. **`Request.ts` (bản sửa ở §11.1 blocker 5) nuốt luôn lỗi parse của response 2xx.** Bản vá blocker 5 bọc
+   `try/catch` quanh `JSON.parse` để không rò `SyntaxError` từ body lỗi non-JSON — nhưng bọc luôn cho CẢ
+   response `200`, nghĩa là nếu server trả `200` với body hỏng/không phải JSON (bug thật), code cũ sẽ nuốt
+   lỗi và coi là "thành công" với `data=undefined` — regression so với hành vi gốc (trước mọi PR này, một
+   `200` với body hỏng vốn dĩ ĐÃ ném lỗi qua `JSON.parse` không bọc). **Đã sửa:** đưa nhánh `!response.ok`
+   lên trước; chỉ bọc `try/catch` cho non-2xx (nơi đã có status code thật để phân loại), nhánh thành công
+   giữ nguyên `JSON.parse` không bọc như code gốc — một `200` body hỏng vẫn `throw` đúng như trước khi có
+   PR này. Verify bằng test thật: 1 route giả `200` + body `<not json>` → xác nhận vẫn `throw SyntaxError`,
+   không bị nuốt thành success; route thành công bình thường vẫn hoạt động đúng cho cả client cũ/mới.
+
+Ngoài 2 điểm trên, review vòng 2 cũng lưu ý PR title/description gọi semaphore là "bulkhead" trong khi
+code/docs (§11.1) đã tự nhận đây chỉ là admission control — đã sửa PR description + comment trên GitHub
+cho khớp thuật ngữ.
+
+Commit sửa vòng 2 + test (biên dịch/chạy `Request.ts` cũ và mới chống 1 HTTP server thật, `tsc --noEmit`,
+`next build`, live functional test qua `PRODUCT_REVIEWS_ADDR` đen) — không regression.
+
 ### Còn thiếu để đóng incident theo §8
 
 P0 (evidence pack tái tạo được), P1 (pre-scale runbook cho lần load test kế tiếp), P3 đầy đủ (tách

@@ -8,7 +8,7 @@ import InstrumentationMiddleware from '../../../../utils/telemetry/Instrumentati
 import { Empty, ProductReview } from '../../../../protos/demo';
 import ProductReviewService from '../../../../services/ProductReview.service';
 
-type TResponse = ProductReview[] | Empty | { error: string };
+type TResponse = ProductReview[] | Empty | string;
 
 const isDependencyUnavailable = (error: unknown): error is ServiceError =>
     typeof error === 'object' && error !== null && 'code' in error &&
@@ -29,9 +29,21 @@ const handler = async ({ method, query }: NextApiRequest, res: NextApiResponse<T
                 // semantics), so we must not collapse the two into a silent 200. Surface a
                 // stable 503 so the widget/provider can distinguish "degraded" from "empty",
                 // and keep the failure visible to SLO signal instead of masking it as success.
+                //
+                // Review round 2: the body is deliberately PLAIN TEXT, not JSON. frontend
+                // rolls out with maxUnavailable:0/maxSurge:1, so old and new pods (old and
+                // new client bundles) coexist during rollout. utils/Request.ts unconditionally
+                // JSON.parse()s any non-empty body regardless of status in EVERY version of
+                // this codebase — an old client hitting this new 503 with a JSON `{error}`
+                // body would parse it successfully and treat it as data, reintroducing the
+                // exact silent-empty-state bug this fix exists to prevent (see
+                // ProductReview.provider.tsx: non-array data -> []). A non-JSON body makes
+                // JSON.parse throw on old AND new clients alike, so both correctly reject
+                // instead of one silently "succeeding". This is not a response contract old
+                // clients can consume either way, so plain text costs nothing.
                 if (isDependencyUnavailable(error)) {
                     trace.getSpan(context.active())?.setAttribute('app.product_reviews.degraded', true);
-                    return res.status(503).json({ error: 'DEPENDENCY_UNAVAILABLE' });
+                    return res.status(503).send('DEPENDENCY_UNAVAILABLE');
                 }
                 throw error;
             }
