@@ -28,6 +28,18 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "eks_api" {
       service  = "tcp://${replace(var.eks_cluster_endpoint, "https://", "")}:443"
     }
 
+    # Hard-block specific paths (e.g. /debug, /docs) at the edge - cloudflared returns 404
+    # before the request reaches the Service, even for SSO-authenticated users. MUST come
+    # before the internal_ui_routes rules below (ingress rules are first-match).
+    dynamic "ingress_rule" {
+      for_each = var.blocked_paths
+      content {
+        hostname = ingress_rule.value.hostname
+        path     = ingress_rule.value.path
+        service  = "http_status:404"
+      }
+    }
+
     # UI routes go straight to the in-cluster Service - no EKS API, no AWS IAM in this
     # path at all. Must come before the catch-all below (ingress rules are first-match).
     dynamic "ingress_rule" {

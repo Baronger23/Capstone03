@@ -10,6 +10,11 @@ default:
     tag: 58b13f2
 
 grafana:
+  image:
+    registry: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com
+    repository: techx-corp
+    tag: b44ca10-30240572310-grafana
+    sha: "198bff3b9b5f15962cf0942f38a0a90226f60277e7ef5212294987d160f55958"
   # REL-17: Grafana giờ có hostname riêng qua Cloudflare (grafana.arthur-ngo.org).
   # Base chart values.yaml đặt root_url = http://%(domain)s:%(http_port)s/grafana +
   # serve_from_sub_path=true (cho đường truy cập /grafana subpath cũ) → khi vào qua
@@ -291,7 +296,11 @@ components:
     replicas: 2        # web khách thấy, traffic HTTP cao nhất
     resources:
       requests:
-        cpu: 100m
+        # PM-152 measured ~218m CPU/pod at the failing stage. A 200m request gives
+        # the utilization-based HPA an honest denominator while retaining burst
+        # headroom under the unchanged 500m limit. This is scheduling/tuning on
+        # the existing node-set, not an increase in node capacity.
+        cpu: 200m
         memory: 100Mi
       limits:
         cpu: 500m
@@ -350,7 +359,10 @@ components:
         memory: 32Mi
       limits:
         cpu: 500m
-        memory: 64Mi
+        # PM-152 evidence: DB pool peak 14 open / 11 in-use connections.
+        # Go runtime + 14 DB connections + request buffers: 64Mi quá sát.
+        # Tăng lên 128Mi để có headroom, tránh OOMKill khi tải tăng dồn về catalog.
+        memory: 128Mi
     readinessProbe:
       grpc:
         port: 8080
@@ -807,7 +819,7 @@ components:
             matchLabels:
               opentelemetry.io/name: quote
     imageOverride:
-      digest: sha256:445421455ac16010ed81361a66de4798e7e727ced81bcc7b6244f3a3852876c1
+      digest: sha256:5035d76864dab66825703705d7c7af5ecccb5842750100bc3b4b0f0fe0bfa696
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -1432,6 +1444,25 @@ components:
     imageOverride: # mandate-01: gỡ route Envoy - xem comment imageOverride đầu components:
       digest: sha256:6b8243bbf1d91d1bc195703fdbe2e8029a948c38b5717efec8b41ecf1847b3f0
       tag: 43dcf62-29569108433-frontend-proxy
+    # Mandate #19 staged promotion knobs. Keep shadow (enforced=0) for the first
+    # rollout, then change only BROWSE_RATE_LIMIT_ENFORCED_PERCENT in reviewed
+    # stages 5 -> 25 -> 50 -> 100 after every gate passes. The global fallback
+    # remains shadow because protected routes use its non-binding 10k/s bucket.
+    envOverrides:
+      - name: BROWSE_RATE_LIMIT_MAX_TOKENS
+        value: "100"
+      - name: BROWSE_RATE_LIMIT_TOKENS_PER_FILL
+        value: "50"
+      - name: BROWSE_RATE_LIMIT_FILL_INTERVAL
+        value: "1s"
+      - name: BROWSE_RATE_LIMIT_ENABLED_PERCENT
+        value: "100"
+      - name: BROWSE_RATE_LIMIT_ENFORCED_PERCENT
+        value: "0"
+      - name: LOCAL_RATE_LIMIT_ENABLED_PERCENT
+        value: "100"
+      - name: LOCAL_RATE_LIMIT_ENFORCED_PERCENT
+        value: "0"
     resources:
       requests:
         cpu: 50m

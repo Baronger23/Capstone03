@@ -12,7 +12,13 @@ datasources:
     editable: true
     isDefault: false
     jsonData:
-      database: otel-logs-*
+      # Use Grafana's time-pattern syntax so Save & Test resolves the current
+      # daily index. A literal wildcard makes the plugin health endpoint call
+      # an invalid index name even though the matching indices exist.
+      database: "[otel-logs-]YYYY-MM-DD"
+      # The interval tells the plugin which time-pattern expansion to apply
+      # during its Save & Test health request.
+      interval: Daily
       flavor: opensearch
       logLevelField: severity.text.keyword
       logMessageField: body

@@ -14,6 +14,7 @@ USER envoy
 WORKDIR /home/envoy
 
 COPY ./src/frontend-proxy/envoy.tmpl.yaml envoy.tmpl.yaml
+COPY --chmod=755 ./src/frontend-proxy/entrypoint.sh entrypoint.sh
 
 # validate config
 RUN ENVOY_ADDR=0.0.0.0 \
@@ -37,8 +38,15 @@ RUN ENVOY_ADDR=0.0.0.0 \
     OTEL_COLLECTOR_PORT_GRPC=8080 \
     OTEL_COLLECTOR_PORT_HTTP=8080 \
     OTEL_SERVICE_NAME=frontend-proxy \
+    BROWSE_RATE_LIMIT_MAX_TOKENS=100 \
+    BROWSE_RATE_LIMIT_TOKENS_PER_FILL=50 \
+    BROWSE_RATE_LIMIT_FILL_INTERVAL=1s \
+    BROWSE_RATE_LIMIT_ENABLED_PERCENT=100 \
+    BROWSE_RATE_LIMIT_ENFORCED_PERCENT=0 \
+    LOCAL_RATE_LIMIT_ENABLED_PERCENT=100 \
+    LOCAL_RATE_LIMIT_ENFORCED_PERCENT=0 \
     envsubst < envoy.tmpl.yaml > /tmp/envoy-rendered.yaml && envoy --mode validate -c /tmp/envoy-rendered.yaml
 
 EXPOSE ${ENVOY_PORT}
 EXPOSE ${ENVOY_ADMIN_PORT}
-ENTRYPOINT ["/bin/sh", "-c", "envsubst < envoy.tmpl.yaml > envoy.yaml && envoy -c envoy.yaml;"]
+ENTRYPOINT ["./entrypoint.sh"]

@@ -3,11 +3,19 @@ kind: NetworkPolicy
 metadata:
   name: grafana-platform-egress
   namespace: techx-tf3
+  annotations:
+    mandate-17.techx.io/cni-path-evidence: "2026-07-27:aws-vpc-cni-v1.22.4,standard,policyendpoint-pod-ip-resolution"
+    mandate-17.techx.io/kubernetes-api-egress: "private-control-plane-subnets:10.0.0.0/20,10.0.16.0/20,10.0.32.0/20"
+    mandate-17.techx.io/kubernetes-api-endpoint-evidence: "2026-07-27:10.0.23.132,10.0.8.89"
+    mandate-17.techx.io/kubernetes-api-service-evidence: "2026-07-27:kubernetes.default.svc=172.20.0.1"
 spec:
   podSelector:
     matchLabels:
+      app.kubernetes.io/instance: techx-corp
       app.kubernetes.io/name: grafana
   policyTypes: [Egress]
+  # PM-176 bakes the OpenSearch plugin into the image, so startup does not need
+  # access to the public Grafana plugin catalogue.
   egress:
     - to:
         - namespaceSelector:
@@ -38,9 +46,13 @@ spec:
               app.kubernetes.io/name: opensearch
       ports:
         - { protocol: TCP, port: 9200 }
-    # Grafana sidecars watch ConfigMaps through the private Kubernetes API.
+    # Grafana sidecars watch ConfigMaps through the Kubernetes API Service. Keep the
+    # Service VIP for the in-cluster API path and the three private subnets for the
+    # post-DNAT control-plane ENIs, which may rotate.
     - to:
         - ipBlock: { cidr: 172.20.0.1/32 }
-        - ipBlock: { cidr: 10.0.0.0/16 }
+        - ipBlock: { cidr: 10.0.0.0/20 }
+        - ipBlock: { cidr: 10.0.16.0/20 }
+        - ipBlock: { cidr: 10.0.32.0/20 }
       ports:
         - { protocol: TCP, port: 443 }

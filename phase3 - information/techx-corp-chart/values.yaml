@@ -1189,6 +1189,7 @@ opentelemetry-collector:
   enabled: true
   image:
     repository: "otel/opentelemetry-collector-contrib"
+    digest: "sha256:d57bfe8eee2378f31cb1193239fbcac521d54a5a071fca2bfc106916a32b892d"
   fullnameOverride: otel-collector
   mode: daemonset
   securityContext:
@@ -1345,6 +1346,7 @@ otelGateway:
   image:
     repository: "otel/opentelemetry-collector-contrib"
     tag: "0.151.0"
+    digest: "sha256:d57bfe8eee2378f31cb1193239fbcac521d54a5a071fca2bfc106916a32b892d"
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -1377,6 +1379,7 @@ otel-node-agent:
   image:
     repository: "otel/opentelemetry-collector-contrib"
     tag: "0.151.0"
+    digest: "sha256:d57bfe8eee2378f31cb1193239fbcac521d54a5a071fca2bfc106916a32b892d"
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
@@ -1501,6 +1504,9 @@ jaeger:
   enabled: true
   fullnameOverride: jaeger
   jaeger:
+    # PM-127: pin digest so allow-approved-external-image-digests (exact-string) matches.
+    image:
+      digest: "sha256:6266573208d665ce5c17483bce0a75d0806480d92c84766d288d0aee885ce708"
     storage:
       type: memory
     extraEnv:
@@ -1631,6 +1637,9 @@ prometheus:
     enabled: false
   server:
     fullnameOverride: prometheus
+    # PM-127: pin digest so allow-approved-external-image-digests (exact-string) matches.
+    image:
+      digest: "sha256:c0b857aead0d5793aa566adb8f49a9983d6f6031652098759d521a330cfa050f"
     extraFlags:
       - "enable-feature=exemplar-storage"
       - "web.enable-otlp-receiver"
@@ -1704,12 +1713,31 @@ grafana:
       enabled: true
       org_name: Main Org.
       org_role: Admin
+    analytics:
+      check_for_updates: false
+      reporting_enabled: false
+    # PM-176: the custom, digest-pinned Grafana image owns the OpenSearch
+    # plugin. Overriding the chart-native path renders exactly one
+    # GF_PATHS_PLUGINS entry and avoids the writable runtime plugin directory.
+    paths:
+      plugins: /opt/grafana/plugins
+    # Grafana 13 ships an automatic preinstall catalogue independently of the
+    # chart's `plugins` value. Keep the immutable image as the only plugin
+    # source and disable UI/external runtime plugin management.
+    plugins:
+      # The backend is rebuilt from the exact 2.34.0 source commit with patched
+      # Go dependencies, so the upstream manifest is intentionally removed.
+      # Trust is scoped to this ID and enforced by the read-only, digest-pinned,
+      # Cosign-verified first-party image.
+      allow_loading_unsigned_plugins: grafana-opensearch-datasource
+      preinstall_disabled: true
+      preinstall_auto_update: false
+      plugin_admin_enabled: false
+      plugin_admin_external_manage_enabled: false
     server:
       root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana"
       serve_from_sub_path: true
   adminPassword: admin
-  plugins:
-    - grafana-opensearch-datasource
   sidecar:
     securityContext:
       runAsUser: 65534
@@ -1757,10 +1785,17 @@ otelLogsRetention:
   opensearchEndpoint: http://opensearch:9200
   # Reuse the exact image the OpenSearch pod already runs (has curl + date, already
   # vetted/pulled) so no new supply-chain surface is introduced. Keep digest-pinned.
-  image: opensearchproject/opensearch@sha256:b5dd1512af2a99748c942cfbbd7f32162623336b210667d0fc6333c6321f171d
+  image: opensearchproject/opensearch:3.6.0@sha256:b5dd1512af2a99748c942cfbbd7f32162623336b210667d0fc6333c6321f171d
 
 opensearch:
   enabled: true
+  # PM-127: opensearch subchart has no image.digest field and computes opensearch.majorVersion
+  # via semver(image.tag). Pin majorVersion explicitly so we can embed the digest in the tag;
+  # rendered image = opensearchproject/opensearch:3.6.0@sha256:... which matches the exact-digest
+  # allowlist. Verified via helm template.
+  majorVersion: "3"
+  image:
+    tag: "3.6.0@sha256:b5dd1512af2a99748c942cfbbd7f32162623336b210667d0fc6333c6321f171d"
   fullnameOverride: opensearch
   clusterName: demo-cluster
   nodeGroup: techx-corp

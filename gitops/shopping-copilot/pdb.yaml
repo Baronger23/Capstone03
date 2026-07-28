@@ -1,0 +1,13 @@
+# Keep at least one copilot replica through voluntary disruptions (node drain, rollout).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: shopping-copilot-pdb
+  namespace: techx-tf3
+  labels:
+    app: shopping-copilot
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: shopping-copilot

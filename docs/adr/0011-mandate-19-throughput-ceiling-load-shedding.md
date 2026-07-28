@@ -1,10 +1,14 @@
 # ADR 0011 — Mandate-19: Route Classification & Graduated Load Shedding
 
-**Status:** Proposed
+**Status:** Shadow observation; enforcement and runtime verification pending
 **Date:** 2026-07-23
 **Author:** CDO-01 (TF3)
 **Mandate:** Directive #19 — Biết trần của mình và nâng trần bằng hiệu suất
 **Depends on:** PM-153 (HPA tuning + circuit_breakers + breakpoint evidence)
+
+> This ADR does not claim that Directive #19 has passed. The before ceiling is
+> measured; the new ceiling, density improvement and enforced overload result
+> must be signed from `docs/evidence/mandate-19/after-run-template.md`.
 
 ---
 
@@ -62,64 +66,75 @@ Browse (homepage, product listing, search) là traffic khối lượng lớn, kh
 - Stats counter `browse_rate_limiter.rate_limited` → có thể quan sát shadow mode trước khi enforce
 - HTTP 429 + custom header → client và monitoring phân biệt được rate-limit response vs backend error
 
-**Token bucket formula (per-pod, local_ratelimit là in-process):**
+**Bootstrap token-bucket formula (per-pod; local_ratelimit is in-process):**
 ```
-max_tokens = floor(0.70 × browse_breakpoint_RPS / frontend-proxy-Ready-count)
-```
-
-- `browse_breakpoint_RPS`: RPS browse tại điểm SLO gãy — **lấy từ PM-153 evidence**
-- `frontend-proxy-Ready-count`: số pod frontend-proxy Ready tại thời điểm test (xem `kubectl get hpa frontend-proxy-hpa`)
-- `0.70`: buffer 30% — shed bắt đầu trước khi đạt breakpoint 100% để có margin
-
-Ví dụ (placeholder — điền sau PM-153):
-```
-breakpoint 400 RPS, 3 Ready pods:
-max_tokens = floor(0.70 × 400 / 3) = 93 token/s/pod
+safe_browse_rps =
+  (highest_passing_rps × browse_fraction)
+  - (highest_passing_rps × operational_margin)
+max_tokens = floor(safe_browse_rps / minimum_ready_proxy_count)
 ```
 
-**Hiện tại trong config: `max_tokens: 100`** — shadow threshold calibrated từ Mandate-02
-baseline (200 users → ~150 browse RPS tổng / 2 proxy pod min ≈ 75 RPS/pod; counter tick
-ở 1.5× overload test). filter_enforced=0% → không reject thực tế.
+- `highest_passing_rps`: 174.75 RPS from PM-152
+- `browse_fraction`: 0.70 from the canonical load profile
+- `operational_margin`: 0.10 of the highest passing throughput
+- `minimum_ready_proxy_count`: 2
 
-### 3. Deploy theo 2 giai đoạn — Shadow → Enforce
+Bootstrap calculation:
+```
+floor(((174.75 × 0.70) - (174.75 × 0.10)) / 2) = 52
+```
 
-**Giai đoạn 1 (PR này — PM-154):** Shadow mode
+The deployed configuration rounds this down to **50 RPS/proxy**. It must be
+recalibrated from the new-ceiling evidence after the after-run.
+
+### 3. Enforcement state
+
+Shadow mode was the observation stage:
 ```yaml
 filter_enabled:  numerator: 100   # Đếm — stat tăng khi token bucket bị exceed
 filter_enforced: numerator: 0     # KHÔNG reject — traffic pass-through 100%
 ```
-Quan sát: `browse_rate_limiter.rate_limited` trên Envoy stats hoặc `envoy_local_rate_limiter_rate_limited` trên Prometheus.
 
-**Giai đoạn 2 (PR riêng — PM-154b):** Enforce mode
+The current implementation remains in shadow mode:
 ```yaml
-filter_enforced: numerator: 100   # Reject 429 khi vượt token bucket
+filter_enabled:  numerator: 100   # Count would-be shedding
+filter_enforced: numerator: 0     # Do not reject production traffic
 token_bucket:
-  max_tokens: <từ PM-153 evidence>
+  max_tokens: 100
+  tokens_per_fill: 50
 ```
-Điều kiện enforce: shadow đã chạy sustained ≥ 5 phút dưới overload, counter đã tích lũy, không có side effect.
+These values are injected from the reviewed `frontend-proxy.envOverrides` in
+`values-prod.yaml`. Promotion changes the enforced percentage without changing
+route logic or rebuilding a different Envoy policy.
+
+After shadow counters and protected-route matching are verified, enforcement
+must be promoted gradually in a separate reviewed change. Directive #19 is not
+considered complete until sustained enforced overload shows intentional browse
+429s, zero protected-route 429s, checkout SLO holding and an unchanged node-set.
 
 ### 4. Response header
 
 Header `x-techx-load-shed: browse` được thêm vào response khi request bị shed.
 - Không dùng `x-local-rate-limit` (tên Envoy-internal, không mang semantic của hệ)
 - `x-techx-load-shed: browse` → client và load balancer biết đây là shed decision, không phải lỗi backend
-- Header chỉ visible khi `filter_enforced > 0%` — sẽ active ở giai đoạn 2
+- Header is visible on enforced browse responses and is mandatory evidence.
 
 ---
 
-## Pre-conditions (phải có trước khi enforce)
+## Runtime acceptance gates
 
 > [!IMPORTANT]
-> PM-154 chỉ chuyển sang enforce sau khi tất cả điều kiện sau được thoả:
+> Enforced configuration is only accepted as verified after all gates below pass:
 
 1. **PM-153 merged và evidence có sẵn:**
    - Breakpoint RPS đã đo (Locust + Prometheus)
    - `frontend-proxy-Ready-count` tại thời điểm test đã ghi lại
    - `max_tokens` đã tính theo công thức trên
 
-2. **PM-154 shadow đã chạy live ≥ 5 phút sustained overload:**
-   - `browse_rate_limiter.rate_limited` counter tăng > 0
-   - Checkout/cart traffic không bị ảnh hưởng trong shadow period
+2. **PM-154 enforced overload runs live ≥ 5 minutes:**
+   - `browse_rate_limiter.rate_limited` and `enforced` counters increase
+   - Browse receives intentional 429 responses with both expected headers
+   - Checkout/cart receive zero rate-limit responses and retain their SLO
 
 3. **Frontend-proxy image đã được build và validate:**
    - `envoy --validate-config` pass
@@ -147,8 +162,8 @@ Header `x-techx-load-shed: browse` được thêm vào response khi request bị
 |---|---|
 | Browse user bị 429 khi vượt trần | Mandate yêu cầu shed, không phải sập; checkout được bảo vệ |
 | Token bucket per-pod (không global) | local_ratelimit in-process; tổng throughput = max_tokens × pod_count |
-| Shadow mode trước → enforce sau | Giảm rủi ro production; có thể quan sát impact trước khi reject thật |
-| max_tokens chưa có số thật | Phụ thuộc PM-153 evidence; shadow mode an toàn để deploy trước |
+| Enforce candidate before final new-ceiling calibration | Bootstrap cap is conservative and derived from measured before data; runtime acceptance and recalibration are mandatory |
+| Local bucket scales with proxy count | Record Ready proxy count throughout the run and calculate the effective cluster browse cap |
 | `/api/cart` protected (rộng hơn chỉ checkout) | Cart writes là phần của checkout funnel — shed cart = shed checkout gián tiếp |
 
 ---

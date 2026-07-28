@@ -1,4 +1,5 @@
 import os
+import json
 import pytest
 from pathlib import Path
 
@@ -27,7 +28,13 @@ def test_t51_actionlint_gate_is_mandatory():
 def test_t52_production_service_matrix_jobs():
     build, _ = get_workflows()
     jobs = build.get("jobs", {})
-    assert set(jobs.keys()) == {"prepare", "build-scan", "aggregate", "open-image-bump-pr"}
+    assert set(jobs.keys()) == {
+        "prepare",
+        "build-scan",
+        "aggregate",
+        "open-image-bump-pr",
+        "backfill-evidence",
+    }
     assert jobs["build-scan"].get("needs") == "prepare"
     assert jobs["aggregate"].get("needs") == ["prepare", "build-scan"]
     assert jobs["open-image-bump-pr"].get("needs") == ["prepare", "aggregate"]
@@ -152,3 +159,89 @@ def test_t63_scoped_canary_and_promotion_evidence_contract():
     assert "unknown production service" in build_raw
     assert "promotion-evidence-${{ github.run_id }}-${{ github.run_attempt }}" in build_raw
     assert "retention-days: 90" in build_raw
+
+def test_t64_grafana_is_registered_as_scoped_production_service():
+    build_raw = Path(".github/workflows/build-push-ecr.yml").read_text()
+    assert "frontend-proxy grafana image-provider" in build_raw
+    assert 'PLATFORM_ROOT="phase3 - information/techx-corp-platform"' in build_raw
+    assert 'grep -Fq "# Grafana" <<< "$COMPOSE_DIFF"' in build_raw
+    assert "GRAFANA_[A-Za-z0-9_]+=" in build_raw
+
+def test_t65_grafana_dockerfile_is_in_immutable_scope_registry():
+    registry = json.loads(Path("scripts/ci/dockerfile-scope.json").read_text())
+    entries = [
+        item for item in registry["dockerfiles"]
+        if item["owner"] == "grafana"
+    ]
+    assert entries == [{
+        "path": "phase3 - information/techx-corp-platform/src/grafana/Dockerfile",
+        "classification": "production",
+        "owner": "grafana",
+        "inScope": True,
+        "expectedPlatforms": ["linux/amd64", "linux/arm64"],
+    }]
+
+
+def test_t66_grafana_cross_compile_and_buildkit_cache_contract():
+    dockerfile = Path(
+        "phase3 - information/techx-corp-platform/src/grafana/Dockerfile"
+    ).read_text()
+    workflow = Path(".github/workflows/build-push-ecr.yml").read_text()
+
+    assert dockerfile.count("FROM --platform=$BUILDPLATFORM") == 3
+    assert 'make build-go \\\n      OS="${TARGETOS}" \\\n      ARCH="${TARGETARCH}"' in dockerfile
+    assert "ARG OPENSEARCH_PLUGIN_COMMIT=188f6f20d488f771808eff476e8647dccb901dad" in dockerfile
+    assert "go mod verify" in dockerfile
+    assert "go get google.golang.org/grpc@v1.82.1" not in dockerfile
+    assert "src/grafana/patches/opensearch-grpc-1.82.1.patch" in dockerfile
+    assert "ADD --checksum=sha256:fcd1bedfccde21ca224139bf409170c194a9a34cdda2f8756b8427b6775ca611" in dockerfile
+    assert "ADD --checksum=sha256:8c644c95b3ac39dedf8254cc99d3921b136fe06895f5a8aeb17cfa0a709e7da6" in dockerfile
+    assert 'COPY --from=opensearch-plugin-builder' in dockerfile
+    assert 'rm "${GF_PATHS_PLUGINS}/grafana-opensearch-datasource/MANIFEST.txt"' in dockerfile
+    assert "--mount=type=cache,target=/go/pkg/mod" in dockerfile
+    assert "--mount=type=cache,target=/root/.cache/go-build" in dockerfile
+    assert workflow.count('--set "${SERVICE}.cache-from=type=gha,scope=${SERVICE}"') == 3
+    assert workflow.count('--set "${SERVICE}.cache-to=type=gha,mode=max,scope=${SERVICE}"') == 3
+
+
+def test_backfill_job_signs_existing_digests_without_building_or_promoting():
+    """Backfill re-signs digests that are already serving production traffic.
+
+    It must never rebuild, re-tag, or promote: changing the image bytes would
+    make it a release, and opening a bump PR would roll workloads that the
+    operator never asked to touch.
+    """
+    build, _ = get_workflows()
+    job = build["jobs"]["backfill-evidence"]
+
+    assert job["permissions"] == {"id-token": "write", "contents": "read"}
+    assert "backfill_digests" in job["if"]
+
+    run_steps = " ".join(step.get("run", "") for step in job["steps"])
+    uses_steps = [step.get("uses", "") for step in job["steps"]]
+
+    assert "scripts/ci/backfill-cosign-evidence.sh" in run_steps
+    assert "refs/heads/main" in run_steps
+    for forbidden in ("docker buildx build", "docker push", "gh pr create", "values-prod.yaml"):
+        assert forbidden not in run_steps, f"backfill must not run {forbidden}"
+    assert not any("build-push-action" in u for u in uses_steps)
+
+    cosign_installer = [s for s in job["steps"] if "cosign-installer" in s.get("uses", "")]
+    assert len(cosign_installer) == 1
+    assert cosign_installer[0]["with"]["cosign-release"] == "v2.6.2"
+
+
+def test_backfill_request_disables_the_build_matrix():
+    """A backfill dispatch must not also build images.
+
+    prepare/scope short-circuits to mode=none so build-scan, aggregate and the
+    image-bump PR job are all skipped by their existing `mode != none` guards.
+    """
+    build, _ = get_workflows()
+    scope = next(
+        step for step in build["jobs"]["prepare"]["steps"]
+        if step.get("id") == "scope"
+    )
+    assert scope["env"]["INPUT_BACKFILL"] == "${{ inputs.backfill_digests }}"
+    assert "mode=none" in scope["run"]
+    assert "mutually exclusive" in scope["run"]

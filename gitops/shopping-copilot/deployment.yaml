@@ -1,0 +1,131 @@
+# Shopping Copilot Deployment.
+#
+# ⚠️ IMAGE IS DIGEST-PINNED (PM-101). The placeholder below MUST be replaced with the real
+# digest emitted by .github/workflows/build-push-copilot.yml before this app is allowed to
+# sync - until then the pod stays ImagePullBackOff (harmless to other services). Never pin a
+# mutable tag like :v1.0.0.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopping-copilot
+  namespace: techx-tf3
+  labels:
+    app: shopping-copilot
+    app.kubernetes.io/part-of: techx-corp
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # keep full capacity during rollout (REL-01 / Mandate #3 posture)
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: shopping-copilot
+  template:
+    metadata:
+      labels:
+        app: shopping-copilot
+        app.kubernetes.io/part-of: techx-corp
+    spec:
+      serviceAccountName: shopping-copilot-sa
+      # UID 1000 matches the image's `appuser` (Dockerfile `useradd -m appuser`), which owns
+      # /app. The app writes uvicorn_execution.txt to WORKDIR /app and session/cache files to
+      # /app/data at import/runtime - forcing a different UID (e.g. 10001) makes that a
+      # PermissionError and crashes the pod on startup. Numeric UID also satisfies runAsNonRoot.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread the 2 replicas across zones AND hosts so a single node/AZ loss can't take
+      # both down (matches how we made the other HA pairs survive drains).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: shopping-copilot
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: shopping-copilot
+      containers:
+        - name: shopping-copilot
+          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/shopping-copilot@sha256:REPLACE_WITH_CI_DIGEST
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+              name: http
+          envFrom:
+            - configMapRef:
+                name: shopping-copilot-config
+          env:
+            # connect.py reads DB_USER/DB_PASSWORD individually (NOT a DSN), so inject the
+            # RDS-managed master creds as discrete env vars. DB_HOST/PORT/NAME/SSLMODE come
+            # from the ConfigMap (RDS host, sslmode=require).
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: shopping-copilot-db
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shopping-copilot-db
+                  key: password
+            # ElastiCache Valkey URL: rediss:// with auth token, rendered by ExternalSecret.
+            - name: VALKEY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: shopping-copilot-valkey-url
+                  key: url
+            # HMAC key for the write-confirmation gate (add-to-cart). Without it the app
+            # falls back to a predictable hardcoded default -> forgeable confirm tokens.
+            # Created out of band (never in git); see the deploy runbook.
+            - name: COPILOT_CONFIRMATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: shopping-copilot-confirmation
+                  key: secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+      # Session/cache file fallback path (used only if Valkey is unreachable). Ephemeral;
+      # per-replica, so it is not shared - rely on Valkey for shared sessions.
+      volumes:
+        - name: data
+          emptyDir: {}
