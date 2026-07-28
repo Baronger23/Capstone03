@@ -1,9 +1,14 @@
 from pathlib import Path
 import re
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 HPA = ROOT / "gitops/infrastructure/hpa-hotpath.yaml"
+FRONTEND_HEADLESS_SERVICE = (
+    ROOT / "gitops/infrastructure/frontend-headless-service.yaml"
+)
 VALUES = ROOT / "phase3 - information/deploy/values-prod.yaml"
 ENVOY = (
     ROOT
@@ -40,6 +45,32 @@ def test_frontend_cpu_request_matches_measured_usage_denominator():
     block = _block(text, "  frontend:", "  product-catalog:")
     assert re.search(r"requests:\s+#[\s\S]*?cpu: 200m", block)
     assert re.search(r"limits:\s+cpu: 500m", block)
+
+
+def test_frontend_headless_service_publishes_ready_frontend_pod_ips():
+    service = yaml.safe_load(
+        FRONTEND_HEADLESS_SERVICE.read_text(encoding="utf-8")
+    )
+
+    assert service["apiVersion"] == "v1"
+    assert service["kind"] == "Service"
+    assert service["metadata"] == {
+        "name": "frontend-headless",
+        "namespace": "techx-tf3",
+    }
+    assert service["spec"]["clusterIP"] == "None"
+    assert service["spec"]["selector"] == {
+        "opentelemetry.io/name": "frontend",
+    }
+    assert service["spec"].get("publishNotReadyAddresses", False) is False
+    assert service["spec"]["ports"] == [
+        {
+            "name": "http",
+            "protocol": "TCP",
+            "port": 8080,
+            "targetPort": 8080,
+        }
+    ]
 
 
 def test_browse_shadow_mode_and_checkout_funnel_precedes_catch_all():
