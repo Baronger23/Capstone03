@@ -68,13 +68,21 @@ judge_timeout_seconds = 3.0
 # cap, a burst of AI questions can occupy every worker and starve the fast read RPCs
 # that a browsing user is actually waiting on (the failure mode this postmortem
 # documents). This caps AI concurrency so at least (max_workers - the cap) workers
-# stay free for reads, and sheds load fast on the existing "AI is busy" message
-# rather than queuing indefinitely on the semaphore, which would just move the
-# starvation here. A full fix (separate deployment/thread pool per RPC class) is
-# postmortem action item P2/P3 (docs/postmortem/0016-...); this is the safe interim
-# mitigation that needs no new deployment or routing change.
+# stay free for reads, and sheds load fast on the existing "AI is busy" message.
+#
+# The admission wait below MUST stay short: a request that fails to acquire still
+# blocks its own grpc worker thread for up to that long before shedding, so a large
+# enough burst of AI calls can transiently fill every worker anyway while they all
+# wait to be shed — the same starvation this is meant to prevent, just capped at the
+# timeout instead of the full 15s AI deadline. A 2s default would have reopened that
+# gap under a big enough burst (e.g. 10 simultaneous AI requests): 4 doing real work,
+# 6 blocked up to 2s each in acquire() with zero workers left for reads in that
+# window. Kept deliberately small (default 50ms) so the worst case is negligible
+# rather than proportional to AI backlog size. A full fix (separate deployment/
+# thread pool per RPC class) is postmortem action item P3 (docs/postmortem/0016-...);
+# this is the safe interim mitigation that needs no new deployment or routing change.
 AI_ASSISTANT_MAX_CONCURRENCY = int(os.environ.get('AI_ASSISTANT_MAX_CONCURRENCY', '4'))
-AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS = float(os.environ.get('AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS', '2.0'))
+AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS = float(os.environ.get('AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS', '0.05'))
 ai_assistant_semaphore = threading.BoundedSemaphore(AI_ASSISTANT_MAX_CONCURRENCY)
 
 FALLBACK_SUMMARY_MESSAGE = "The AI is busy right now. Please try again later."
