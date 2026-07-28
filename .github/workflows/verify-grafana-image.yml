@@ -1,0 +1,137 @@
+name: Verify Grafana image before merge
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - "phase3 - information/techx-corp-platform/src/grafana/**"
+      - "phase3 - information/techx-corp-platform/docker-compose.yml"
+      - ".github/workflows/verify-grafana-image.yml"
+      - "scripts/ci/test_pm176_grafana_immutable_runtime.py"
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Grafana image (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+
+    steps:
+      - name: Check out untrusted PR source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+
+      - name: Build local Grafana image candidate
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p "artifacts/pm176/${ARCH}"
+          docker buildx build \
+            --platform "${PLATFORM}" \
+            --file "phase3 - information/techx-corp-platform/src/grafana/Dockerfile" \
+            --tag "pm176-grafana:${ARCH}-${GITHUB_SHA}" \
+            --load \
+            "phase3 - information/techx-corp-platform"
+
+      - name: Scan candidate with blocking Trivy gate
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          image="pm176-grafana:${ARCH}-${GITHUB_SHA}"
+          report="artifacts/pm176/${ARCH}/trivy.json"
+
+          trivy image \
+            --scanners vuln \
+            --format json \
+            --output "${report}" \
+            --no-progress \
+            "${image}"
+
+          trivy image \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --no-progress \
+            "${image}"
+
+      - name: Run amd64 runtime smoke
+        if: matrix.arch == 'amd64'
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          image="pm176-grafana:${ARCH}-${GITHUB_SHA}"
+          container="pm176-grafana-smoke-${GITHUB_RUN_ID}"
+          report="artifacts/pm176/${ARCH}/startup.log"
+          trap 'docker logs "${container}" > "${report}" 2>&1 || true; docker rm -f "${container}" >/dev/null 2>&1 || true' EXIT
+
+          docker run --detach \
+            --name "${container}" \
+            --publish 3000:3000 \
+            --env GF_PATHS_PLUGINS=/opt/grafana/plugins \
+            --env GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=grafana-opensearch-datasource \
+            --env GF_PLUGINS_PREINSTALL_DISABLED=true \
+            --env GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false \
+            --env GF_PLUGINS_PLUGIN_ADMIN_ENABLED=false \
+            --env GF_PLUGINS_PLUGIN_ADMIN_EXTERNAL_MANAGE_ENABLED=false \
+            "${image}" >/dev/null
+
+          curl --fail --silent --show-error \
+            --retry 60 --retry-delay 1 --retry-connrefused --retry-all-errors \
+            --max-time 5 \
+            http://127.0.0.1:3000/api/health >/dev/null
+
+          docker exec "${container}" \
+            test -f /opt/grafana/plugins/grafana-opensearch-datasource/plugin.json
+          docker exec "${container}" \
+            test -f /opt/grafana/plugins/grafana-opensearch-datasource/TF3-PROVENANCE
+
+          docker logs "${container}" > "${report}" 2>&1
+
+          if grep -Eiq \
+              'plugin\.(backgroundinstaller|installer).*installing|download(ed)? and extracted|failed to install plugin|modified signature|skipping loading plugin due to problem with signature|plugin validation failed' \
+              "${report}"; then
+            echo "FAIL: runtime plugin installation/download/signature failure detected" >&2
+            exit 1
+          fi
+
+          grep -Fq \
+            'msg="Plugin registered" pluginId=grafana-opensearch-datasource' \
+            "${report}"
+
+      - name: Upload PM-176 verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pm176-grafana-image-${{ github.run_id }}-${{ matrix.arch }}
+          path: artifacts/pm176/${{ matrix.arch }}/
+          if-no-files-found: warn
+          retention-days: 90

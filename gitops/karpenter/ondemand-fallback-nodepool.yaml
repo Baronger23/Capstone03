@@ -43,19 +43,18 @@ spec:
       expireAfter: 168h
       terminationGracePeriod: 10m
   limits:
-    # PM-152 (Mandate 19 breakpoint test): tạm khoá nodes: 2 -> 0, không cho
-    # fallback on-demand tự tạo node giữa bài test. PHẢI trả lại nodes: 2 sau khi test xong.
     cpu: "4"
     memory: 16Gi
-    nodes: 0
+    nodes: 2
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 10m
     budgets:
+      # Fallback must scale back down when it is no longer needed; only block
+      # voluntary drift replacement during guarded production windows.
       - nodes: "0"
         reasons:
           - Drifted
-          - Underutilized
 ---
 apiVersion: karpenter.k8s.aws/v1
 kind: EC2NodeClass

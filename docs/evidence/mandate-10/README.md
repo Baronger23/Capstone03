@@ -62,13 +62,21 @@ admission-time exception or an untracked cluster edit.
 
 ## Status and limits of this evidence
 
-The implementation is prepared in GitOps and validated offline. Both child
-Applications are committed with automated reconciliation disabled, so merging
-the preparation PR cannot install the webhook before its IAM role exists. A live
-acceptance run is still required after the branch is merged and ArgoCD syncs:
+The preparation implementation was merged by PR #349. The scoped Terraform
+rollout completed successfully in
+[run #29972575137](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/actions/runs/29972575137):
+the saved plan was hash-verified, applied, and the post-apply
+`iam:GetRole`/`iam:GetRolePolicy` checks proved the dedicated Kyverno ECR role
+and inline policy exist in account `197826770971`.
 
-1. Terraform plan/apply must create the Kyverno ECR read role.
-2. A controller-only PR must set `kyverno` automated sync to enabled.
+This controller-only rollout enables automated reconciliation for the
+`kyverno` child Application. The `kyverno-policies` child remains disabled and
+both PM-127 ClusterPolicy manifests remain `Audit`. A live acceptance run is
+still required after this branch is merged and ArgoCD syncs:
+
+1. Confirm the `kyverno` Application is `Synced` and `Healthy`.
+2. Prove controller HA, pinned images, IRSA annotation, and ECR access in the
+   live cluster.
 3. After controller health is proven, a policy-only PR must set
    `kyverno-policies` automated sync to enabled.
 4. Kyverno must report both policies Ready and produce PolicyReports.
@@ -80,10 +88,10 @@ acceptance run is still required after the branch is merged and ArgoCD syncs:
 8. Only after audit evidence is reviewed should PM-127 be considered for an
    enforce-mode change. This branch keeps PM-127 in Audit.
 
-During development, the private EKS API was reachable through the SSM tunnel,
-but the active AWS identity was a read-only role that could not list ArgoCD,
-Kyverno, CRDs, or ECR image metadata. Therefore no live Argo/Kyverno/ECR
-claim is made by this pack, and no cluster mutation was performed.
+The IAM claim above comes from the production Terraform apply role and its
+post-apply AWS API checks. No live ArgoCD, Kyverno Pod, webhook, or ECR
+verification claim is made until the controller rollout is merged and observed
+through the private EKS API. No cluster resource was applied manually.
 
 The build workflow already supports `workflow_dispatch`. After merge, the
 release owner must explicitly run it from `main` to produce the real digest,

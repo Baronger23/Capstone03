@@ -1,0 +1,18 @@
+# ClusterIP only. Public reach is via Cloudflare Access (copilot.arthur-ngo.org ->
+# cloudflared -> this Service), NOT the storefront edge. No inbound port on the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: shopping-copilot
+  namespace: techx-tf3
+  labels:
+    app: shopping-copilot
+    app.kubernetes.io/part-of: techx-corp
+spec:
+  type: ClusterIP
+  selector:
+    app: shopping-copilot
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001

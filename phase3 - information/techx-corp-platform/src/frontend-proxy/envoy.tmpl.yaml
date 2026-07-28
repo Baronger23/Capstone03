@@ -73,19 +73,13 @@ static_resources:
                         - match: { prefix: "/api/products/" }
                           name: product_detail_protected
                           route: { cluster: frontend }
-                        # PM-154 (load-shedding): browse/homepage catch-all — SHADOW MODE.
-                        # filter_enabled=100%: Envoy đếm request qua token bucket và ghi
-                        # stat browse_rate_limiter.rate_limited nhưng CHƯĄ reject
-                        # (filter_enforced=0%). Mục đích: quan sát thực tế bao nhiêu request
-                        # bị count vượt ngưỡng trước khi bật enforce.
+                        # PM-154 (load-shedding): browse/homepage catch-all — SHADOW.
+                        # Requests above the calibrated per-proxy token bucket increment
+                        # counters but are not rejected. Promote enforcement gradually
+                        # only after route matching and checkout SLO are verified.
                         #
-                        # Token bucket cần điền sau khi có PM-153 evidence:
-                        #   max_tokens = floor(0.70 × browse_breakpoint_RPS
-                        #                      / frontend-proxy Ready count)
-                        # Ví dụ: breakpoint 400 RPS, 3 Ready pods:
-                        #   max_tokens = floor(0.70 × 400 / 3) = 93
-                        # HIỆN TẠI: 999999 (sất ượng, shadow mode không reject thực tế).
-                        # THAY THẾ giá trị này trong enforce PR sau khi shadow đạt.
+                        # The bootstrap budget below is derived from PM-152. Recalculate
+                        # it from measured new-ceiling evidence after the after-run.
                         - match: { prefix: "/" }  # catch-all — giữ cuối
                           name: browse_shedable
                           route: { cluster: frontend }
@@ -94,15 +88,17 @@ static_resources:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
                               stat_prefix: browse_rate_limiter
                               token_bucket:
-                                # Shadow threshold: 100 token/s/pod.
-                                # Cơ sở tính: Mandate-02 baseline 200 users → ước tính
-                                # ~150 browse RPS tổng / 2 proxy pod min ≈ 75 RPS/pod.
-                                # Ở 1.5× overload test (~112 RPS/pod) counter SẼ tick.
-                                # filter_enforced=0% → không reject thực tế.
-                                # THAY THẾ bằng floor(0.70×breakpoint_RPS/proxy_ready)
-                                # từ PM-153 evidence trước khi tạo enforce PR (PM-154b).
+                                # PM-152 highest passing throughput = 174.75 RPS.
+                                # The canonical profile is ~70% browse. Reserve a
+                                # 10% system margin before dividing by the minimum
+                                # two Ready proxies:
+                                # floor(((174.75 * 0.70) - (174.75 * 0.10)) / 2)
+                                # = 52 RPS/proxy. During shadow we allow a small
+                                # burst (100 tokens) while measuring a sustained
+                                # fill rate of 50 RPS/proxy. Recalibrate both from
+                                # the measured new ceiling after the after-run.
                                 max_tokens: 100
-                                tokens_per_fill: 100
+                                tokens_per_fill: 50
                                 fill_interval: 1s
                               filter_enabled:
                                 runtime_key: browse_rate_limit_enabled
@@ -112,10 +108,10 @@ static_resources:
                               filter_enforced:
                                 runtime_key: browse_rate_limit_enforced
                                 default_value:
-                                  numerator: 0     # SHADOW: 0% — KHÔNG reject, chỉ đếm
+                                  numerator: 0     # SHADOW: observe would-be shedding without returning 429
                                   denominator: HUNDRED
                               response_headers_to_add:
-                                # Header sẽ active khi flip enforced=100% trong enforce PR
+                                # Distinguishes intentional shedding from backend failures.
                                 - header:
                                     key: x-techx-load-shed
                                     value: browse
@@ -153,7 +149,7 @@ static_resources:
                       filter_enforced:
                         runtime_key: local_rate_limit_enforced
                         default_value:
-                          numerator: 0     # SHADOW: global fallback cũng 0% — khới tạo an toàn
+                          numerator: 0     # SHADOW: no route is rejected during the observation stage
                           denominator: HUNDRED
                   - name: envoy.filters.http.router
                     typed_config:

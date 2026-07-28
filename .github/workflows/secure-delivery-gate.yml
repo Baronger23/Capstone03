@@ -55,24 +55,28 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+
       - name: Scan the complete repository tree with Trivy
         run: |
           set -euo pipefail
           mkdir -p artifacts/secrets
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/src:ro" \
-            --volume "$GITHUB_WORKSPACE/artifacts/secrets:/out" \
-            aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f \
-            fs \
+          trivy fs \
             --scanners secret \
-            --secret-config /src/.trivy-secret.yaml \
+            --secret-config .trivy-secret.yaml \
             --severity HIGH,CRITICAL \
             --exit-code 0 \
             --no-progress \
             --offline-scan \
+            --skip-version-check \
+            --disable-telemetry \
             --format json \
-            --output /out/raw.json \
-            /src
+            --output artifacts/secrets/raw.json \
+            .
           python3 scripts/ci/evaluate-trivy-secrets.py \
             --input artifacts/secrets/raw.json \
             --report artifacts/secrets/sanitized.json \
