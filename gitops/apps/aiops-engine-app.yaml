@@ -1,0 +1,30 @@
+# ArgoCD Application cho aiops-engine (workload AIOps của AIO02). App-of-apps
+# techx-corp-bootstrap nhặt file này vì nó watch gitops/apps.
+#
+# Render manifest trần trong gitops/aiops-engine (không Helm): aiops-engine là image
+# độc lập, không phải component của chart techx-corp, nên không đi qua
+# values.schema.json (additionalProperties:false) — tránh rủi ro ComparisonError
+# làm chết cả pipeline. Cùng lý do và cùng khuôn với shopping-copilot-app.yaml.
+#
+# Trước 2026-07-28 workload này chạy hoàn toàn ngoài GitOps: deploy bằng kubectl
+# apply tay (revision 68), có dán label managed-by:argocd giả nhưng không
+# Application nào quản. Manifest commit lần đầu khớp nguyên trạng live state nên
+# sync đầu tiên không recreate pod.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aiops-engine
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel.git'
+    targetRevision: main
+    path: gitops/aiops-engine
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: techx-tf3
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
