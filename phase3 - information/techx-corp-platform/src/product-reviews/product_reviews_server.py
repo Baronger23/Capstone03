@@ -6,6 +6,7 @@
 # Python
 import os
 import json
+import threading
 from concurrent import futures
 import random
 
@@ -60,6 +61,36 @@ judge_model = None
 judge_provider = None
 judge_region = "us-east-1"
 judge_timeout_seconds = 3.0
+
+# Postmortem 0016 — ADMISSION CONTROL, NOT A TRUE BULKHEAD. Read this before
+# touching the two constants below.
+#
+# GetProductReviews/GetAverageProductReviewScore and AskProductAIAssistant share
+# ONE ThreadPoolExecutor (max_workers=10, see __main__), and that executor
+# dispatches queued RPCs to workers in FIFO order. This semaphore only runs INSIDE
+# the handler — i.e. AFTER a task has already been popped off that FIFO queue and
+# handed a worker. It bounds how long an admitted-but-over-cap AI call can hold
+# that worker before shedding (down to ~AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS
+# instead of the full 15s AI deadline), which meaningfully helps under a moderate
+# AI burst. It does NOT reorder the shared queue, so it cannot stop a fast read RPC
+# from queueing behind however many AI calls were already submitted ahead of it —
+# under a big enough AI backlog, reads still wait, just proportional to backlog
+# size instead of to AI call duration.
+#
+# Measured with a real grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+# running this exact pattern (cap=4, admission_timeout=0.05s), firing N concurrent
+# SlowAI calls and timing one FastRead call landing mid-burst:
+#   N=10  -> ~34ms   (fine)
+#   N=30  -> ~178ms  (fine)
+#   N=100 -> ~758ms  (EXCEEDS the frontend's 500ms PRODUCT_REVIEWS_DEADLINE_MS)
+# So this is a real mitigation for moderate bursts, not a guarantee under a large
+# sustained AI backlog. The durable fix is still postmortem action item P3 in full
+# (separate thread pool / deployment for AskProductAIAssistant so it has its own
+# queue, not just its own semaphore) — that needs a routing change and canary,
+# tracked separately, not shipped here.
+AI_ASSISTANT_MAX_CONCURRENCY = int(os.environ.get('AI_ASSISTANT_MAX_CONCURRENCY', '4'))
+AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS = float(os.environ.get('AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS', '0.05'))
+ai_assistant_semaphore = threading.BoundedSemaphore(AI_ASSISTANT_MAX_CONCURRENCY)
 
 FALLBACK_SUMMARY_MESSAGE = "The AI is busy right now. Please try again later."
 UNVERIFIED_SUMMARY_MESSAGE = "The summary cannot be verified. Please try again later."
@@ -265,7 +296,23 @@ class ProductReviewService(demo_pb2_grpc.ProductReviewServiceServicer):
 
     def AskProductAIAssistant(self, request, context):
         logger.info(f"Receive AskProductAIAssistant for product id:{request.product_id}, question: {request.question}")
-        return get_ai_assistant_response(request.product_id, request.question)
+
+        if not ai_assistant_semaphore.acquire(timeout=AI_ASSISTANT_ADMISSION_TIMEOUT_SECONDS):
+            logger.warning(
+                f"AskProductAIAssistant: concurrency limit ({AI_ASSISTANT_MAX_CONCURRENCY}) reached, "
+                f"shedding load for product_id:{request.product_id}"
+            )
+            with tracer.start_as_current_span("ask_product_ai_assistant_shed") as span:
+                span.set_attribute("app.product.id", request.product_id)
+                span.set_status(Status(StatusCode.ERROR, description="ai_concurrency_limit_reached"))
+            response = demo_pb2.AskProductAIAssistantResponse()
+            response.response = FALLBACK_SUMMARY_MESSAGE
+            return response
+
+        try:
+            return get_ai_assistant_response(request.product_id, request.question)
+        finally:
+            ai_assistant_semaphore.release()
 
     def Check(self, request, context):
         try:
