@@ -58,7 +58,7 @@ spec:
               app: shopping-copilot
       containers:
         - name: shopping-copilot
-          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/shopping-copilot@sha256:REPLACE_WITH_CI_DIGEST
+          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/shopping-copilot@sha256:589cb03016ae370a0532066601d1d3c8306a18112cc0e24563182aae5089a3d8
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8001
