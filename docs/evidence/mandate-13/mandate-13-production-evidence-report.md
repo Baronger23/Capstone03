@@ -1,11 +1,16 @@
-# BÁO CÁO NGHIỆM THU TẠM THỜI - MANDATE 13
-## Runtime evidence và video demo Spot / Graviton trên production
+# BÁO CÁO NGHIỆM THU - MANDATE 13
+## Production evidence cho Spot / Graviton / interruption / scale-down
 
 **Ngày thực hiện:** 25/07/2026  
 **Nhóm:** CDO02 - Reliability + Cost Optimization  
 **Người tổng hợp:** Hà Tây Nguyên  
 **Phạm vi báo cáo:** runtime evidence trên production, tập trung vào scale-up, headroom, inventory node và video quay màn hình  
 **Trạng thái hiện tại:** đủ dùng để nộp evidence Mandate 13, còn 1 điểm cần ghi chú rõ về cách tính Spot ratio do có node exception phục vụ chaos tooling
+
+**ADR liên quan:** [ADR 0012 - Rollout Spot + Graviton không tạo SPOF](/C:/Users/Admin/Desktop/xbrain-phase-3/Phase3-TF3-Infra-Sentinel-m13-clean/docs/adr/0012-mandate-13-spot-graviton-rollout.md)  
+**Thư mục evidence:** [docs/evidence/mandate-13](/C:/Users/Admin/Desktop/xbrain-phase-3/Phase3-TF3-Infra-Sentinel-m13-clean/docs/evidence/mandate-13)  
+**Video runtime evidence:** [mandate-13-video-evidence-2026-07-25.mp4](https://drive.google.com/file/d/1lHxEmZ--ophlwMUB6eVr0IHL01qFJnGh/view?usp=drive_link)  
+**Video interruption demo:** [mandate-13-interruption-demo-2026-07-25.mp4](https://drive.google.com/file/d/1A6cBJDiPCDqh6871NDf_gxgM4x4oZzUa/view?usp=drive_link)
 
 ---
 
