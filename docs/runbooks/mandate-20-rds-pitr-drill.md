@@ -34,8 +34,9 @@ Expected data loss in probe: 0 row
 ```powershell
 $Region = "ap-southeast-1"
 $SourceDb = "techx-tf3-postgres"
-$DrillId = "techx-tf3-postgres-drill-$(Get-Date -Format 'yyyyMMdd-HHmm')"
-$DrillMarkerId = "m20-rds-pitr-$(Get-Date -Format 'yyyyMMdd-HHmm')"
+$DrillSuffix = Get-Date -Format 'yyyyMMdd-HHmmss'
+$DrillId = "techx-tf3-postgres-drill-$DrillSuffix"
+$DrillMarkerId = "m20-rds-pitr-$DrillSuffix"
 
 git rev-parse --short origin/main
 aws sts get-caller-identity

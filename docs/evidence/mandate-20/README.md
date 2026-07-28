@@ -47,12 +47,12 @@ Mentor/PM witness:
 
 ## Coverage matrix status
 
-| Store / state | Status | Evidence |
-|---|---|---|
-| RDS PostgreSQL | Pending drill | PITR restore record required |
-| ElastiCache Valkey | Pending coverage verdict | Snapshot/restore evidence or accepted cart-state strategy |
-| MSK Kafka | Pending coverage verdict | Retention/replay or order reconciliation explanation |
-| DynamoDB lock | Pending exclusion/verdict | Exclude if Terraform lock only |
-| EBS legacy | Pending M8/M18 decision | Do not use as M20 proof unless ownership is clarified |
-| GitOps/IaC state | Pending coverage verdict | Git/state/versioning/Object Lock evidence if claimed |
-| IAM/KMS/delete permission | CDO01 dependency | Security verdict required |
+| Store / state | RPO/RTO status | Backup/retention status | Evidence |
+|---|---|---|---|
+| RDS PostgreSQL | Target set: RPO <= 5 phút, RTO <= 45 phút | Automated backup/PITR 7 ngày, pending drill evidence | PITR restore record required |
+| ElastiCache Valkey | Pending final target or accepted cart-state limitation | Snapshot retention observed as 3 ngày, needs verdict | Snapshot/restore evidence or accepted cart-state strategy |
+| MSK Kafka | Pending replay/reconciliation target; do not call PITR | Retention/replay strategy needs capture | Retention/replay or order reconciliation explanation |
+| DynamoDB lock | Pending exclusion/verdict | Exclude if Terraform lock only | Exclusion reason |
+| EBS legacy | Pending M8/M18 decision | Do not use as M20 proof unless ownership is clarified | Pending/accepted limitation |
+| GitOps/IaC state | Pending state restore target if claimed | Git/state/versioning/Object Lock evidence if claimed | Commit/state/backend evidence |
+| IAM/KMS/delete permission | CDO01 dependency | Delete authority matrix needs review/accepted risk | Security verdict required |

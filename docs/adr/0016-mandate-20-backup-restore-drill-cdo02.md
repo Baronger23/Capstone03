@@ -56,7 +56,7 @@ Trong drill CDO02 không được:
 DB drill chỉ là tài nguyên tạm để chứng minh restore, ví dụ:
 
 ```text
-techx-tf3-postgres-drill-YYYYMMDD-HHMM
+techx-tf3-postgres-drill-YYYYMMDD-HHMMSS
 ```
 
 ## Phạm vi CDO02 claim
@@ -83,6 +83,34 @@ Phần Security do CDO01 review/claim:
 - Accepted limitation nếu account còn admin rộng hoặc không dùng SCP.
 
 Trong account hiện tại có nhiều principal quyền rộng, nên ADR này **không claim chống xóa backup tuyệt đối** nếu CDO01 chưa có evidence riêng.
+
+## Mandate #20 data-tier commitments
+
+ADR này ghi cam kết vận hành theo từng tầng dữ liệu để khớp yêu cầu Mandate #20. Các target dưới đây là target trước drill/evidence; trạng thái pass chỉ được cập nhật sau khi có raw evidence.
+
+| Tầng dữ liệu / state | Vai trò trong hệ thống | RPO target | RTO target | Backup / recovery strategy | Cadence / retention | CDO02 claim | Security / delete-permission verdict |
+|---|---|---|---|---|---|---|---|
+| RDS PostgreSQL `techx-tf3-postgres` | Store chính cho catalog/reviews/accounting/order data | `<= 5 phút` theo PITR window | `<= 45 phút` cho restore drill | RDS automated backup + PITR; restore về `T_restore` sang DB drill tách biệt | Automated backup retention 7 ngày; manual snapshot phụ nếu có | **Claim chính của CDO02**; phải chạy drill thật | CDO01 cần xác nhận ai được xóa snapshot/automated backup và KMS posture |
+| ElastiCache Valkey `techx-tf3-valkey` | Cart/session cache trên luồng browse -> cart -> checkout | Target theo snapshot window; nếu không claim restore cart, ghi accepted cart-state strategy | Target theo restore snapshot hoặc accepted recovery strategy | ElastiCache snapshot/restore hoặc accepted limitation: cart state là soft-state, không dùng làm PITR proof chính | Snapshot retention quan sát: 3 ngày | CDO02 ghi coverage verdict, không thay RDS PITR drill | CDO01 xác nhận encryption/snapshot delete permission nếu claim backup |
+| MSK Kafka `techx-tf3-kafka` | Order event stream cho checkout -> accounting/fraud | Target: `0 acknowledged order lost` trong retention window nếu producer/consumer replay đúng | Target theo consumer replay/reconciliation, cần evidence sau drill/record riêng | MSK retention/replay; không gọi là PITR backup | Topic retention cần được capture trong evidence; prior docs ghi 168h | CDO02 ghi replay/reconciliation strategy, không dùng làm PITR proof chính | CDO01 xác nhận KMS/IAM/delete topic/config destructive control nếu cần |
+| DynamoDB `techx-tf3-terraform-lock` | Terraform lock table, không phải dữ liệu khách hàng | Excluded nếu chỉ là lock tái tạo được | Rebuild/recreate lock table nếu mất | Exclusion with reason, không dùng làm data restore proof | Không yêu cầu retention khách hàng nếu exclude | CDO02 claim exclude nếu team xác nhận chỉ là lock | Nếu team muốn protect, CDO01 phải xác nhận PITR/IAM |
+| EBS/PVC legacy volumes | Legacy artifacts từ pre-managed datastore / Mandate #8/#18 | Không claim RPO/RTO cho production data | Không claim restore path trong M20 drill | Không dùng làm backup proof chính; pending Mandate #8 acceptance / Mandate #18 cleanup | Không dùng làm retention proof nếu legacy/available | CDO02 ghi pending/accepted limitation để không gạt M8/M18 | Nếu giữ làm artifact, CDO01 cần encryption/delete policy verdict |
+| GitOps/IaC state | Manifest, config, Terraform state/source of truth | Git RPO: last pushed commit; Terraform state RPO phụ thuộc backend versioning | Target restore/reconcile phải được đo trong DR/state runbook nếu claim | Git history + Terraform state backend/versioning/Object Lock nếu có | Retention/versioning phải capture từ backend thực tế | CDO02 claim GitOps source-of-truth process; state backend cần evidence riêng | CDO01 xác nhận state bucket/Object Lock/IAM delete protection |
+
+## Backup deletion authority
+
+Mandate #20 yêu cầu ghi rõ **ai được xóa backup**. Vì CDO02 không sở hữu toàn bộ Security/IAM boundary, ADR này ghi policy mong muốn và phần cần CDO01 xác nhận.
+
+| Principal / nhóm | Quyền xóa backup mong muốn | Trạng thái trong ADR này | Evidence cần có |
+|---|---|---|---|
+| Read-only / reviewer / mentor viewer | Không được xóa | Policy target | IAM policy hoặc console role evidence từ CDO01 |
+| CDO02 operator chạy drill | Không được xóa backup production; chỉ được tạo/xóa DB drill tạm sau approval | CDO02 operating rule | Runbook/evidence cleanup chỉ áp dụng DB drill identifier |
+| CI Terraform plan role | Không được xóa backup; chỉ plan/read | Policy target | CI/IAM evidence từ CDO01 |
+| CI Terraform apply role | Không được xóa backup production ngoài PR được review và approved | CDO01/Security dependency | IAM guard, permission boundary, hoặc accepted limitation |
+| Break-glass / account owner | Có thể xóa trong tình huống khẩn cấp có ticket/MFA/owner approval | Accepted operational reality nếu account còn admin rộng | CloudTrail/audit process + named owner từ CDO01/PM |
+| Unknown/admin-wide principals | Không claim đã chặn tuyệt đối nếu chưa có SCP/permission boundary | **Open risk** | CDO01 verdict hoặc accepted risk |
+
+Kết luận: trước khi có CDO01 evidence, CDO02 chỉ claim phần restore drill và ghi rõ delete-protection là dependency. Mandate #20 overall chưa nên claim Done nếu bảng deletion authority chưa được review hoặc accepted-risk chưa được PM/mentor chấp nhận.
 
 ## Coverage matrix
 
@@ -138,7 +166,8 @@ Tại thời điểm ADR này:
 - Thiết kế RDS PITR drill: **Accepted**
 - Hạ tầng nền để chạy drill: **Sẵn sàng**
 - Restore drill evidence: **Chưa có**
-- CDO01 Security/delete-permission verdict: **Chưa có trong ADR này**
+- Data-tier commitment matrix: **Đã ghi target/verdict cần evidence**
+- CDO01 Security/delete-permission verdict: **Open dependency / cần review hoặc accepted risk**
 
 Vì vậy CDO02 chỉ claim: **ready to execute Mandate #20 RDS PITR restore drill**, chưa claim Mandate #20 Done.
 
