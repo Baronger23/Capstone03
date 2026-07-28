@@ -138,7 +138,10 @@ def test_t61_preserves_all_security_evidence_gates_per_service():
         assert marker in build_raw
 
     assert "SERVICE: ${{ matrix.service }}" in build_raw
-    assert 'docker buildx bake -f docker-compose.yml --push "$SERVICE"' in build_raw
+    assert (
+        'docker buildx bake "${BAKE_ALLOW[@]}" '
+        '-f docker-compose.yml --push "$SERVICE"'
+    ) in build_raw
     assert '"${SERVICES[@]}"' not in build_raw
     assert '--set "*.platform=' not in build_raw
 
