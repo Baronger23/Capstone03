@@ -31,5 +31,22 @@ module "cloudflare_access" {
       service       = "https://argocd-server.argocd.svc.cluster.local:443"
       no_tls_verify = true
     }
+    # Shopping Copilot UI (/chatbot) behind SSO - customer-facing chat is NOT exposed on
+    # the public storefront yet; team/mentor reach it through Cloudflare Access, same auth
+    # boundary as the other internal UIs. Plain HTTP inside the cluster; Access is the gate.
+    copilot = {
+      hostname = "copilot.${var.cloudflare_zone_name}"
+      service  = "http://shopping-copilot.techx-tf3.svc.cluster.local:8001"
+    }
   } : {}
+
+  # Fence off the copilot's unauthenticated introspection endpoints at the edge: /debug/*
+  # (dumps every user's session/cache) and /docs (Swagger). Returns 404 before reaching the
+  # pod, even for SSO users. Full in-app disable still tracked as an AIO02 hardening ask.
+  blocked_paths = var.enable_cloudflare_access ? [
+    {
+      hostname = "copilot.${var.cloudflare_zone_name}"
+      path     = "^/(debug|docs)"
+    },
+  ] : []
 }
