@@ -26,6 +26,16 @@ spec:
       verifyImages:
         - imageReferences:
             - "197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp@sha256:*"
+            # Grafana is first-party but renders as repo:<tag>@sha256:<digest>.
+            # Its subchart hardcodes "{{repository}}:{{tag}}@sha256:{{sha}}" with
+            # no digest-only branch, so the reference cannot be repinned from
+            # values - and repinning would recreate the pod and disturb the
+            # PM-176 baked-plugin fix. Widening the glob keeps it under
+            # signature and SBOM verification instead of letting it fall through
+            # to the external allow-list, where a first-party image does not
+            # belong. The digest itself is still verified by the indexDigest
+            # condition below.
+            - "197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:*@sha256:*"
           required: true
           mutateDigest: false
           verifyDigest: true

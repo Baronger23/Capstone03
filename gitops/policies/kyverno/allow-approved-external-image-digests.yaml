@@ -28,7 +28,12 @@ spec:
           - list: "request.object.spec.containers"
             preconditions:
               all:
-                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/techx-corp@sha256:[0-9a-f]{64}$', element.image) }}"
+                # The optional :<tag> covers Grafana, which is first-party but
+                # renders as repo:<tag>@sha256:<digest> because its subchart has
+                # no digest-only branch. Without it, a first-party image would
+                # be judged against the external catalogue it can never appear
+                # in, instead of against its signature and SBOM.
+                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/techx-corp(:[^@]+)?@sha256:[0-9a-f]{64}$', element.image) }}"
                   operator: Equals
                   value: false
             deny:
@@ -48,7 +53,12 @@ spec:
           - list: "request.object.spec.initContainers || []"
             preconditions:
               all:
-                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/techx-corp@sha256:[0-9a-f]{64}$', element.image) }}"
+                # The optional :<tag> covers Grafana, which is first-party but
+                # renders as repo:<tag>@sha256:<digest> because its subchart has
+                # no digest-only branch. Without it, a first-party image would
+                # be judged against the external catalogue it can never appear
+                # in, instead of against its signature and SBOM.
+                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/techx-corp(:[^@]+)?@sha256:[0-9a-f]{64}$', element.image) }}"
                   operator: Equals
                   value: false
             deny:
@@ -68,7 +78,12 @@ spec:
           - list: "request.object.spec.ephemeralContainers || []"
             preconditions:
               all:
-                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/techx-corp@sha256:[0-9a-f]{64}$', element.image) }}"
+                # The optional :<tag> covers Grafana, which is first-party but
+                # renders as repo:<tag>@sha256:<digest> because its subchart has
+                # no digest-only branch. Without it, a first-party image would
+                # be judged against the external catalogue it can never appear
+                # in, instead of against its signature and SBOM.
+                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/techx-corp(:[^@]+)?@sha256:[0-9a-f]{64}$', element.image) }}"
                   operator: Equals
                   value: false
             deny:
