@@ -50,7 +50,7 @@ spec:
     nodes: 2
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
-    consolidateAfter: 3m
+    consolidateAfter: 10m
 ---
 apiVersion: karpenter.k8s.aws/v1
 kind: EC2NodeClass
@@ -128,7 +128,7 @@ spec:
     nodes: 2
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
-    consolidateAfter: 3m
+    consolidateAfter: 10m
 ---
 apiVersion: karpenter.k8s.aws/v1
 kind: EC2NodeClass

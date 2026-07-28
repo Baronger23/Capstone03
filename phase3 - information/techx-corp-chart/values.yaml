@@ -1739,6 +1739,11 @@ grafana:
       serve_from_sub_path: true
   adminPassword: admin
   sidecar:
+    # PM-127: pin k8s-sidecar to digest so allow-approved-external-image-digests (exact-string)
+    # matches. grafana chart renders sidecar.image as quay.io/kiwigrid/k8s-sidecar:2.7.1@sha256:<sha>.
+    # Recreates the Grafana pod (plugins are baked into /opt by PM-176, no internet needed at start).
+    image:
+      sha: "5bc0c5634d4aae468e27e98bf1aae4f45d82fcbfd73baf4a9d3fb0699c62f83d"
     securityContext:
       runAsUser: 65534
       runAsGroup: 65534
