@@ -205,7 +205,9 @@ không tự sửa còn hơn để người lạ trên Internet bấm nút.
 
 Phụ: bớt một ALB (~$16/tháng).
 
-Việc còn lại của Phase 0: đưa backup manifest vào `docs/evidence/` và viết note gửi AIO02.
+**Đã xong:** backup manifest vào `docs/evidence/aiops-engine/2026-07-28-aiops-engine-ingress-deleted.yaml`,
+commit trong PR #519. Việc còn lại của Phase 0: viết note gửi AIO02 về việc luồng duyệt
+Slack (Approve/Reject/Emergency-Stop) ngừng hoạt động cho tới khi Phase 3 dựng lại đường an toàn.
 
 ### Phase 1 — Adopt vào ArgoCD, không downtime
 
@@ -265,15 +267,47 @@ bị giết, không phải crash. Job thứ hai bắt đầu `2026-07-26T19:00:0
 `20:00:00Z` — khớp đúng 3600 giây. Pod đã bị dọn (không còn log) nên không biết job treo
 ở bước nào.
 
-Nghi ngờ, chưa xác nhận: image CronJob là `IF-v25` trong khi engine chạy `IF-v63` — có
-thể incompatibility ở `train_anomaly_model_eks.py`; hoặc credential S3 retry vô hạn
-(cùng gốc với lỗ hổng 2 — static admin key, xem phần "Lỗ hổng 2" ở trên). Hệ quả: model
-anomaly detection hiện tại có thể đã cũ ít nhất 2 tuần.
+**Lưu ý cửa sổ thời gian — "7 ngày trước" đúng theo giờ tạo nhưng sai theo lịch.** Slot
+lịch (`schedule: 0 19 * * 0`) của job `-29741460` là `2026-07-19T19:00:00Z` (Chủ Nhật),
+nhưng `creationTimestamp` thật là `2026-07-21T08:00:18Z` — **trễ 37 giờ**. CronJob không
+đặt `startingDeadlineSeconds` và dùng `concurrencyPolicy: Forbid`, nên nhiều khả năng
+lịch chạy đúng ngày 19/07 cũng đã **lỡ âm thầm** (không log, không sự kiện Failed — chỉ
+đơn giản không chạy). Ghi rõ điều này để AIO02 không tìm log sai cửa sổ thời gian khi
+điều tra.
+
+**Bằng chứng đã bác bỏ giả thuyết credential S3 retry vô hạn:**
+
+| Job | Bắt đầu | S3 archive | Kết quả |
+|---|---|---|---|
+| `aiops-anomaly-training-29741460` (7 ngày, image `IF-v23`) | `2026-07-21T08:00:18Z` | ghi trọn 7 model lên `s3://tf3-aiops-models-197826770971/archive/20260721-080819/` lúc `08:08:25–08:08:35Z` (8 phút sau khi chạy) | treo thêm 52 phút, bị giết lúc `09:00:18Z` |
+| `aiops-anomaly-training-29751540` (38 giờ, image `IF-v25`) | `2026-07-26T19:00:00Z` | **không sinh archive nào** | treo sớm hơn hẳn — hành vi khác lần trước |
+
+Nghĩa là Prometheus query được, S3 credential ghi được, train xong bình thường ở job đầu.
+Job treo ở bước **sau khi archive**, không bao giờ promote sang `current/`. Bỏ hẳn giả
+thuyết credential S3. Giữ giả thuyết lệch image (`IF-v25` vs `IF-v63` engine đang chạy) —
+và bản thân image CronJob cũng đã đổi giữa hai lần chạy (`IF-v23` → `IF-v25`), tức có ai
+đó từng sửa nó ngoài GitOps.
+
+Hệ quả thật (đã kiểm chứng, không phải suy đoán): `current/*.joblib` ghi lần cuối
+`2026-07-21T14:35:28Z` — model anomaly detection hiện tại đã cũ **7 ngày**, không phải
+"ít nhất 2 tuần" như ước đoán trước đó.
 
 **Quyết định: cố ý KHÔNG xoá hai Job `Failed` này**, dù xoá đi là Application xanh
 (`Healthy`) ngay lập tức. Hai Job đó là bằng chứng của một pipeline đang hỏng — xoá bằng
 chứng trước khi điều tra là đi sai hướng. Đây là việc của AIO02, đã đưa vào "Việc cần
 AIO02 xác nhận" bên dưới.
+
+**"Giữ làm bằng chứng" có hạn sử dụng.** `failedJobsHistoryLimit: 3` nghĩa là sau 2 lần
+fail nữa (job thứ ba, thứ tư), controller **tự xoá Job Failed cũ nhất** — không cần ai
+đụng tay. Muốn giữ thật thì phải copy YAML của hai Job này vào `docs/evidence/` ngay, chứ
+không dựa vào việc "không xoá" trong cluster.
+
+**Chấp nhận `Degraded` dài hạn có giá.** Application `aiops-engine` sẽ đứng `Degraded`
+cho tới khi AIO02 xử lý pipeline training — có thể nhiều tuần. `shopping-copilot` cũng
+đang `Degraded` từ trước. Hai app cùng đỏ trên dashboard ArgoCD làm tín hiệu bão hoà: một
+Deployment hỏng thật sau này (lỗi thật, cần xử lý ngay) sẽ trông y hệt hai cái đang biết
+là "để đó có chủ đích". Phase 2/3 nên cân nhắc cách phân biệt (annotation, dashboard riêng)
+thay vì để mọi `Degraded` trông như nhau.
 
 ### Cảnh báo vận hành cho Phase 2/3 — `kubectl diff` không còn là cổng kiểm chứng sạch
 
@@ -292,6 +326,77 @@ Phase 1, bước 3) **không còn dùng được từ Phase 2 trở đi**. Thay 
 lọc": chấp nhận đúng pattern nhiễu đã biết (tracking-id + generation) cộng đúng những
 dòng PR chủ đích đổi; bất kỳ dòng lạ nào khác ngoài hai nhóm đó là cảnh báo thật, phải
 dừng lại kiểm tra trước khi merge.
+
+**Phương án tốt hơn "diff có chọn lọc": để ArgoCD tự diff.** Thay vì `kubectl diff` phía
+client (không biết cơ chế annotation-tracking của ArgoCD nên luôn nhiễu), dùng chuẩn diff
+của chính ArgoCD qua `status.resources[].status` của Application (`kubectl get application
+aiops-engine -n argocd -o jsonpath='{.status.resources}'` hoặc `argocd app diff
+aiops-engine`) — một lệnh, kết quả dứt khoát `Synced`/`OutOfSync` theo đúng cơ chế
+tracking mà ArgoCD dùng để quyết định sync, không lẫn nhiễu client-side. Phase 2/3 nên
+dùng cái này làm cổng kiểm chứng thay vì `kubectl diff`.
+
+### Rủi ro phát hiện thêm sau Phase 1
+
+Adopt xong lộ ra 5 rủi ro không thấy được khi workload còn ngoài GitOps. Không cái nào
+chặn Phase 1 (đã merge), nhưng đều phải xử lý trước hoặc trong Phase 2/3.
+
+**a. PriorityClass `low-priority` preempt production.** `value: 1000` +
+`preemptionPolicy: PreemptLowerPriority`, trong khi cả 44 pod trong `techx-tf3` đều ở
+priority mặc định 0 — tên "low-priority" đánh lừa, nó thực ra cao hơn toàn bộ production.
+19:00 UTC Chủ Nhật hằng tuần, nếu scheduler không xếp được pod training (500m CPU/512Mi)
+vì cụm chật, nó sẽ preempt một pod production bất kỳ (checkout, cart, payment...) chứ
+không "nhường" như tên gợi ý. Xem comment đã sửa trong
+`gitops/aiops-engine/priorityclass.yaml`. `value` và `preemptionPolicy` là **immutable**
+trong Kubernetes — sửa phải xoá và tạo lại PriorityClass, không làm được bằng một commit
+thường. Quyết định riêng, để Phase 2/3.
+
+**b. Va chạm quyền sở hữu NetworkPolicy với CDO01.** CDO01 đã có sẵn policy cho chính
+workload này: `gitops/infrastructure/network-policy-staged/07-aiops-engine.yaml` (tên
+`aiops-engine-platform-policy`, annotate `promotion-blocked: "true"`,
+`kubernetes-api-dependency: "unverified"`) — tức CDO01 cũng biết object này chưa an toàn
+để promote. Spec này (mục Phase 3 ở trên) định tạo file mới
+`gitops/aiops-engine/networkpolicy.yaml`, thuộc **Application khác**
+(`aiops-engine`, không phải `techx-infrastructure-app`), mà không hề nhắc tới file đã có
+của CDO01. Nếu cả hai cùng lên: nhẹ thì hai policy trùng chức năng do hai owner khác nhau
+quản lý song song; nặng thì trùng tên object → hai Application cùng `selfHeal` giành
+quyền sở hữu, `OutOfSync` lật qua lật lại vĩnh viễn. Phase 3 phải **chọn một owner, không
+viết lại file mới**, và phối hợp trực tiếp với CDO01 trước khi tạo `networkpolicy.yaml`.
+
+**c. Pod CronJob training không có label → chết khi default-deny lên.**
+`gitops/aiops-engine/cronjob.yaml` không đặt `metadata.labels` ở cả `jobTemplate` lẫn pod
+template (live xác nhận cả hai đều `{}`). Policy staged `07-aiops-engine.yaml` của CDO01
+chỉ chọn `app: aiops-engine`, nên **không** phủ pod training. Còn
+`90-default-deny-all.yaml` chọn `podSelector: {}` — tức toàn bộ pod trong namespace, gồm
+cả pod training. Ngày CDO01 promote default-deny, job training mất DNS + Prometheus + S3
+và treo đủ `activeDeadlineSeconds: 3600` **mỗi tuần, vĩnh viễn** — đúng triệu chứng đang
+thấy ở hai Job `Failed` hiện tại (dù nguyên nhân hiện tại là lệch image, không phải
+default-deny — default-deny chưa promote). Vá: thêm `app: aiops-engine` vào pod template
+của `jobTemplate` trong `cronjob.yaml`. Đổi `jobTemplate` không restart gì (CronJob không
+có pod đang chạy để ảnh hưởng), chỉ tác động tới job tương lai. Việc Phase 2/3.
+
+**d. Kết luận RBAC cần viết lại kèm điều kiện.** Mục "RBAC" ở Phase 3 (trên) đang kết
+luận "không cần siết thêm ở Phase 3" dựa trên việc Role không có `pods/exec` hay
+`pods: delete`. Bằng chứng ngược: log engine live lúc `2026-07-28T10:13` cho thấy
+Isolation Forest gắn cờ **ANOMALY cho 6/7 service lõi** (checkout, payment,
+product-catalog, product-reviews, shipping, recommendation) ở **mọi chu kỳ 30 giây**,
+engine đang tự throttle vì "alert fatigue" — model là bản 21/07, hỏng từ khi
+retraining ngừng hoạt động (xem "Phát hiện mới" ở Phase 1). Trong khi đó SA có
+`update`/`patch` trên `deployments/scale` và `rollouts/scale` (gồm `checkout-rollout`).
+Thứ duy nhất ngăn engine tự hành động sai trên toàn bộ 6 service đang bị flag là runtime
+mode đọc/ghi qua `POST /remediation/mode` — **endpoint không xác thực** (xem "Lỗ hổng 1"
+ở trên) — và Phase 3 (mục "Khôi phục luồng duyệt Slack") lại định mở lại
+`/remediation/interactive` qua cloudflared. Kết luận đúng phải có điều kiện: **siết RBAC
+hoặc chặn đổi mode cho tới khi training chạy lại và model được kiểm định** — không phải
+"không cần làm gì".
+
+**e. AppProject `default` cho phép mọi tài nguyên cluster-scoped.**
+`clusterResourceWhitelist: [{group: "*", kind: "*"}]` trên AppProject `default` (nơi
+`aiops-engine-app.yaml` khai `project: default`) — hôm nay `gitops/aiops-engine/` chỉ có
+một PriorityClass, nhưng vì wildcard này, một ClusterRole hay ClusterRoleBinding lọt vào
+thư mục này sau này (do AIO02 hoặc ai đó thêm nhầm) sẽ được `selfHeal` apply cluster-wide
+lặng lẽ, không cổng chặn nào giữ lại. Không chặn Phase 1/2, nhưng Phase 3 nên cân nhắc
+AppProject riêng cho `aiops-engine` với `clusterResourceWhitelist` giới hạn đúng
+`PriorityClass`.
 
 ### Phase 2 — IRSA thật, giết static admin key
 
@@ -334,12 +439,23 @@ là engine chết.
 | `jaeger` | 16686 | podSelector trong ns |
 | `opensearch` | 9200 | podSelector trong ns |
 | CoreDNS | 53 UDP/TCP | **phải có `ipBlock 172.20.0.10/32`** |
-| kube-apiserver | 443 | ipBlock endpoint EKS |
+| kube-apiserver | 443 | ipBlock endpoint EKS **+ ipBlock ClusterIP `172.20.0.1/32`** |
 | AWS API (Bedrock/S3/Slack) | 443 | qua NAT |
 
 Bài học đã trả giá 3 lần ở Mandate #17: trên VPC CNI, egress rule bằng `podSelector` tới
 ClusterIP không hoạt động — mọi rule cần `ipBlock` ClusterIP `/32`. Xem postmortem 0012:
-batch NetworkPolicy dùng podSelector thay ipBlock đã gây outage 30 phút ngày 20/07.
+batch NetworkPolicy dùng podSelector thay ipBlock đã gây outage 30 phút ngày 20/07. Bảng
+gốc ở trên chỉ ghi "ipBlock endpoint EKS" cho kube-apiserver — **thiếu** — engine đi tới
+API server qua Service ClusterIP `172.20.0.1`, nên chỉ mở endpoint private EKS là chưa
+đủ; cần cả `172.20.0.1/32` (kube-apiserver) và `172.20.0.10/32` (DNS).
+
+**File staged của CDO01 dính lỗi ngược lại.** `07-aiops-engine.yaml` (xem mục rủi ro
+"Va chạm quyền sở hữu NetworkPolicy" bên dưới) dùng `0.0.0.0/0 except 172.16.0.0/12` cho
+egress rộng. `172.16.0.0/12` phủ `172.16.0.0–172.31.255.255`, mà ClusterIP CIDR của
+cluster (`172.20.0.0/16`, gồm cả `172.20.0.1` kube-apiserver và `172.20.0.10` DNS) nằm
+trọn trong dải đó — nên bị `except` loại trừ luôn. Cùng một lớp lỗi "quên ClusterIP" như
+bảng gốc ở trên, chỉ khác cách biểu diễn (loại trừ nhầm thay vì quên mở). Phase 3 phải
+test rule thật trên VPC CNI trước khi promote, không suy diễn CIDR trên giấy.
 
 Ingress: chỉ cho `cloudflared` (sau khi Phase 3 dựng lại đường Slack), mặc định deny.
 
