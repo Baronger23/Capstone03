@@ -67,10 +67,11 @@
   },
   "overrides": {
     "@opentelemetry/propagator-jaeger": "2.9.0",
+    "brace-expansion": "5.0.8",
     "fast-uri": "3.1.2",
     "minimatch": "9.0.7",
     "picomatch": "4.0.4",
-    "postcss": "8.5.12",
+    "postcss": "8.5.18",
     "protobufjs": "7.6.1",
     "sharp": "$sharp"
   }

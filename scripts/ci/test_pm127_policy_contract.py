@@ -15,9 +15,12 @@ def load(path):
     return yaml.safe_load((REPO / path).read_text())
 
 
-def test_first_party_policy_is_audit_and_requires_exact_signature_and_sbom():
+def test_first_party_policy_enforces_and_requires_exact_signature_and_sbom():
     policy = load("gitops/policies/kyverno/verify-first-party-signatures.yaml")
-    assert policy["spec"]["validationFailureAction"] == "Audit"
+    # Enforce since 2026-07-28. The directive is explicit that reporting-only
+    # does not count, so this guards against a silent revert to Audit - a policy
+    # that still reads as active while blocking nothing.
+    assert policy["spec"]["validationFailureAction"] == "Enforce"
     assert policy["spec"]["background"] is True
     verify = policy["spec"]["rules"][0]["verifyImages"][0]
     # Grafana is first-party but its subchart hardcodes
@@ -56,7 +59,11 @@ def test_external_policy_catalog_is_exactly_the_reviewed_catalog():
     policy = load("gitops/policies/kyverno/allow-approved-external-image-digests.yaml")
     catalog = load("docs/evidence/mandate-10/external-image-allowlist.yaml")
     expected = {entry["image"] for entry in catalog["images"]}
-    assert policy["spec"]["validationFailureAction"] == "Audit"
+    # Enforce since 2026-07-28. The assertion used to pin Audit to stop an
+    # accidental cutover; now it guards the other direction, so a silent revert
+    # to reporting-only shows up as a failing test instead of a policy that
+    # looks active but blocks nothing.
+    assert policy["spec"]["validationFailureAction"] == "Enforce"
     assert policy["spec"]["background"] is True
     foreach = policy["spec"]["rules"][0]["validate"]["foreach"]
     assert len(foreach) == 3
