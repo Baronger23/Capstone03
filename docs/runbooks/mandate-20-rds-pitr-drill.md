@@ -35,6 +35,7 @@ Expected data loss in probe: 0 row
 $Region = "ap-southeast-1"
 $SourceDb = "techx-tf3-postgres"
 $DrillId = "techx-tf3-postgres-drill-$(Get-Date -Format 'yyyyMMdd-HHmm')"
+$DrillMarkerId = "m20-rds-pitr-$(Get-Date -Format 'yyyyMMdd-HHmm')"
 
 git rev-parse --short origin/main
 aws sts get-caller-identity
@@ -64,6 +65,7 @@ Stop nếu:
 Kết nối production RDS bằng đường vận hành hiện có, chỉ tạo schema probe:
 
 ```sql
+-- Replace <DRILL_MARKER_ID> with the PowerShell $DrillMarkerId for this drill.
 CREATE SCHEMA IF NOT EXISTS dr_drill;
 
 CREATE TABLE IF NOT EXISTS dr_drill.restore_probe (
@@ -74,31 +76,32 @@ CREATE TABLE IF NOT EXISTS dr_drill.restore_probe (
 );
 
 INSERT INTO dr_drill.restore_probe(id, expected_payload)
-VALUES ('m20-rds-pitr-001', 'GOOD_BEFORE_CORRUPTION')
+VALUES ('<DRILL_MARKER_ID>', 'GOOD_BEFORE_CORRUPTION')
 ON CONFLICT (id) DO UPDATE
 SET expected_payload = EXCLUDED.expected_payload,
     updated_at = clock_timestamp();
 
 SELECT id, expected_payload, clock_timestamp() AT TIME ZONE 'UTC' AS t_good_commit_utc
 FROM dr_drill.restore_probe
-WHERE id = 'm20-rds-pitr-001';
+WHERE id = '<DRILL_MARKER_ID>';
 ```
 
-Ghi lại `T_good_commit_utc`.
+Ghi lại `T_good_commit_utc` và marker id của lần drill. Không dùng lại marker id cũ nếu chạy nhiều lần.
 
 ## 5. Corrupt marker in controlled scope
 
 Đợi 60-120 giây rồi chạy:
 
 ```sql
+-- Replace <DRILL_MARKER_ID> with the marker id used in step 4.
 UPDATE dr_drill.restore_probe
 SET expected_payload = 'CORRUPTED_AFTER_GOOD_TIME',
     updated_at = clock_timestamp()
-WHERE id = 'm20-rds-pitr-001';
+WHERE id = '<DRILL_MARKER_ID>';
 
 SELECT id, expected_payload, clock_timestamp() AT TIME ZONE 'UTC' AS t_corrupt_commit_utc
 FROM dr_drill.restore_probe
-WHERE id = 'm20-rds-pitr-001';
+WHERE id = '<DRILL_MARKER_ID>';
 ```
 
 Chọn `T_restore` nằm sau `T_good_commit_utc` và trước `T_corrupt_commit_utc`.
@@ -153,9 +156,10 @@ aws rds describe-db-instances `
 Kết nối DB drill, chạy:
 
 ```sql
+-- Run this on the restored drill DB, not production.
 SELECT id, expected_payload, created_at, updated_at, clock_timestamp() AT TIME ZONE 'UTC' AS verify_time_utc
 FROM dr_drill.restore_probe
-WHERE id = 'm20-rds-pitr-001';
+WHERE id = '<DRILL_MARKER_ID>';
 ```
 
 Pass nếu:
@@ -187,11 +191,18 @@ aws rds wait db-instance-deleted `
   --db-instance-identifier $DrillId
 ```
 
-Nếu không cần giữ marker production:
+Production marker cleanup phải có phạm vi hẹp. **Không dùng** `DROP SCHEMA dr_drill CASCADE` trên production vì lệnh đó xóa toàn bộ schema, có thể làm mất marker/history của các lần drill khác.
+
+Khuyến nghị mặc định: giữ lại row marker trong production để làm audit trail. Nếu PM/mentor yêu cầu cleanup dữ liệu probe, chỉ xóa đúng marker id của lần drill:
 
 ```sql
-DROP SCHEMA dr_drill CASCADE;
+-- Run on production RDS only if marker cleanup is explicitly approved.
+-- Replace <DRILL_MARKER_ID> with the marker id used in this drill.
+DELETE FROM dr_drill.restore_probe
+WHERE id = '<DRILL_MARKER_ID>';
 ```
+
+Không drop schema/table trừ khi có change request riêng và đã xác nhận không còn marker/history cần giữ.
 
 ## 10. Evidence record checklist
 
@@ -205,6 +216,7 @@ T_good_commit:
 T_restore:
 T_corrupt_commit:
 DB drill identifier:
+Drill marker id:
 Restore start/end:
 RTO measured:
 Production corrupt query:

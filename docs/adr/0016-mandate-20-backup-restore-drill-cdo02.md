@@ -24,7 +24,7 @@ CDO02 chọn **RDS PostgreSQL `techx-tf3-postgres` làm restore drill chính** c
 
 Drill sẽ chạy theo mô hình:
 
-1. Tạo marker dữ liệu tốt trong schema probe riêng `dr_drill` trên production RDS.
+1. Tạo marker dữ liệu tốt với id duy nhất theo lần drill trong schema probe riêng `dr_drill` trên production RDS.
 2. Ghi lại `T_good_commit`.
 3. Gây hỏng có kiểm soát chỉ trên row probe, chuyển payload sang `CORRUPTED_AFTER_GOOD_TIME`.
 4. Chọn `T_restore` nằm sau `T_good_commit` và trước `T_corrupt_commit`.
@@ -51,6 +51,7 @@ Trong drill CDO02 không được:
 - Rebuild image hoặc đổi Helm values.
 - Chạy `DROP`, `DELETE`, `TRUNCATE`, `UPDATE` trên bảng khách hàng.
 - Cleanup DB drill trước khi evidence được mentor/PM xác nhận.
+- Drop schema/table probe trên production trong cleanup thường lệ.
 
 DB drill chỉ là tài nguyên tạm để chứng minh restore, ví dụ:
 
@@ -66,7 +67,7 @@ CDO02 claim các phần sau:
 - Runbook restore an toàn, không ảnh hưởng production traffic.
 - Evidence SQL: GOOD -> CORRUPTED -> RESTORED GOOD.
 - RTO measured.
-- Cleanup DB drill.
+- Cleanup DB drill; production marker cleanup nếu có thì chỉ xóa đúng marker id của lần drill, hoặc giữ lại làm audit trail.
 - Coverage matrix cho store khác: ElastiCache, MSK, DynamoDB lock, EBS legacy, GitOps/IaC state.
 
 CDO02 không tự claim hoàn tất toàn bộ yêu cầu Security của Mandate #20 nếu chưa có verdict từ CDO01.
@@ -121,6 +122,7 @@ T_good_commit:
 T_restore:
 T_corrupt_commit:
 DB drill identifier:
+Drill marker id:
 Restore start/end:
 RTO measured:
 Production corrupt query:
