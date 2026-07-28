@@ -895,7 +895,7 @@ components:
       tag: 43dcf62-29569108433-product-reviews
     resources:
       requests:
-        cpu: 100m
+        cpu: 150m
         memory: 80Mi
       limits:
         cpu: 500m
@@ -1449,6 +1449,8 @@ components:
     # stages 5 -> 25 -> 50 -> 100 after every gate passes. The global fallback
     # remains shadow because protected routes use its non-binding 10k/s bucket.
     envOverrides:
+      - name: FRONTEND_HOST
+        value: frontend-headless
       - name: BROWSE_RATE_LIMIT_MAX_TOKENS
         value: "100"
       - name: BROWSE_RATE_LIMIT_TOKENS_PER_FILL
