@@ -18,11 +18,11 @@ spec:
   scaleTargetRef:
     { apiVersion: apps/v1, kind: Deployment, name: frontend-proxy }
   minReplicas: 2
-  maxReplicas: 12
+  maxReplicas: 8
   metrics:
     - type: Resource
       resource:
-        { name: cpu, target: { type: Utilization, averageUtilization: 75 } }
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -43,10 +43,10 @@ metadata:
   name: frontend-hpa
   namespace: techx-tf3
   annotations:
-    # PM-153 (Mandate-19): tăng maxReplicas 8→12 để frontend có đủ replica headroom
-    # khi breakpoint ~410 users — PM-152 evidence cho thấy 8 replicas đã đạt max
-    # trong lúc CPU throttling xảy ra. Không tăng node, chỉ cho HPA scale rộng hơn
-    # trên elastic Spot NodePool hiện có. target 75% (từ 65%) để pack hiệu quả hơn.
+    # PM-153 (Mandate-19): PM-152 found frontend CPU saturation first at the
+    # 410-user failing stage. The higher target packs more work on each existing
+    # node; maxReplicas only removes the pod ceiling. The benchmark run must freeze
+    # and verify the node-set before claiming a throughput-density improvement.
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: frontend }
   minReplicas: 2
@@ -78,11 +78,11 @@ spec:
   scaleTargetRef:
     { apiVersion: apps/v1, kind: Deployment, name: product-catalog }
   minReplicas: 2
-  maxReplicas: 12
+  maxReplicas: 8
   metrics:
     - type: Resource
       resource:
-        { name: cpu, target: { type: Utilization, averageUtilization: 75 } }
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0

@@ -157,9 +157,10 @@ func initDatabase() error {
 	// this, database/sql defaults to unlimited open connections, so under load
 	// product-catalog can exhaust Postgres max_connections - and Postgres here is
 	// shared with product-reviews + accounting, so leave headroom for them too.
-	// Mandate 19: increased MaxOpenConns from 20 to 40.
-	db.SetMaxOpenConns(40)
-	db.SetMaxIdleConns(20)
+	// Keep this iteration scoped to the frontend HPA ceiling only; do not change
+	// the DB pool in the same hypothesis.
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	reg, err = otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(semconv.DBSystemNamePostgreSQL))
