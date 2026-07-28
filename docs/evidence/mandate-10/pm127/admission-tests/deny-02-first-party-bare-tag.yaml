@@ -1,0 +1,16 @@
+# EXPECT DENY (allow-approved-external-image-digests): first-party repository but
+# pinned by tag alone. Without a digest there is nothing to verify, so the image
+# falls to the external rule and is denied for not being in the catalogue.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: deny-02-first-party-bare-tag
+  namespace: techx-tf3
+  labels:
+    pm127-admission-test: "true"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:01011a2-30186442291-checkout
+      command: ["sleep", "300"]

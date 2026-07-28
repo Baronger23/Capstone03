@@ -1,0 +1,17 @@
+# EXPECT DENY (allow-approved-external-image-digests): a public image that is
+# digest-pinned but absent from the reviewed catalogue. Without this policy any
+# public image could run in techx-tf3, which is the hole that makes the claim
+# "the cluster only runs signed images" false.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: deny-03-unapproved-external
+  namespace: techx-tf3
+  labels:
+    pm127-admission-test: "true"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: nginx@sha256:9f5d1a0b6c8ad4a0d6f1e2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7
+      command: ["sleep", "300"]

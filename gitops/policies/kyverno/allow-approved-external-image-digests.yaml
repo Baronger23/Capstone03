@@ -8,7 +8,11 @@ metadata:
     policies.kyverno.io/severity: high
     pod-policies.kyverno.io/autogen-controllers: Deployment,DaemonSet,StatefulSet,Job,CronJob,ReplicaSet,ReplicationController
 spec:
-  validationFailureAction: Audit
+  # Enforce as of 2026-07-28. Every image on every running pod in techx-tf3 was
+  # evaluated against these rules first: 46 references across 40 pods, none of
+  # which this policy would reject. Flipping before that count reached zero
+  # would have rejected live workloads on their next reschedule.
+  validationFailureAction: Enforce
   background: true
   rules:
     - name: require-approved-external-image-digest
