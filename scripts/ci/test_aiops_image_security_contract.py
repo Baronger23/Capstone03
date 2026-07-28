@@ -15,7 +15,7 @@ COMPOSE_FILE = (
 DOCKERIGNORE = REPO_ROOT / "aiops-engine" / ".dockerignore"
 
 
-def test_aiops_uses_common_first_party_pipeline_without_auto_promotion():
+def test_aiops_uses_common_first_party_pipeline_with_raw_manifest_promotion():
     workflow = COMMON_WORKFLOW.read_text()
 
     assert not DEDICATED_WORKFLOW.exists()
@@ -30,7 +30,9 @@ def test_aiops_uses_common_first_party_pipeline_without_auto_promotion():
         )
     ) == 2
     assert workflow.count('"aiops-engine"|"aiops-engine/"*') == 2
-    assert workflow.count("--excluded-service aiops-engine") == 2
+    assert workflow.count("--excluded-service aiops-engine") == 1
+    assert '"gitops/aiops-engine/deployment.yaml"' in workflow
+    assert '"gitops/aiops-engine/cronjob.yaml"' in workflow
     assert workflow.count(
         'BAKE_ALLOW+=(--allow "fs.read=$GITHUB_WORKSPACE/aiops-engine")'
     ) == 3
