@@ -23,8 +23,13 @@ locals {
   # app's kb_client defaults BEDROCK_KB_REGION to us-east-1, so Retrieve() targets us-east-1.
   copilot_guardrail_region = "us-east-1"
   copilot_guardrail_id     = "3ab7r29x59x4"
-  copilot_kb_id            = "UCTITOWFHE"
-  copilot_kb_region        = "us-east-1"
+  # 3ab7r29x59x4 is a CROSS-REGION guardrail: ApplyGuardrail resolves it through a
+  # cross-region guardrail-profile (us.guardrail.v1:0), and IAM authorizes against that
+  # profile ARN - not just the guardrail ARN. Without it, ApplyGuardrail is AccessDenied and
+  # the app fails open (L2 content filter silently bypassed).
+  copilot_guardrail_profile = "us.guardrail.v1:0"
+  copilot_kb_id             = "UCTITOWFHE"
+  copilot_kb_region         = "us-east-1"
 
   copilot_products_bucket = "techx-products-catalog-2026"
 }
@@ -80,10 +85,13 @@ resource "aws_iam_role_policy" "shopping_copilot_bedrock" {
         ]
       },
       {
-        Sid      = "ApplyBedrockGuardrail"
-        Effect   = "Allow"
-        Action   = ["bedrock:ApplyGuardrail"]
-        Resource = ["arn:aws:bedrock:${local.copilot_guardrail_region}:${data.aws_caller_identity.current.account_id}:guardrail/${local.copilot_guardrail_id}"]
+        Sid    = "ApplyBedrockGuardrail"
+        Effect = "Allow"
+        Action = ["bedrock:ApplyGuardrail"]
+        Resource = [
+          "arn:aws:bedrock:${local.copilot_guardrail_region}:${data.aws_caller_identity.current.account_id}:guardrail/${local.copilot_guardrail_id}",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:guardrail-profile/${local.copilot_guardrail_profile}",
+        ]
       },
       {
         Sid      = "RetrieveFromKnowledgeBase"
