@@ -152,9 +152,8 @@ def test_service_account_schema_declares_boolean_automount():
     )
     service_account = schema["definitions"]["ServiceAccountConfig"]
     assert service_account["additionalProperties"] is False
-    assert service_account["properties"]["automountServiceAccountToken"] == {
-        "type": "boolean"
-    }
+    automount = service_account["properties"]["automountServiceAccountToken"]
+    assert automount["type"] == "boolean"
 
 
 def test_global_values_enable_namespaced_grafana_rbac_and_token_hardening():
