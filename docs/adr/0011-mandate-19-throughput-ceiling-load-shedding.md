@@ -100,7 +100,8 @@ The current implementation remains in shadow mode:
 filter_enabled:  numerator: 100   # Count would-be shedding
 filter_enforced: numerator: 0     # Do not reject production traffic
 token_bucket:
-  max_tokens: 50
+  max_tokens: 100
+  tokens_per_fill: 50
 ```
 After shadow counters and protected-route matching are verified, enforcement
 must be promoted gradually in a separate reviewed change. Directive #19 is not

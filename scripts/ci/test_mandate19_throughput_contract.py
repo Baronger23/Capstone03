@@ -22,9 +22,9 @@ def _block(text: str, start: str, end: str) -> str:
 def test_frontend_hpa_packs_existing_nodes_and_has_replica_headroom():
     text = HPA.read_text(encoding="utf-8")
     block = _block(text, "name: frontend-hpa", "name: product-catalog-hpa")
-    assert "maxReplicas: 12" in block
-    assert "averageUtilization: 75" in block
-    assert "node-set" in block
+    assert "maxReplicas: 8" in block
+    assert "averageUtilization: 65" in block
+    assert "staged PR" in block and "capacity step" in block
 
 
 def test_frontend_cpu_request_matches_measured_usage_denominator():
@@ -43,7 +43,8 @@ def test_browse_shadow_mode_and_checkout_funnel_precedes_catch_all():
     assert checkout < browse and cart < browse and detail < browse
 
     browse_block = _block(text, "name: browse_shedable", "http_filters:")
-    assert "max_tokens: 50" in browse_block
+    assert "max_tokens: 100" in browse_block
+    assert "tokens_per_fill: 50" in browse_block
     assert re.search(
         r"filter_enabled:[\s\S]*?numerator:\s+100", browse_block
     )

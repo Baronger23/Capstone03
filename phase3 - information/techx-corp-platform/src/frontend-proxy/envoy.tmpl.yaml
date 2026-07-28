@@ -93,10 +93,11 @@ static_resources:
                                 # 10% system margin before dividing by the minimum
                                 # two Ready proxies:
                                 # floor(((174.75 * 0.70) - (174.75 * 0.10)) / 2)
-                                # = 52 RPS/proxy; round down to 50 for a safe,
-                                # deterministic checkout reserve. Recalibrate from
+                                # = 52 RPS/proxy. During shadow we allow a small
+                                # burst (100 tokens) while measuring a sustained
+                                # fill rate of 50 RPS/proxy. Recalibrate both from
                                 # the measured new ceiling after the after-run.
-                                 max_tokens: 50
+                                 max_tokens: 100
                                  tokens_per_fill: 50
                                  fill_interval: 1s
                                filter_enabled:
