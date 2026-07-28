@@ -22,7 +22,7 @@ spec:
   metrics:
     - type: Resource
       resource:
-        { name: cpu, target: { type: Utilization, averageUtilization: 75 } }
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -42,6 +42,11 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: frontend-hpa
   namespace: techx-tf3
+  annotations:
+    # PM-153 (Mandate-19): PM-152 found frontend CPU saturation first at the
+    # 410-user failing stage. The higher target packs more work on each existing
+    # node. This staged PR changes only the CPU request/target; raise maxReplicas
+    # in a separately measured capacity step after the 65% target is validated.
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: frontend }
   minReplicas: 2
@@ -49,7 +54,7 @@ spec:
   metrics:
     - type: Resource
       resource:
-        { name: cpu, target: { type: Utilization, averageUtilization: 75 } }
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
