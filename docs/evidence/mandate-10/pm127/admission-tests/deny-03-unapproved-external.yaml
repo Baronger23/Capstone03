@@ -2,6 +2,10 @@
 # digest-pinned but absent from the reviewed catalogue. Without this policy any
 # public image could run in techx-tf3, which is the hole that makes the claim
 # "the cluster only runs signed images" false.
+#
+# securityContext satisfies PodSecurity "restricted" so PodSecurity does not
+# reject the pod before Kyverno evaluates it. Without this the request is
+# refused for the wrong reason and proves nothing about image policy.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -11,7 +15,16 @@ metadata:
     pm127-admission-test: "true"
 spec:
   restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: probe
       image: nginx@sha256:9f5d1a0b6c8ad4a0d6f1e2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7
       command: ["sleep", "300"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]

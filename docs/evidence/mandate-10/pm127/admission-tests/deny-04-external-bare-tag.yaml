@@ -1,6 +1,10 @@
 # EXPECT DENY (allow-approved-external-image-digests): a tag can be repointed
 # upstream at any time, so a tag is not a pin. The catalogue holds
 # busybox@sha256:73aaf090..., and this string does not match it.
+#
+# securityContext satisfies PodSecurity "restricted" so PodSecurity does not
+# reject the pod before Kyverno evaluates it. Without this the request is
+# refused for the wrong reason and proves nothing about image policy.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -10,7 +14,16 @@ metadata:
     pm127-admission-test: "true"
 spec:
   restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: probe
       image: busybox:latest
       command: ["sleep", "300"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
