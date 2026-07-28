@@ -139,6 +139,26 @@ def load_active_policy(filename, name):
     raise AssertionError(f"{name} was not found in active {filename}")
 
 
+def ingress_ports_from_source(policy, source):
+    ports = set()
+    for rule in policy["spec"].get("ingress", []):
+        for peer in rule.get("from", []):
+            labels = peer.get("podSelector", {}).get("matchLabels", {})
+            if source in labels.values():
+                ports.update(port["port"] for port in rule.get("ports", []))
+    return ports
+
+
+def egress_ports_for_pod_label(policy, key, value):
+    ports = set()
+    for rule in policy["spec"].get("egress", []):
+        for peer in rule.get("to", []):
+            labels = peer.get("podSelector", {}).get("matchLabels", {})
+            if labels.get(key) == value:
+                ports.update(port["port"] for port in rule.get("ports", []))
+    return ports
+
+
 def walk(node):
     if isinstance(node, dict):
         yield node
@@ -198,6 +218,51 @@ def ipblocks_for_egress_port(policy, port):
                 if "ipBlock" in peer
             )
     return cidrs
+
+
+def test_grafana_policy_uses_post_dnat_pod_peers_and_private_api_subnets():
+    active = load_active_policy(
+        "network-policy-grafana.yaml", "grafana-network-policy"
+    )
+    staged = load_policy("01-grafana.yaml")
+    api_subnets = {
+        "172.20.0.1/32",
+        "10.0.0.0/20",
+        "10.0.16.0/20",
+        "10.0.32.0/20",
+    }
+
+    assert ingress_ports_from_source(active, "cloudflared") == {3000}
+    for policy in (active, staged):
+        assert not contains_public_cidr(policy)
+        assert policy["spec"]["podSelector"]["matchLabels"] == {
+            "app.kubernetes.io/instance": "techx-corp",
+            "app.kubernetes.io/name": "grafana",
+        }
+        assert egress_ports_for_pod_label(
+            policy, "app.kubernetes.io/name", "prometheus"
+        ) == {9090}
+        assert egress_ports_for_pod_label(
+            policy, "app.kubernetes.io/name", "jaeger"
+        ) == {16685, 16686}
+        assert egress_ports_for_pod_label(
+            policy, "app.kubernetes.io/name", "opensearch"
+        ) == {9200}
+        for service_port in (53, 9090, 16685, 16686, 9200):
+            assert ipblocks_for_egress_port(policy, service_port) == set()
+        assert ipblocks_for_egress_port(policy, 443) == api_subnets
+        assert policy["metadata"]["annotations"][
+            "mandate-17.techx.io/cni-path-evidence"
+        ] == (
+            "2026-07-27:aws-vpc-cni-v1.22.4,standard,"
+            "policyendpoint-pod-ip-resolution"
+        )
+        assert policy["metadata"]["annotations"][
+            "mandate-17.techx.io/kubernetes-api-endpoint-evidence"
+        ] == "2026-07-27:10.0.23.132,10.0.8.89"
+        assert policy["metadata"]["annotations"][
+            "mandate-17.techx.io/kubernetes-api-service-evidence"
+        ] == "2026-07-27:kubernetes.default.svc=172.20.0.1"
 
 
 def test_staged_inventory_is_one_policy_per_file():

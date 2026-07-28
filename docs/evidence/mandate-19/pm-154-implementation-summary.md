@@ -1,5 +1,9 @@
 # Báo cáo triển khai Mandate-19 (PM-154)
 
+> Historical shadow-stage summary. Superseded by the enforced candidate and
+> evidence contract in `docs/evidence/mandate-19/after-run-template.md`. This
+> document alone is not evidence that Directive #19 passed.
+
 ## 1. Mục tiêu
 Thực thi Mandate-19 (Throughput Ceiling & Load Shedding) qua PR **PM-154**, tập trung cấu hình giới hạn luồng yêu cầu ở mức Application Gateway (Envoy proxy) và tách biệt hoàn toàn với **PM-153** (cấu hình HPA & Circuit Breaker).
 

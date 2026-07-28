@@ -1,0 +1,211 @@
+{
+  "phase": "Giai doan C - backfill first-party evidence",
+  "result": "PASS",
+  "generatedAt": "2026-07-28T06:20:00Z",
+  "workflowRunId": "30333294916",
+  "workflowRunUrl": "https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/actions/runs/30333294916",
+  "workflowDuration": "18m45s",
+  "signatureIdentity": "https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/.github/workflows/build-push-ecr.yml@refs/heads/main",
+  "signatureIssuer": "https://token.actions.githubusercontent.com",
+  "sbomPredicateType": "https://cyclonedx.org/bom",
+  "digestsBackfilled": 20,
+  "verified": {
+    "pass": 20,
+    "fail": 0
+  },
+  "verifierTool": "cosign v2.6.2 (matches the release pipeline and the layout Kyverno reads)",
+  "services": [
+    {
+      "service": "ad",
+      "indexDigest": "sha256:04d1460d9a48b35182d85b17d416f4a4d16b74011bb42fdee417f288340a2052",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "frontend",
+      "indexDigest": "sha256:6e91e6c017ebea643845b1e493fe1a85e455e23d59d3970022a342fcc8ffded6",
+      "sourceSha": "ba46a278fdd4d4b9da6496b6a936ec1942a36049",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "product-catalog",
+      "indexDigest": "sha256:8bfd3b9a23a2fd7624bc116844248ccd2bbb246635927899f0b4208fd179d2ed",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "cart",
+      "indexDigest": "sha256:b6c7b60dec137dfe54f7fdc82b340421661aedbeed6ed34cd55f2ae29916508a",
+      "sourceSha": "3252f28c98f45288e7468ade333a5281a7b9466d",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "checkout",
+      "indexDigest": "sha256:8e22139cae1a6db0aa3dbabc83cba56a2608d78ee21c09541d7024959dac934e",
+      "sourceSha": "b1ae5c11b20d3deb80f4f90b3fcddcdace948c9a",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "payment",
+      "indexDigest": "sha256:801b602b7ac4afc3887a27cb3a97b13ea10ce35bce64afe047e3dd2b42ae5f1d",
+      "sourceSha": "68b20e5d8dc43d9744ef31d49db6e13fea976232",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "currency",
+      "indexDigest": "sha256:f01846d1253f755c96e37b9c321553a9520c3f06ec54780a63048a3966d32fa0",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "shipping",
+      "indexDigest": "sha256:a3c486d60884913b50b0a4858c8d1cd89dfdf8a30c9505577327e308afe990c6",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "product-reviews",
+      "indexDigest": "sha256:bbf660788c9c1b5881bd626f691e26e26a1d5774be13515ebbeefae481afe858",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "recommendation",
+      "indexDigest": "sha256:9cd92fccd5050dbb696beb6a205fd73290a7de311db585cb993bcc35a7c03a35",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "accounting",
+      "indexDigest": "sha256:32aeb5e03cd55a4f6a9927b950d019393e39e480541877471e622f002c3107f7",
+      "sourceSha": "e43df42bacb8b25bba9d2d3f48c4f81f6c0bcb8e",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "email",
+      "indexDigest": "sha256:afdbc98c923cff6e7652d84bee0bea0e658dab0bad99299ae8a9e423969d82f4",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "fraud-detection",
+      "indexDigest": "sha256:45fc3b08aa4a1ef057866565970aaac5672d4a0c6b6a7dd91c1ec0ff65517bb2",
+      "sourceSha": "e43df42bacb8b25bba9d2d3f48c4f81f6c0bcb8e",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "image-provider",
+      "indexDigest": "sha256:004425421f2b16697f836d8463ca8528190582baf8faacc3215bae6c98a69ff6",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "kafka",
+      "indexDigest": "sha256:efc188d08627ea302b98a45bae30ae2868c7ffd1d69a4359019c26dd553419b0",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "llm",
+      "indexDigest": "sha256:62804f4d68d8dafbadffd2703c5ec7f7c3d417fb04b4c1117ea1e0f67027a9f8",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "load-generator",
+      "indexDigest": "sha256:71b9499757000f0eaaccf15d083c2f5073221949839b76455b24ab8ee852a634",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "flagd-ui",
+      "indexDigest": "sha256:fe39070cf36d8d1f1524c6aa7c67393d4ee5871813dd453e36bb79e38910417c",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "frontend-proxy",
+      "indexDigest": "sha256:6b8243bbf1d91d1bc195703fdbe2e8029a948c38b5717efec8b41ecf1847b3f0",
+      "sourceSha": "43dcf62638d1295828f29e11404f97c26a08a282",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    },
+    {
+      "service": "grafana",
+      "indexDigest": "sha256:198bff3b9b5f15962cf0942f38a0a90226f60277e7ef5212294987d160f55958",
+      "sourceSha": "b44ca100b6319772903882113ceb1474d9baa1e5",
+      "signatureVerified": true,
+      "indexAttestationCount": 1,
+      "sourceShaMatchesOriginalBuild": true,
+      "result": "PASS"
+    }
+  ],
+  "notes": [
+    "Image bytes were never touched: every index digest is identical before and after, so no workload rolled.",
+    "build-scan, aggregate and open-image-bump-pr all skipped in 0s - a backfill cannot promote.",
+    "techx.sourceSha carries the commit each image was actually built from, recovered from the promotion commits (bump images from <sha>), so a running pod traces back to a real commit as Directive #10 requires.",
+    "Verification used cosign v2.6.2. Cosign v3 resolves the OCI 1.1 referrers left by the pre-#490 pipeline and reports the CycloneDX attestation as missing; get-sbom.sh now refuses a mismatched major version instead of surfacing that as a false negative.",
+    "grafana is included even though its reference renders as techx-corp:<tag>@sha256:<digest>. The subchart hardcodes that form, so the policy glob will be widened rather than the chart repinned - which also avoids recreating the Grafana pod and disturbing the PM-176 baked-plugin fix."
+  ],
+  "notCoveredYet": [
+    "quote (sha256:445421455ac1...) carries an .att written with the backfill run's SHA instead of its build commit. ECR immutability forbids rewriting it, so it needs a rebuild.",
+    "External images still fail allow-approved-external-image-digests: 8 chart references plus cloudflared.",
+    "Both ClusterPolicies remain in Audit."
+  ]
+}
