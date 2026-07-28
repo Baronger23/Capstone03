@@ -75,6 +75,26 @@ def test_external_policy_catalog_is_exactly_the_reviewed_catalog():
         assert loop["preconditions"]["all"][0]["value"] is False
 
 
+def test_aiops_engine_uses_first_party_image_while_trainer_stays_catalogued():
+    deployment = load("gitops/aiops-engine/deployment.yaml")
+    cronjob = load("gitops/aiops-engine/cronjob.yaml")
+    catalog = load("docs/evidence/mandate-10/external-image-allowlist.yaml")
+
+    engine_image = deployment["spec"]["template"]["spec"]["containers"][0]["image"]
+    trainer_image = (
+        cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["image"]
+    )
+    catalog_images = {entry["image"] for entry in catalog["images"]}
+
+    assert engine_image.startswith(FIRST_PARTY + ":")
+    assert "@sha256:" in engine_image
+    assert engine_image not in catalog_images
+    assert trainer_image in catalog_images
+    assert not any(
+        "tf-2-ai-engine:IF-v63" in entry["image"] for entry in catalog["images"]
+    )
+
+
 def test_policy_application_is_gitops_ordered_after_controller():
     controller = load("gitops/apps/kyverno-app.yaml")
     policies = load("gitops/apps/kyverno-policies-app.yaml")
