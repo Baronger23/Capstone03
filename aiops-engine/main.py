@@ -91,6 +91,7 @@ def enrich_culprit_with_upstream_check(trigger_service: str, lookback_minutes: i
     best_culprit = trigger_service
     highest_score = 0.0
     all_candidates = [trigger_service] + list(related_services)
+    candidates_data = []
 
     for svc in all_candidates:
         if svc == "flagd":

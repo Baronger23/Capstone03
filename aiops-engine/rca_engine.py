@@ -87,13 +87,23 @@ class RCAEngine:
         deepest_error_span = None
         max_depth = -1
 
-        def get_span_depth(sid, current_depth=0):
-            # Hàm đệ quy tìm độ sâu của span trong cây
-            depths = [current_depth]
-            for pid, children in parent_child_map.items():
-                if sid in children:
-                    depths.append(get_span_depth(pid, current_depth + 1))
-            return max(depths)
+        # Map spanID to parent spanID
+        span_to_parent = {}
+        for span in spans:
+            sid = span["spanID"]
+            for ref in span.get("references", []):
+                if ref.get("refType") == "CHILD_OF":
+                    span_to_parent[sid] = ref["spanID"]
+
+        def get_span_depth(sid):
+            depth = 0
+            curr = sid
+            visited = set()
+            while curr in span_to_parent and curr not in visited:
+                visited.add(curr)
+                depth += 1
+                curr = span_to_parent[curr]
+            return depth
 
         for span in error_spans:
             sid = span["spanID"]
@@ -202,12 +212,15 @@ class RCAEngine:
                 parent_child_map[parent_id] = []
             parent_child_map[parent_id].append(sid)
 
-        def get_span_depth(sid, current_depth=0):
-            depths = [current_depth]
-            for pid, children in parent_child_map.items():
-                if sid in children:
-                    depths.append(get_span_depth(pid, current_depth + 1))
-            return max(depths)
+        def get_span_depth(sid):
+            depth = 0
+            curr = sid
+            visited = set()
+            while curr in span_to_parent and curr not in visited:
+                visited.add(curr)
+                depth += 1
+                curr = span_to_parent[curr]
+            return depth
 
         deepest_error_span = None
         max_depth = -1
