@@ -89,10 +89,11 @@ for pair in "${PAIR_ARRAY[@]}"; do
     echo "FAIL: '$service' digest is not a sha256 digest: $digest" >&2
     exit 1
   fi
-  # The ClusterPolicy requires techx.sourceSha to look like a commit, and the
-  # directive requires it to be the commit this image was actually built from.
-  if ! [[ "$source_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
-    echo "FAIL: '$service' source SHA is not a commit sha: $source_sha" >&2
+  # prepare-cyclonedx-sbom.py rejects anything shorter, and it only does so
+  # after the signature has been pushed - which would strand the digest with a
+  # .sig and no .att. Reject short SHAs here, before any registry write.
+  if ! [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "FAIL: '$service' source SHA must be a full 40-character commit sha, got: $source_sha" >&2
     exit 1
   fi
   SERVICES+=("$service")
@@ -100,22 +101,38 @@ for pair in "${PAIR_ARRAY[@]}"; do
   SOURCE_SHAS+=("$source_sha")
 done
 
+tag_exists() {
+  local tag="$1" found
+  found="$(aws ecr describe-images \
+    --repository-name "$REPOSITORY" \
+    --image-ids "imageTag=$tag" \
+    --query 'imageDetails[0].imageDigest' \
+    --output text 2>/dev/null || true)"
+  [ -n "$found" ] && [ "$found" != "None" ]
+}
+
+# A run that dies between `cosign sign` and `cosign attest` leaves the digest
+# with a .sig and no .att. That is recoverable - the .att tag is still free -
+# so signing is skipped per digest rather than failing the batch. Only an
+# existing .att is terminal, because the CycloneDX attestation can never be
+# written again for that digest.
 echo "== Pre-flight: checking for existing Cosign evidence =="
+declare -a NEEDS_SIGNING=()
 preflight_failed=false
 for i in "${!SERVICES[@]}"; do
   digest="${DIGESTS[$i]}"
   tag_prefix="${digest/:/-}"
-  existing="$(aws ecr describe-images \
-    --repository-name "$REPOSITORY" \
-    --image-ids "imageTag=${tag_prefix}.att" \
-    --query 'imageDetails[0].imageDigest' \
-    --output text 2>/dev/null || true)"
-  if [ -n "$existing" ] && [ "$existing" != "None" ]; then
-    echo "  FAIL ${SERVICES[$i]} $digest already has a ${tag_prefix}.att tag" >&2
+  if tag_exists "${tag_prefix}.att"; then
+    echo "  FAIL ${SERVICES[$i]} $digest already has ${tag_prefix}.att" >&2
     echo "       ECR immutability forbids a second write; this digest must be rebuilt, not backfilled." >&2
     preflight_failed=true
+    NEEDS_SIGNING+=(false)
+  elif tag_exists "${tag_prefix}.sig"; then
+    echo "  ok   ${SERVICES[$i]} $digest (already signed by an interrupted run; attestation still pending)"
+    NEEDS_SIGNING+=(false)
   else
     echo "  ok   ${SERVICES[$i]} $digest"
+    NEEDS_SIGNING+=(true)
   fi
 done
 if [ "$preflight_failed" = true ]; then
@@ -133,8 +150,12 @@ for i in "${!SERVICES[@]}"; do
 
   echo "== $service $index_digest =="
 
-  echo "Signing $index_image"
-  cosign sign --yes "$index_image"
+  if [ "${NEEDS_SIGNING[$i]}" = true ]; then
+    echo "Signing $index_image"
+    cosign sign --yes "$index_image"
+  else
+    echo "Signature already present for $index_image; verifying it instead of re-signing"
+  fi
   cosign verify \
     --certificate-oidc-issuer "$ISSUER" \
     --certificate-identity "$IDENTITY" \
