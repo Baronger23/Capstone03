@@ -10,6 +10,7 @@ FRONTEND_HEADLESS_SERVICE = (
     ROOT / "gitops/infrastructure/frontend-headless-service.yaml"
 )
 VALUES = ROOT / "phase3 - information/deploy/values-prod.yaml"
+CHART_VALUES = ROOT / "phase3 - information/techx-corp-chart/values.yaml"
 ENVOY = (
     ROOT
     / "phase3 - information/techx-corp-platform/src/frontend-proxy/envoy.tmpl.yaml"
@@ -71,6 +72,23 @@ def test_frontend_headless_service_publishes_ready_frontend_pod_ips():
             "targetPort": 8080,
         }
     ]
+
+
+def test_production_frontend_proxy_uses_headless_discovery_only():
+    chart = yaml.safe_load(CHART_VALUES.read_text(encoding="utf-8"))
+    prod = yaml.safe_load(VALUES.read_text(encoding="utf-8"))
+
+    chart_env = {
+        item["name"]: item.get("value")
+        for item in chart["components"]["frontend-proxy"]["env"]
+    }
+    prod_overrides = {
+        item["name"]: item.get("value")
+        for item in prod["components"]["frontend-proxy"]["envOverrides"]
+    }
+
+    assert chart_env["FRONTEND_HOST"] == "frontend"
+    assert prod_overrides["FRONTEND_HOST"] == "frontend-headless"
 
 
 def test_browse_shadow_mode_and_checkout_funnel_precedes_catch_all():
