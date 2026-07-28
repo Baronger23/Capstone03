@@ -32,6 +32,15 @@ export const useProductReview = () => {
     return value;
 };
 
+// PM-0016 review: react-query's default retry (3x, exponential backoff) would
+// hammer an already-degraded product-reviews dependency — a single widget open
+// could fire up to 4 attempts x 2 queries = 8 requests during exactly the outage
+// this 503 is signaling. Never retry a classified DEPENDENCY_UNAVAILABLE (see
+// utils/Request.ts, which tags it with `.status`); still allow a couple of
+// retries for other/transient failures.
+const retryUnlessDependencyUnavailable = (failureCount: number, error: unknown) =>
+    (error as { status?: number })?.status !== 503 && failureCount < 2;
+
 const ProductReviewProvider = ({ children, productId }: IProps) => {
     const {
         data,
@@ -44,6 +53,7 @@ const ProductReviewProvider = ({ children, productId }: IProps) => {
         queryKey: ['productReviews', productId],
         queryFn: () => ApiGateway.getProductReviews(productId),
         refetchOnWindowFocus: false,
+        retry: retryUnlessDependencyUnavailable,
     });
 
     // Use a sentinel: null while loading, [] if loaded but empty, array when loaded with data.
@@ -65,6 +75,7 @@ const ProductReviewProvider = ({ children, productId }: IProps) => {
     const { data: averageScore = '' } = useQuery({
         queryKey: ['productReviewAvgScore', productId],
         queryFn: () => ApiGateway.getAverageProductReviewScore(productId),
+        retry: retryUnlessDependencyUnavailable,
     });
 
     const value = useMemo(

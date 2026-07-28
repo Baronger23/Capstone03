@@ -75,7 +75,10 @@ def _get_redis():
                 retry_on_timeout=True,
             )
             _redis_client.ping()
-            logger.info("[STORE] Valkey connected: %s", valkey_url)
+            # Never log the AUTH token: mask the credentials in the URL before logging.
+            import re as _re
+            _safe_url = _re.sub(r"(://)[^@/]*@", r"\1****@", valkey_url)
+            logger.info("[STORE] Valkey connected: %s", _safe_url)
         except Exception as e:
             logger.error("[STORE] Valkey connection failed: %s — falling back to file JSON", e)
             _redis_client = None

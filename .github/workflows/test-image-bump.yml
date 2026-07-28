@@ -46,6 +46,16 @@ jobs:
           set -euo pipefail
           python -m pytest -q scripts/ci
 
+      - name: Verify external images match the reviewed allow-list
+        run: |
+          set -euo pipefail
+          # The external ClusterPolicy compares image strings byte for byte, so a
+          # chart or subchart bump that changes a rendered reference without the
+          # matching catalogue edit does not fail here today - it fails once the
+          # policy is in Enforce, as an admission rejection on the next pod.
+          # Catching it in review is the whole point of the check.
+          python scripts/ci/check-external-image-allowlist-drift.py
+
       - name: Run Actionlint
         run: |
           set -euo pipefail

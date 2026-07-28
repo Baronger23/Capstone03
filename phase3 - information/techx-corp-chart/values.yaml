@@ -912,7 +912,12 @@ components:
     enabled: true
     imageOverride:
       repository: "ghcr.io/open-feature/flagd"
-      tag: "v0.12.9"
+      # v0.12.9, pinned by the digest that tag currently resolves to, so the
+      # reference cannot follow an upstream retag. tag is dropped rather than
+      # kept alongside: the template renders repo@digest and ignores tag once a
+      # digest is set, so a leftover tag would look authoritative while doing
+      # nothing - and bumping it would silently have no effect.
+      digest: "sha256:e6cca86b29629a06806aa7954b4a9b5f291c30839c6ae4f815dc4ddcee4a0746"
     useDefault:
       env: true
     replicas: 1

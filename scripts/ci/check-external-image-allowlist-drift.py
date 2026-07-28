@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -31,6 +33,19 @@ DEFAULT_VALUES = REPO / "phase3 - information" / "deploy" / "values-prod.yaml"
 DEFAULT_POLICY = (
     REPO / "gitops" / "policies" / "kyverno" / "allow-approved-external-image-digests.yaml"
 )
+DEFAULT_GITOPS = REPO / "gitops"
+
+# Both policies match on namespace techx-tf3, so only workloads landing there
+# are judged. Anything ArgoCD installs into its own namespace is out of scope.
+POLICY_NAMESPACE = "techx-tf3"
+
+# Owned by AIO02 and running in techx-tf3, so the policy will judge them, but
+# they are not ours to repin. Each one denies at admission the moment the
+# external policy goes to Enforce, so they are a hard blocker for that step -
+# listed here to keep them visible rather than silently passing. Remove an entry
+# once AIO02 pins it; the check fails if an entry stops being needed, so the
+# list cannot rot.
+KNOWN_UNRESOLVED: set[str] = set()
 
 # Kept in sync with the policy precondition: the optional :<tag> covers Grafana,
 # whose subchart renders repo:<tag>@sha256:<digest> and cannot be repinned.
@@ -40,15 +55,37 @@ FIRST_PARTY = re.compile(
 )
 
 
+def run(cmd: list[str]) -> str:
+    """Run a command, surfacing stderr when it fails.
+
+    Swallowing helm's stderr turns a readable "missing dependencies" message
+    into a bare CalledProcessError with no cause, which is what made the first
+    CI failure of this check undiagnosable from the log.
+    """
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit(
+            f"FAIL: {' '.join(cmd[:2])} exited {result.returncode}\n{result.stderr.strip()}"
+        )
+    return result.stdout
+
+
 def render(chart: Path, values: Path) -> set[str]:
-    result = subprocess.run(
-        ["helm", "template", "techx-corp", str(chart), "-f", str(values)],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    """Render the chart the way ArgoCD does.
+
+    charts/*.tgz and Chart.lock are both gitignored, so a fresh checkout has no
+    subcharts and `helm template` alone fails. Dependencies are fetched into a
+    copy so the working tree is left untouched - the same approach
+    test_runtime_hardening.py already uses.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        chart_copy = Path(tmp) / chart.name
+        shutil.copytree(chart, chart_copy)
+        run(["helm", "dependency", "build", str(chart_copy)])
+        stdout = run(["helm", "template", "techx-corp", str(chart_copy), "-f", str(values)])
+
     images: set[str] = set()
-    for doc in yaml.safe_load_all(result.stdout):
+    for doc in yaml.safe_load_all(stdout):
         images |= walk(doc)
     return images
 
@@ -68,6 +105,28 @@ def walk(node) -> set[str]:
     return found
 
 
+def gitops_images(root: Path) -> set[str]:
+    """Images from plain manifests, which the chart render never sees.
+
+    cloudflared and the AIO02 workloads are applied straight from gitops/, so a
+    chart-only check would call them stale forever and stay red for the wrong
+    reason.
+    """
+    images: set[str] = set()
+    for path in sorted(root.rglob("*.yaml")):
+        try:
+            docs = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+        except yaml.YAMLError:
+            continue
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            if (doc.get("metadata") or {}).get("namespace") != POLICY_NAMESPACE:
+                continue
+            images |= walk(doc)
+    return images
+
+
 def allow_list(policy: Path) -> set[str]:
     doc = yaml.safe_load(policy.read_text(encoding="utf-8"))
     entries: set[str] = set()
@@ -83,6 +142,7 @@ def main() -> int:
     parser.add_argument("--chart", type=Path, default=DEFAULT_CHART)
     parser.add_argument("--values", type=Path, default=DEFAULT_VALUES)
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
+    parser.add_argument("--gitops", type=Path, default=DEFAULT_GITOPS)
     parser.add_argument(
         "--print-only",
         action="store_true",
@@ -90,18 +150,29 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    rendered = render(args.chart, args.values)
+    rendered = render(args.chart, args.values) | gitops_images(args.gitops)
     external = {i for i in rendered if not FIRST_PARTY.match(i)}
     approved = allow_list(args.policy)
 
-    unapproved = sorted(external - approved)
-    stale = sorted(approved - external)
-    tagged = sorted(i for i in external if "@sha256:" not in i)
+    deferred = external & KNOWN_UNRESOLVED
+    judged = external - KNOWN_UNRESOLVED
 
-    print(f"rendered images      : {len(rendered)}")
+    unapproved = sorted(judged - approved)
+    stale = sorted(approved - judged)
+    tagged = sorted(i for i in judged if "@sha256:" not in i)
+    # An exception that no longer matches anything is a lie about the risk.
+    obsolete = sorted(KNOWN_UNRESOLVED - external)
+
+    print(f"images in scope      : {len(rendered)}")
     print(f"first-party (signed) : {len(rendered) - len(external)}")
     print(f"external             : {len(external)}")
     print(f"allow-list entries   : {len(approved)}\n")
+
+    if deferred:
+        print("BLOCKS ENFORCE - owned by AIO02, will deny at admission:")
+        for image in sorted(deferred):
+            print(f"  {image}")
+        print()
 
     if unapproved:
         print("DENIED under Enforce - rendered but not in the allow-list:")
@@ -114,13 +185,21 @@ def main() -> int:
             print(f"  {image}")
         print()
     if stale:
-        print("Stale allow-list entries - approved but no longer rendered:")
+        print("Stale allow-list entries - approved but nothing renders them:")
         for image in stale:
             print(f"  {image}")
         print()
+    if obsolete:
+        print("Obsolete exceptions - listed in KNOWN_UNRESOLVED but no longer deployed;")
+        print("delete them so the list keeps telling the truth:")
+        for image in obsolete:
+            print(f"  {image}")
+        print()
 
-    if not (unapproved or stale or tagged):
+    if not (unapproved or stale or tagged or obsolete):
         print("OK: every external image is digest-pinned and matches the allow-list exactly.")
+        if deferred:
+            print(f"NOTE: {len(deferred)} AIO02 image(s) still block Enforce - see above.")
         return 0
 
     if args.print_only:
