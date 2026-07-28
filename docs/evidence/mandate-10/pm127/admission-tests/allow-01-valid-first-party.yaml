@@ -1,0 +1,17 @@
+# EXPECT ACCEPT (verify-first-party-signatures): quote, rebuilt in PR #502 with a
+# Cosign signature and a CycloneDX attestation whose sourceSha points at the
+# commit it was actually built from. Proves the policy admits valid workloads
+# rather than blocking everything.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: allow-01-valid-first-party
+  namespace: techx-tf3
+  labels:
+    pm127-admission-test: "true"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp@sha256:5035d76864dab66825703705d7c7af5ecccb5842750100bc3b4b0f0fe0bfa696
+      command: ["sleep", "300"]
