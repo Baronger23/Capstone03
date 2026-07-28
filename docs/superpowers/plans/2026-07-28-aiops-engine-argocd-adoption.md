@@ -647,8 +647,30 @@ PRBODY
 - Consumes: PR từ Task 4
 - Produces: Application `Synced/Healthy`, bằng chứng zero-downtime
 
-**Thời điểm:** làm trong giờ ít traffic. Nếu sync sai, cách lui nhanh nhất là xoá Application kèm `--cascade=orphan` (giữ nguyên workload):
-`kubectl delete application aiops-engine -n argocd --cascade=orphan`
+**Thời điểm:** làm trong giờ ít traffic.
+
+**Cách lui đúng nếu sync sai: revert commit đã thêm `gitops/apps/aiops-engine-app.yaml`.**
+
+`kubectl delete application aiops-engine -n argocd --cascade=orphan` **không hoạt động**
+ở đây, dù nhìn giống thao tác lui an toàn chuẩn:
+
+- Application mang `tracking-id: techx-corp-bootstrap:argoproj.io/Application:argocd/aiops-engine`.
+  `techx-corp-bootstrap` chạy `prune+selfHeal` trên `gitops/apps` — hễ file
+  `aiops-engine-app.yaml` còn trong git, Application bị xoá sẽ được **dựng lại trong
+  ~3 phút**, quay lại đúng trạng thái trước khi "lui".
+- `--cascade` của `kubectl delete` nói về ownerReference giữa các Kubernetes object, không
+  phải cơ chế cascade-delete của ArgoCD (đó là field `resources-finalizer` trên chính
+  Application). Cờ này không kiểm soát được ArgoCD sẽ prune hay giữ resource con.
+- Application này **không có** finalizer `resources-finalizer.argocd.argoproj.io`, nên dù
+  xoá kiểu gì (có hay không `--cascade=orphan`) resource con (Deployment, Service...)
+  cũng tự động orphan — không phải rủi ro riêng của cờ `--cascade`, mà là mọi cách xoá
+  Application này đều orphan.
+
+Vì vậy lui đúng là **revert commit** đã thêm `gitops/apps/aiops-engine-app.yaml` (PR Task 4)
+và merge lại vào `main`: `techx-corp-bootstrap` sẽ prune Application, workload
+`aiops-engine` quay lại trạng thái "ngoài GitOps" như trước Phase 1 — không cần thao tác
+`kubectl delete` tay nào, và không có Application nào bị dựng lại vì file gốc đã biến mất
+khỏi git.
 
 - [ ] **Step 1: Ghi lại trạng thái trước khi merge**
 
