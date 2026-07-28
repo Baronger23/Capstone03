@@ -76,21 +76,45 @@ spec:
                   name: techx-tf3-postgres-conn
                   key: libpq
           # Runs migration.sql with autocommit, which CREATE INDEX CONCURRENTLY
-          # requires (it cannot run inside a transaction block). Executed inline
-          # rather than via db_migration_worker.py so ONLY the schema step runs —
-          # the worker would also start the full batch scan.
+          # requires. Executed inline rather than via db_migration_worker.py so ONLY
+          # the schema step runs — the worker would also start the full batch scan.
+          #
+          # Statements are split and sent ONE AT A TIME. autocommit alone is not
+          # enough: passing several statements in a single execute() makes
+          # PostgreSQL treat the whole string as one implicit transaction, and
+          # CREATE INDEX CONCURRENTLY is rejected inside a transaction block (this
+          # failed exactly that way on the first attempt). `--` comment lines are
+          # stripped before splitting because migration.sql has semicolons inside
+          # its comments, which would otherwise split statements in the wrong place.
+          #
+          # Every statement in migration.sql is IF NOT EXISTS / idempotent, so
+          # re-running after a partial failure is safe.
           command:
             - /venv/bin/python
             - -c
             - |
               import os, sys, psycopg2
               dsn = os.environ["DB_CONNECTION_STRING"]
-              sql = open("/app/migration.sql", encoding="utf-8").read()
+              raw = open("/app/migration.sql", encoding="utf-8").read()
+              body = "\n".join(
+                  line for line in raw.splitlines() if not line.strip().startswith("--")
+              )
+              statements = [s.strip() for s in body.split(";") if s.strip()]
               conn = psycopg2.connect(dsn)
               conn.autocommit = True
               try:
                   with conn.cursor() as cur:
-                      cur.execute(sql)
+                      cur.execute("""
+                          SELECT count(*) FROM information_schema.columns
+                          WHERE table_schema='reviews' AND table_name='productreviews'
+                            AND column_name='is_safe'
+                      """)
+                      print("is_safe column present BEFORE:", cur.fetchone()[0], flush=True)
+                  for i, stmt in enumerate(statements, 1):
+                      head = " ".join(stmt.split())[:90]
+                      print(f"[{i}/{len(statements)}] {head}", flush=True)
+                      with conn.cursor() as cur:
+                          cur.execute(stmt)
                   print("SCHEMA MIGRATION OK", flush=True)
                   with conn.cursor() as cur:
                       cur.execute("""
