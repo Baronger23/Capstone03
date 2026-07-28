@@ -16,5 +16,27 @@ spec:
     namespace: kyverno
   syncPolicy:
     automated:
+      enabled: false
       prune: true
       selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+  # Kyverno's admission webhook injects server-side defaults into ClusterPolicy at
+  # admission time. These fields are absent from Git AND unowned in managedFields
+  # (the webhook mutates in-request, so no field manager claims them) — which is why
+  # managedFieldsManagers ignore does NOT work here. The exact added paths below were
+  # obtained by deep-diffing the live objects against these manifests; keep this list
+  # in sync if a Kyverno upgrade adds new defaults. RespectIgnoreDifferences stops a
+  # manual/self-heal sync from stripping them back out (Kyverno would re-add them).
+  ignoreDifferences:
+    - group: kyverno.io
+      kind: ClusterPolicy
+      jqPathExpressions:
+        - .spec.admission
+        - .spec.emitWarning
+        - .spec.rules[].skipBackgroundRequests
+        - .spec.rules[].validate.allowExistingViolations
+        - .spec.rules[].verifyImages[].useCache
+        - .spec.rules[].verifyImages[].attestors[].entries[].signatureAlgorithm
+        - .spec.rules[].verifyImages[].attestations[].attestors[].entries[].signatureAlgorithm

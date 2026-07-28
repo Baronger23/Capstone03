@@ -6,8 +6,8 @@
 # Node burst do Karpenter Spot xử lý khi pod Pending; scaleDown giữ 2 phút để co xuống
 # nhanh sau đỉnh nhưng không flap quá mạnh.
 #
-# Yêu cầu: metrics-server EKS add-on + CPU requests
-# (LimitRange của CDO01 set default 100m). KHÔNG đặt HPA cho datastore (stateful).
+# Yêu cầu: metrics-server EKS add-on + CPU requests tường minh trong workload.
+# KHÔNG đặt HPA cho datastore (stateful).
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -15,12 +15,14 @@ metadata:
   name: frontend-proxy-hpa
   namespace: techx-tf3
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: frontend-proxy }
+  scaleTargetRef:
+    { apiVersion: apps/v1, kind: Deployment, name: frontend-proxy }
   minReplicas: 2
   maxReplicas: 8
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -40,13 +42,19 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: frontend-hpa
   namespace: techx-tf3
+  annotations:
+    # PM-153 (Mandate-19): PM-152 found frontend CPU saturation first at the
+    # 410-user failing stage. The higher target packs more work on each existing
+    # node. This staged PR changes only the CPU request/target; raise maxReplicas
+    # in a separately measured capacity step after the 65% target is validated.
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: frontend }
   minReplicas: 2
   maxReplicas: 8
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -67,12 +75,14 @@ metadata:
   name: product-catalog-hpa
   namespace: techx-tf3
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: product-catalog }
+  scaleTargetRef:
+    { apiVersion: apps/v1, kind: Deployment, name: product-catalog }
   minReplicas: 2
   maxReplicas: 8
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -98,7 +108,8 @@ spec:
   maxReplicas: 6
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -121,12 +132,14 @@ metadata:
 spec:
   # checkout now migrates through checkout-rollout. Target the Rollout scale
   # subresource so HPA retains REL-01's minReplicas=2 during each canary step.
-  scaleTargetRef: { apiVersion: argoproj.io/v1alpha1, kind: Rollout, name: checkout-rollout }
+  scaleTargetRef:
+    { apiVersion: argoproj.io/v1alpha1, kind: Rollout, name: checkout-rollout }
   minReplicas: 2
   maxReplicas: 8
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -152,7 +165,8 @@ spec:
   maxReplicas: 6
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -173,12 +187,14 @@ metadata:
   name: recommendation-hpa
   namespace: techx-tf3
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: recommendation }
+  scaleTargetRef:
+    { apiVersion: apps/v1, kind: Deployment, name: recommendation }
   minReplicas: 1
   maxReplicas: 4
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -199,12 +215,14 @@ metadata:
   name: product-reviews-hpa
   namespace: techx-tf3
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: product-reviews }
+  scaleTargetRef:
+    { apiVersion: apps/v1, kind: Deployment, name: product-reviews }
   minReplicas: 2
   maxReplicas: 6
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 75 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0
@@ -230,7 +248,8 @@ spec:
   maxReplicas: 4
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0

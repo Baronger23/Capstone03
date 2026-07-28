@@ -86,61 +86,72 @@ module "eks" {
     }
   }
 
-  eks_managed_node_groups = {
-    default = {
-      instance_types = [var.node_instance_type]
-      capacity_type  = "ON_DEMAND"
-      iam_role_additional_policies = {
-        AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  eks_managed_node_groups = merge(
+    {
+      default = {
+        instance_types = [var.node_instance_type]
+        capacity_type  = "ON_DEMAND"
+        iam_role_additional_policies = {
+          AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+        }
+
+        min_size     = var.node_min_size
+        max_size     = var.node_max_size
+        desired_size = var.node_desired_size
+        subnet_ids   = var.private_subnet_ids
       }
+    },
+    var.enable_stateful_node_group ? {
+      stateful_1a = {
+        name           = "${var.cluster_name}-db-1a"
+        instance_types = [var.stateful_node_instance_type]
+        capacity_type  = "ON_DEMAND"
+        subnet_ids     = [var.stateful_node_subnet_id]
 
-      min_size     = var.node_min_size
-      max_size     = var.node_max_size
-      desired_size = var.node_desired_size
-      subnet_ids   = var.private_subnet_ids
-    }
+        min_size     = var.stateful_node_min_size
+        max_size     = var.stateful_node_max_size
+        desired_size = var.stateful_node_desired_size
 
-    stateful_1a = {
-      name           = "${var.cluster_name}-db-1a"
-      instance_types = [var.stateful_node_instance_type]
-      capacity_type  = "ON_DEMAND"
-      subnet_ids     = [var.stateful_node_subnet_id]
+        labels = {
+          "techx.io/workload" = "stateful"
+        }
 
-      min_size     = 1
-      max_size     = 1
-      desired_size = 1
+        taints = {
+          stateful = {
+            key    = "techx.io/workload"
+            value  = "stateful"
+            effect = "NO_SCHEDULE"
+          }
+        }
 
-      labels = {
-        "techx.io/workload" = "stateful"
-      }
-
-      taints = {
-        stateful = {
-          key    = "techx.io/workload"
-          value  = "stateful"
-          effect = "NO_SCHEDULE"
+        iam_role_additional_policies = {
+          AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
         }
       }
+    } : {}
+  )
 
-      iam_role_additional_policies = {
-        AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
-      }
-    }
-  }
-
-  access_entries = {
-    for arn in var.eks_admin_principal_arns : arn => {
-      principal_arn = arn
-      policy_associations = {
-        admin = {
-          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-          access_scope = {
-            type = "cluster"
+  access_entries = merge(
+    {
+      for arn in var.eks_admin_principal_arns : arn => {
+        principal_arn = arn
+        policy_associations = {
+          admin = {
+            policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+            access_scope = {
+              type = "cluster"
+            }
           }
         }
       }
+    },
+    {
+      for name, entry in var.eks_kubernetes_group_principals : name => {
+        principal_arn     = entry.principal_arn
+        kubernetes_groups = entry.kubernetes_groups
+      }
     }
-  }
+  )
 }
 
 module "cluster_autoscaler_irsa" {

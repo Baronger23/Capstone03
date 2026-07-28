@@ -10,6 +10,11 @@ default:
     tag: 58b13f2
 
 grafana:
+  image:
+    registry: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com
+    repository: techx-corp
+    tag: b44ca10-30240572310-grafana
+    sha: "198bff3b9b5f15962cf0942f38a0a90226f60277e7ef5212294987d160f55958"
   # REL-17: Grafana giờ có hostname riêng qua Cloudflare (grafana.arthur-ngo.org).
   # Base chart values.yaml đặt root_url = http://%(domain)s:%(http_port)s/grafana +
   # serve_from_sub_path=true (cho đường truy cập /grafana subpath cũ) → khi vào qua
@@ -37,6 +42,19 @@ grafana:
     limits:
       cpu: 200m
       memory: 1Gi
+  # REL-17-04: đẩy Grafana sang AZ KHÁC Prometheus (best-effort). Trước đây cả hai (mỗi
+  # cái 1 replica) cùng nằm trên ip-10-0-8-134 / AZ 1a → mất AZ 1a = mất CẢ dashboard lẫn
+  # nguồn metric đúng lúc demo req#2. Dùng preferred (soft) khớp convention repo (cloudflared/
+  # otel-gateway) + không rủi ro Pending; base node trải 3 AZ nên thực tế luôn tách được.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: prometheus
+            topologyKey: topology.kubernetes.io/zone
 
 jaeger:
   jaeger:
@@ -52,10 +70,29 @@ jaeger:
         memory: 2Gi
 
 opensearch:
+  podSecurityContext:
+    fsGroup: 1000
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  initResources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
   resources:
     requests:
       cpu: 250m
-      memory: 750Mi
+      memory: 1280Mi
     limits:
       cpu: 750m
       memory: 1600Mi
@@ -65,15 +102,77 @@ prometheus:
     resources:
       requests:
         cpu: 150m
-        memory: 450Mi
+        memory: 900Mi
       limits:
         cpu: 800m
         memory: 1200Mi
+    # REL-17-04: đẩy Prometheus sang AZ KHÁC Grafana (best-effort, đối xứng với
+    # grafana.affinity) → mất 1 AZ không mất cả hai nửa dashboard SLO cùng lúc.
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: grafana
+              topologyKey: topology.kubernetes.io/zone
 
 opentelemetry-collector:
+  # Mandate 5 OTEL step 1 (tat truoc, xoa sau): otel-node-agent (host/kubelet/
+  # cluster metrics) + otel-gateway (app traces/metrics) da chung minh du chuc
+  # nang thay the qua verify song 22/07 - agent cu con 0 span/metric that (loai
+  # tru self-telemetry) trong 2 phut gan nhat. Tat truoc, theo doi on dinh, roi
+  # moi xoa han khoi chart o buoc sau. Xem
+  # docs/docx_cdo01/mandate05/karpenter-elastic-batch2-batch3-20260722.md.
+  enabled: false
   resources:
+    requests:
+      cpu: 50m
+      memory: 180Mi
     limits:
+      cpu: 300m
       memory: 350Mi
+
+otelGateway:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+
+otel-node-agent:
+  # Re-enabled 22/07/2026 after verifying CPU headroom on all 7 nodes (min free
+  # 555m on the tightest node ip-10-0-8-134, vs this DaemonSet's 10m/pod request -
+  # 55x margin). ip-10-0-26-153, the node that caused the original Pending
+  # incident (only 15m free at the time), now has 565m free after batch2/3
+  # Karpenter elastic migration moved load off the on-demand fleet.
+  enabled: true
+  # Without tolerations this DaemonSet skips nodes carrying the custom taint
+  # techx.io/workload=<elastic|stateful> - confirmed live: it only scheduled on
+  # 4/7 nodes, missing both Karpenter elastic Spot nodes (now running 11
+  # services from the batch 2/3 migration) and the stateful node (postgres/
+  # valkey). Old otel-collector-agent ran on all 7 nodes (no such taint existed
+  # when it was deployed), so this closes a real coverage gap vs what it's
+  # meant to replace.
+  tolerations:
+    - key: techx.io/workload
+      operator: Equal
+      value: elastic
+      effect: NoSchedule
+    - key: techx.io/workload
+      operator: Equal
+      value: stateful
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: 10m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 components:
   # imageOverride (per-component) - dùng khi build/deploy lại 1 service riêng lẻ mà
@@ -97,7 +196,7 @@ components:
   ad:
     replicasManagedExternally: true
     imageOverride:
-      digest: sha256:a45fdb96972c11c4b75261ef1205f96c92f5c23fb5edbc47f3b6bb95eb3f27bb
+      digest: sha256:04d1460d9a48b35182d85b17d416f4a4d16b74011bb42fdee417f288340a2052
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -140,22 +239,44 @@ components:
       rollingUpdate:
         maxUnavailable: 0        # rollout không bao giờ tụt dưới số replica mong muốn
         maxSurge: 1
+    # Mandate 13 elastic (batch 3): opt-in NodePool flash-sale-spot + hard spread
+    # ca hostname va zone (minDomains:2) - pattern da fix o batch 1 (PR #319).
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
+          nodeAffinityPolicy: Honor
+          nodeTaintsPolicy: Honor
           labelSelector:
             matchLabels:
               opentelemetry.io/name: frontend
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
+          nodeAffinityPolicy: Honor
+          nodeTaintsPolicy: Honor # nếu không có dòng này 2 node arm64 có taint nhưng frontend không vào được vẫn tính vào domain hợp lệ, nhưng ở đó không có pod frontend làm global min = 0
+          # khi frontend thêm 1 pod, công thức (1+1) - 0 = 2 skew = 2 > maxSkew, pod sẽ pending
+          # 4 domain eligible: 1, 1, 0, 0, 0 → global min = 0
+          
           labelSelector:
             matchLabels:
               opentelemetry.io/name: frontend
     imageOverride:
-      digest: sha256:047faed92fe4ecf8b2bb7d3d99c191a2d495f41024abc44c204fe94a9ae019a3
+      # REL-17-02: bump lên image chứa deadline+fallback (tag ba46a27-30060412880-frontend,
+      # build từ code fallback + postcss fix). Re-apply PR #448 - từng merge rồi bị revert (#450)
+      # như biện pháp phòng ngừa trong lúc ổn định PM-129 (bug tooling trace-provenance đa-arch,
+      # KHÔNG phải lỗi supply-chain); image đã qua Trivy + Cosign. Đừng revert lại.
+      digest: sha256:292d3e51367d5f809898e974e4798c5ebdb1145b925092983ed9e2055c226d3b
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -175,7 +296,11 @@ components:
     replicas: 2        # web khách thấy, traffic HTTP cao nhất
     resources:
       requests:
-        cpu: 100m
+        # PM-152 measured ~218m CPU/pod at the failing stage. A 200m request gives
+        # the utilization-based HPA an honest denominator while retaining burst
+        # headroom under the unchanged 500m limit. This is scheduling/tuning on
+        # the existing node-set, not an increase in node capacity.
+        cpu: 200m
         memory: 100Mi
       limits:
         cpu: 500m
@@ -199,15 +324,26 @@ components:
       rollingUpdate:
         maxUnavailable: 0        # rollout không bao giờ tụt dưới số replica mong muốn
         maxSurge: 1
+    # Mandate 13 elastic (batch 2): opt-in NodePool flash-sale-spot + hard spread
+    # ca hostname va zone (minDomains:2) - pattern da fix o batch 1 (PR #319).
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: product-catalog
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
@@ -215,15 +351,18 @@ components:
               opentelemetry.io/name: product-catalog
     replicas: 2        # backend traffic cao nhất + có crash history (REL-14)
     imageOverride: # CDO02 fix main.go - xem comment imageOverride đầu components:
-      digest: sha256:412f75faac8b02fc48676c1fe2d3bc695e39b9cf6c0fbd6bb941c1fbea80f83f
-      tag: 6a3fe95-product-catalog
+      digest: sha256:8bfd3b9a23a2fd7624bc116844248ccd2bbb246635927899f0b4208fd179d2ed
+      tag: 43dcf62-29569108433-product-catalog
     resources:
       requests:
-        cpu: 100m
+        cpu: 50m
         memory: 32Mi
       limits:
         cpu: 500m
-        memory: 64Mi
+        # PM-152 evidence: DB pool peak 14 open / 11 in-use connections.
+        # Go runtime + 14 DB connections + request buffers: 64Mi quá sát.
+        # Tăng lên 128Mi để có headroom, tránh OOMKill khi tải tăng dồn về catalog.
+        memory: 128Mi
     readinessProbe:
       grpc:
         port: 8080
@@ -238,6 +377,14 @@ components:
       periodSeconds: 20
       timeoutSeconds: 2
       failureThreshold: 3
+    # Mandate #8 buoc 2 (cutover Postgres -> RDS, runbook §5 buoc 4): DB_CONNECTION_STRING -> RDS
+    # qua secret techx-tf3-postgres-conn (format Go DSN, sslmode=require). product-catalog CHI DOC.
+    envOverrides:
+      - name: DB_CONNECTION_STRING
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-postgres-conn
+            key: go-dsn
   cart:
     replicasManagedExternally: true
     # Mandate 3: graceful shutdown. preStop sleep giu pod phuc vu them 5s SAU khi bi go khoi
@@ -257,15 +404,26 @@ components:
       rollingUpdate:
         maxUnavailable: 0        # rollout không bao giờ tụt dưới số replica mong muốn
         maxSurge: 1
+    # Mandate 13 elastic (batch 2): opt-in NodePool flash-sale-spot + hard spread
+    # ca hostname va zone (minDomains:2) - pattern da fix o batch 1 (PR #319).
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: cart
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
@@ -291,8 +449,8 @@ components:
       failureThreshold: 3
     replicas: 2
     imageOverride: # CDO02 fix HealthCheckService.cs - xem comment imageOverride đầu components:
-      digest: sha256:1cc20ba4d7f195245429e084e5aa495a305ed0b14539261953f8595ab50c05b6
-      tag: 6a3fe95-cart
+      digest: sha256:b6c7b60dec137dfe54f7fdc82b340421661aedbeed6ed34cd55f2ae29916508a
+      tag: 3252f28-29655310361-cart
     resources:
       requests:
         cpu: 100m
@@ -300,6 +458,26 @@ components:
       limits:
         cpu: 500m
         memory: 160Mi
+    # Mandate #8 buoc 2 (cutover Valkey -> ElastiCache, runbook mandate-08-managed-cutover.md §4 buoc 4):
+    # LAT DOC sang ElastiCache: primary = ElastiCache (TLS + auth), dual-write DAO CHIEU -> ghi
+    # nguoc ve valkey-cart cu (plaintext) de GIU DUONG LUI (rollback zero-loss cho toi §8).
+    # CHI merge SAU khi da co proof hoi tu (miss=0) o buoc 1. envOverrides khop name -> override
+    # VALKEY_ADDR goc (valkey-cart:6379) thanh ElastiCache. Rolling restart maxUnavailable:0 -> 0 rot request.
+    envOverrides:
+      # primary -> ElastiCache (doc + ghi chinh)
+      - name: VALKEY_ADDR
+        value: master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com:6379
+      - name: VALKEY_TLS
+        value: "true"
+      - name: VALKEY_AUTH_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-valkey-auth
+            key: auth_token
+      # Mandate #8 §8: DA GO dual-write dao chieu ve valkey-cart cu. Truoc day cart ghi song song
+      # ve kho cu de giu "duong lui nong" (Plan A). Nay chuyen sang Plan B (snapshot ElastiCache
+      # + PITR) truoc khi xoa kho cu, nen bo dual-write: khong con ghi vao valkey-cart, va cart
+      # se khong loi khi kho cu bien mat.
   checkout:
     # Mandate 3: checkout is managed by Argo Rollouts, but the Rollout still reuses this
     # pod template through workloadRef. Keep the same graceful shutdown contract as the
@@ -311,22 +489,57 @@ components:
           seconds: 5
     replicas: 2
     imageOverride: # CDO02 fix kafka/producer.go + main.go - xem comment imageOverride đầu components:
-      digest: sha256:a774cb69f27795406f768881a7c575ba882f024f8e99ca928413047f3b3eb532
-      tag: 7527509-checkout
+      digest: sha256:8e22139cae1a6db0aa3dbabc83cba56a2608d78ee21c09541d7024959dac934e
+      tag: b1ae5c1-30187331856-checkout
+    # Mandate #8 buoc 3/3 (cutover Kafka -> MSK, runbook §6 buoc 2): PRODUCER TRUOC.
+    # checkout doi KAFKA_ADDR -> MSK bootstrap (nhieu broker, phan tach dau phay - da fix
+    # split o main.go PR #271) + SASL_SSL + SCRAM tu secret techx-tf3-kafka-scram.
+    # An toan hon 0010: image efb7eff co fail-fast (PR #269) -> neu noi MSK loi, pod KHONG
+    # Ready -> canary dung khung, KHONG outage. Consumer (accounting + fraud-detection) doi
+    # sang MSK o PR SAU, chi khi kafka cu LAG=0 (Earliest -> an sach backlog tu day).
+    envOverrides:
+      - name: KAFKA_ADDR
+        value: b-1.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096,b-2.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096,b-3.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096
+      - name: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - name: KAFKA_SASL_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-kafka-scram
+            key: username
+      - name: KAFKA_SASL_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-kafka-scram
+            key: password
     # Mandate 2 remediation: 2 pod stable từng bị xếp chung 1 node (xác nhận qua
     # kubectl trước load test) - checkout là service chịu tải chính, mất cả node đó
     # là mất cả 2 pod dù có PDB. hostname dùng ScheduleAnyway (soft) để không chặn
     # HPA scale lên tới 8 pod nếu node chưa kịp Karpenter cung cấp; zone dùng
     # DoNotSchedule (hard) vì luôn dư số AZ, không có rủi ro kẹt lịch.
+    # Mandate 13 elastic (batch 3): opt-in NodePool flash-sale-spot + hard spread
+    # ca hostname va zone (minDomains:2) - pattern da fix o batch 1 (PR #319).
+    # Pod template nay duoc Argo Rollouts (checkout-rollout) tham chieu qua
+    # workloadRef nen thay doi se di qua canary co san (20%->analysis->50%->
+    # analysis->100%), khong phai rolling update thuong.
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: checkout
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
@@ -371,22 +584,36 @@ components:
       rollingUpdate:
         maxUnavailable: 0        # rollout không bao giờ tụt dưới số replica mong muốn
         maxSurge: 1
+    # Mandate 13 elastic (batch 2): opt-in NodePool flash-sale-spot (taint
+    # techx.io/workload=elastic) + hard spread ca hostname va zone (minDomains:2)
+    # - dung nguyen pattern da fix o batch 1 (currency/quote/shipping, PR #319)
+    # sau khi PR #317 (chi hostname soft, thieu minDomains) lam 2 replica dong
+    # chung 1 node Spot.
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: payment
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: payment
     imageOverride:
-      digest: sha256:839b9cb5e5c50ba9a03acea8a4b15e29be724089e30cf18904530a1bc07bede5
+      digest: sha256:801b602b7ac4afc3887a27cb3a97b13ea10ce35bce64afe047e3dd2b42ae5f1d
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -434,21 +661,30 @@ components:
         maxUnavailable: 0        # rollout không bao giờ tụt dưới số replica mong muốn
         maxSurge: 1
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: currency
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: currency
     imageOverride:
-      digest: sha256:e4e4c76b27fea4d82bbc25aa2f2d6c2163450a223f89c71e7ae4985fb6c0203a
+      digest: sha256:f01846d1253f755c96e37b9c321553a9520c3f06ec54780a63048a3966d32fa0
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -468,11 +704,11 @@ components:
     replicas: 2
     resources:
       requests:
-        cpu: 100m
-        memory: 8Mi
+        cpu: 50m
+        memory: 12Mi
       limits:
         cpu: 300m
-        memory: 20Mi
+        memory: 32Mi
   shipping:
     # Mandate 3: graceful shutdown. preStop sleep giu pod phuc vu them 5s SAU khi bi go khoi
     # Service endpoints (tranh race: traffic con route toi pod dang terminate -> reset). Native
@@ -492,21 +728,30 @@ components:
         maxUnavailable: 0        # rollout không bao giờ tụt dưới số replica mong muốn
         maxSurge: 1
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: shipping
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: shipping
     imageOverride:
-      digest: sha256:4952c73703cca38ec8afe934a3571f5f0a5f5e8e2adeb4af3eafc5cfa5ddb3ec
+      digest: sha256:a3c486d60884913b50b0a4858c8d1cd89dfdf8a30c9505577327e308afe990c6
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -527,7 +772,7 @@ components:
     # Mandate 2: 20Mi limit quá mỏng cho tải 200 user, không có HPA để bù nếu chạm.
     resources:
       requests:
-        cpu: 50m
+        cpu: 25m
         memory: 8Mi
       limits:
         cpu: 150m
@@ -551,21 +796,30 @@ components:
         maxUnavailable: 0        # rollout không bao giờ tụt dưới số replica mong muốn
         maxSurge: 1
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: quote
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: quote
     imageOverride:
-      digest: sha256:97fbf36ede49bb20218b75bfe0f2c9e90ed976114813091abb11ca789f567df3
+      digest: sha256:5035d76864dab66825703705d7c7af5ecccb5842750100bc3b4b0f0fe0bfa696
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -586,11 +840,11 @@ components:
     # Mandate 2: 40Mi limit quá mỏng cho tải 200 user, không có HPA để bù nếu chạm.
     resources:
       requests:
-        cpu: 50m
-        memory: 24Mi
+        cpu: 25m
+        memory: 32Mi
       limits:
         cpu: 150m
-        memory: 80Mi
+        memory: 96Mi
   product-reviews:
     replicasManagedExternally: true
     # Mandate 3: graceful shutdown. preStop sleep giu pod phuc vu them 5s SAU khi bi go khoi
@@ -610,15 +864,26 @@ components:
       rollingUpdate:
         maxUnavailable: 0        # rollout không bao giờ tụt dưới số replica mong muốn
         maxSurge: 1
+    # Mandate 13 elastic (batch 2): opt-in NodePool flash-sale-spot + hard spread
+    # ca hostname va zone (minDomains:2) - pattern da fix o batch 1 (PR #319).
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: product-reviews
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
@@ -626,11 +891,11 @@ components:
               opentelemetry.io/name: product-reviews
     replicas: 2        # đứng sau tính năng AI tóm tắt review
     imageOverride: # CDO02 fix database.py + product_reviews_server.py - xem comment imageOverride đầu components:
-      digest: sha256:4d3811fa4bf160d94e8254bd370bcf0a81a84ce670dc691d8cb4103162f7f538
-      tag: f6e9532-product-reviews
+      digest: sha256:f7acf6a1c7ba3d26a56d3844d386c5a83916d3085db71976c13efce211930a7a
+      tag: bd49c9f-30366821052-product-reviews
     resources:
       requests:
-        cpu: 100m
+        cpu: 150m
         memory: 80Mi
       limits:
         cpu: 500m
@@ -649,11 +914,14 @@ components:
       periodSeconds: 20
       timeoutSeconds: 2
       failureThreshold: 3
+    # Mandate #8 buoc 2: DB_CONNECTION_STRING cua product-reviews KHONG dat o day. values-aio-llm.yaml
+    # (file cuoi) cung set product-reviews.envOverrides cho Bedrock -> Helm REPLACE list nay. DB override
+    # phai nam chung list o values-aio-llm.yaml, neu khong se bi clobber. Xem file do.
   recommendation:
     replicasManagedExternally: true
     imageOverride: # CDO02 fix recommendation_server.py - xem comment imageOverride đầu components:
-      digest: sha256:7b1246d011356a0e6d2b0b94b854b2bc3eb0ee06a502d02d9a79a3163b447b78
-      tag: 6a3fe95-recommendation
+      digest: sha256:9cd92fccd5050dbb696beb6a205fd73290a7de311db585cb993bcc35a7c03a35
+      tag: 43dcf62-29569108433-recommendation
     resources:
       requests:
         cpu: 100m
@@ -676,9 +944,11 @@ components:
       timeoutSeconds: 2
       failureThreshold: 3
   accounting:
+    # Mandate #8: sau cutover Postgres->RDS, accounting tro ve ArgoCD-managed replicas=1 (freeze
+    # tam thoi qua replicasManagedExternally + ignoreDifferences da go). Van la nguoi ghi duy nhat.
     imageOverride: # CDO02 fix Consumer.cs - xem comment imageOverride đầu components:
-      digest: sha256:8fc8a91f98ae40d6be284ff9009b32dd0e1e1c3152532362ed363f8bc71c4ed6
-      tag: 6a3fe95-accounting
+      digest: sha256:32aeb5e03cd55a4f6a9927b950d019393e39e480541877471e622f002c3107f7
+      tag: e43df42-29655320898-accounting
     resources:
       requests:
         cpu: 50m
@@ -686,9 +956,36 @@ components:
       limits:
         cpu: 200m
         memory: 350Mi
+    # Mandate #8 buoc 2 (cutover Postgres -> RDS, runbook §5 buoc 4): DB_CONNECTION_STRING -> RDS
+    # qua secret techx-tf3-postgres-conn (format .NET/Npgsql, SSL Mode=Require). accounting la
+    # NGUOI GHI DUY NHAT -> merge PR nay o giua cua so cutover, SAU dump/restore + parity.
+    envOverrides:
+      - name: DB_CONNECTION_STRING
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-postgres-conn
+            key: dotnet
+      # Mandate #8 buoc 3/3 (cutover Kafka -> MSK, runbook §6 buoc 4): CONSUMER SAU producer.
+      # accounting doc tu MSK (Confluent.Kafka nhan CSV bootstrap natively -> khong bug multi-broker
+      # nhu checkout). AutoOffsetReset=Earliest -> an sach backlog order da produce vao MSK tu luc
+      # cutover producer. Lam khi kafka cu da LAG=0.
+      - name: KAFKA_ADDR
+        value: b-1.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096,b-2.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096,b-3.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096
+      - name: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - name: KAFKA_SASL_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-kafka-scram
+            key: username
+      - name: KAFKA_SASL_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-kafka-scram
+            key: password
   email:
     imageOverride:
-      digest: sha256:ca14e55cc0855e3a8a2de19098d75f69772408d2bef6f9b52663e864ae1a545f
+      digest: sha256:afdbc98c923cff6e7652d84bee0bea0e658dab0bad99299ae8a9e423969d82f4
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -714,7 +1011,25 @@ components:
         memory: 100Mi
   fraud-detection:
     imageOverride:
-      digest: sha256:b4797d6b16bf6a3b88ec8ddb9dbcd6c29c208e6be221f4f018af4b5f624fbc13
+      digest: sha256:45fc3b08aa4a1ef057866565970aaac5672d4a0c6b6a7dd91c1ec0ff65517bb2
+    # Mandate #8 buoc 3/3 (cutover Kafka -> MSK, runbook §6 buoc 4): CONSUMER SAU producer.
+    # fraud-detection doc tu MSK (Kafka client Java nhan CSV bootstrap.servers natively -> khong bug
+    # multi-broker). AutoOffsetReset=Earliest -> an sach backlog tu luc cutover producer.
+    envOverrides:
+      - name: KAFKA_ADDR
+        value: b-1.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096,b-2.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096,b-3.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096
+      - name: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - name: KAFKA_SASL_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-kafka-scram
+            key: username
+      - name: KAFKA_SASL_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-kafka-scram
+            key: password
     resources:
       requests:
         cpu: 50m
@@ -724,7 +1039,7 @@ components:
         memory: 512Mi
   image-provider:
     imageOverride:
-      digest: sha256:00b73a3efd2caab3e69fce24b40b4e176da5c5f89b7b2c8ae2f37c25400cf44a
+      digest: sha256:004425421f2b16697f836d8463ca8528190582baf8faacc3215bae6c98a69ff6
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -749,6 +1064,14 @@ components:
         cpu: 100m
         memory: 50Mi
   kafka:
+    # Mandate #8 §8: TAT component Kafka in-cluster. Toan bo luu luong order da chuyen sang
+    # Amazon MSK (producer checkout PR #276, consumer accounting+fraud PR #278, LAG=0).
+    # Kho cu da nghi huu: khong con producer, khong con consumer active.
+    # Duong lui khong con dua vao pod nay ma la PLAN B: retention topic `orders` tren MSK
+    # (log.retention.hours=168 = 7 ngay) + redeploy chart cu tu git neu can.
+    enabled: false
+    imageOverride:
+      digest: sha256:efc188d08627ea302b98a45bae30ae2868c7ffd1d69a4359019c26dd553419b0
     service:
       # REL-10: KRaft 1-node tu noi controller cua chinh no qua Service kafka:9093. Pod PHAI nam
       # trong Service endpoints NGAY khi chua ready, neu khong startupProbe/readinessProbe se loai pod
@@ -776,10 +1099,17 @@ components:
       # Tao + chown subdir data truoc khi kafka chay. Chu dich thay vi subPath: subPath + fsGroup
       # co bug kubelet khong chown subpath dir -> uid 1000 khong ghi duoc. Mount thang + initContainer chown la chac an.
       - name: init-kafka-data
-        image: busybox:1.36
+        image: busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
         command: ["sh", "-c", "mkdir -p /var/lib/kafka/data && chown -R 1000:1000 /var/lib/kafka/data"]
         securityContext:
           runAsUser: 0
+        resources:
+          requests:
+            cpu: 5m
+            memory: 8Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
         volumeMounts:
           - name: kafka-data
             mountPath: /var/lib/kafka
@@ -813,7 +1143,7 @@ components:
       failureThreshold: 3
   llm:
     imageOverride:
-      digest: sha256:85a7578ef9b826196632fdd219eaa131f0caed024753499d036fc5baabf374b8
+      digest: sha256:62804f4d68d8dafbadffd2703c5ec7f7c3d417fb04b4c1117ea1e0f67027a9f8
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -832,14 +1162,14 @@ components:
       failureThreshold: 3
     resources:
       requests:
-        cpu: 50m
+        cpu: 25m
         memory: 96Mi
       limits:
         cpu: 300m
         memory: 256Mi
   load-generator:
     imageOverride:
-      digest: sha256:db7016dbed1d6b24c5aa6beb1102fd11148aa791a6b61b745ef8fdebc6146641
+      digest: sha256:71b9499757000f0eaaccf15d083c2f5073221949839b76455b24ab8ee852a634
     envOverrides:
       - name: LOCUST_AUTOSTART
         value: "true"
@@ -848,11 +1178,19 @@ components:
     resources:
       requests:
         cpu: 200m
-        memory: 1Gi
+        memory: 256Mi
       limits:
         cpu: "1"
         memory: 1500Mi
   postgresql:
+    # Mandate #8 §8: TAT component PostgreSQL in-cluster. accounting (nguoi ghi duy nhat) +
+    # product-catalog + product-reviews da tro RDS (sslmode=require) tu PR #252.
+    # Kho cu da DONG BANG tu luc cutover: 70.478 don, khong con ai ghi vao (da do 21/07).
+    # Duong lui = PLAN B: snapshot thu cong `techx-tf3-postgres-pre-cleanup-20260721-2242`
+    # + backup tu dong 7 ngay + PITR (LatestRestorableTime cap nhat lien tuc).
+    # Tat component nay cung go luon ConfigMap `postgresql-init` - noi con sot credential
+    # plaintext cuoi cung (gate `.Values.components.postgresql.enabled`).
+    enabled: false
     schedulingRules:
       nodeSelector:
         techx.io/workload: stateful
@@ -900,6 +1238,11 @@ components:
       timeoutSeconds: 3
       failureThreshold: 5
   valkey-cart:
+    # Mandate #8 §8: TAT component Valkey in-cluster. cart da doc/ghi ElastiCache (TLS + auth
+    # token) tu PR #251, va dual-write dao chieu ve kho cu da go o PR #307.
+    # Duong lui = PLAN B: snapshot `techx-tf3-valkey-pre-cleanup-20260721-2243` (chup tu replica).
+    # Luu y: PVC `valkey-cart` do CHART render ra -> tat component nay se prune luon PVC do.
+    enabled: false
     schedulingRules:
       nodeSelector:
         techx.io/workload: stateful
@@ -985,7 +1328,56 @@ components:
       - "8016"
       - "--sources"
       - '[{"uri":"https://122.248.223.194.sslip.io/flags.json","provider":"http","authHeader":"Bearer $(FLAGD_SYNC_TOKEN)"}]'
-    sidecarContainers: []
+    # Full copy of components.flagd.sidecarContainers[0] from the chart
+    # default (../techx-corp-chart/values.yaml), not just an imageOverride -
+    # Helm replaces arrays wholesale on override (no per-item merge), so a
+    # partial or empty array here silently drops flagd-ui entirely. That is
+    # exactly what the previous `sidecarContainers: []` did, undetected,
+    # since the initial GitOps bootstrap (2026-07-12). If flagd-ui's env,
+    # resources, or volumeMounts change in the chart default, update this
+    # copy in the same PR or production will silently diverge from it.
+    #
+    # Already happened once: PR #207 added `securityContext` to flagd-ui in
+    # the chart default (2026-07-17) but this copy predated it, so production
+    # ran flagd-ui without the intended non-root hardening until this fix
+    # (caught via Kyverno Audit PolicyViolation on containers[1], not a crash
+    # - flagd-ui runs fine either way, this only closes the drift).
+    sidecarContainers:
+      - name: flagd-ui
+        imageOverride:
+          digest: sha256:fe39070cf36d8d1f1524c6aa7c67393d4ee5871813dd453e36bb79e38910417c
+        useDefault:
+          env: true
+        service:
+          port: 4000
+        env:
+          - name: FLAGD_METRICS_EXPORTER
+            value: otel
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://$(OTEL_COLLECTOR_NAME):4318
+          - name: FLAGD_UI_PORT
+            value: "4000"
+          - name: SECRET_KEY_BASE
+            value: yYrECL4qbNwleYInGJYvVnSkwJuSQJ4ijPTx5tirGUXrbznFIBFVJdPl5t6O9ASw
+          - name: PHX_HOST
+            value: localhost
+        resources:
+          requests:
+            cpu: 100m
+            memory: 250Mi
+          limits:
+            cpu: 200m
+            memory: 250Mi
+        securityContext:
+          runAsUser: 65532
+          runAsGroup: 65532
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+          - name: config-rw
+            mountPath: /app/data
   frontend-proxy:
     replicasManagedExternally: true
     # Mandate 3: graceful shutdown - RIENG frontend-proxy dai hon cac service khac (5s) vi day la
@@ -1007,15 +1399,26 @@ components:
       rollingUpdate:
         maxUnavailable: 0        # rollout không bao giờ tụt dưới số replica mong muốn
         maxSurge: 1
+    # Mandate 13 elastic (batch 3): opt-in NodePool flash-sale-spot + hard spread
+    # ca hostname va zone (minDomains:2) - pattern da fix o batch 1 (PR #319).
     schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
+          minDomains: 2
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               opentelemetry.io/name: frontend-proxy
         - maxSkew: 1
+          minDomains: 2
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
@@ -1039,15 +1442,36 @@ components:
       failureThreshold: 3
     replicas: 2        # cổng vào DUY NHẤT (Envoy) — SPOF của toàn hệ thống
     imageOverride: # mandate-01: gỡ route Envoy - xem comment imageOverride đầu components:
-      digest: sha256:7cf4dd2e0c5cdf097ee8c56600ca94b31d4bd1fc04965dac13f6c26262287630
-      tag: 6a3fe95-frontend-proxy
+      digest: sha256:6b8243bbf1d91d1bc195703fdbe2e8029a948c38b5717efec8b41ecf1847b3f0
+      tag: 43dcf62-29569108433-frontend-proxy
+    # Mandate #19 staged promotion knobs. Keep shadow (enforced=0) for the first
+    # rollout, then change only BROWSE_RATE_LIMIT_ENFORCED_PERCENT in reviewed
+    # stages 5 -> 25 -> 50 -> 100 after every gate passes. The global fallback
+    # remains shadow because protected routes use its non-binding 10k/s bucket.
+    envOverrides:
+      - name: FRONTEND_HOST
+        value: frontend-headless
+      - name: BROWSE_RATE_LIMIT_MAX_TOKENS
+        value: "100"
+      - name: BROWSE_RATE_LIMIT_TOKENS_PER_FILL
+        value: "50"
+      - name: BROWSE_RATE_LIMIT_FILL_INTERVAL
+        value: "1s"
+      - name: BROWSE_RATE_LIMIT_ENABLED_PERCENT
+        value: "100"
+      - name: BROWSE_RATE_LIMIT_ENFORCED_PERCENT
+        value: "0"
+      - name: LOCAL_RATE_LIMIT_ENABLED_PERCENT
+        value: "100"
+      - name: LOCAL_RATE_LIMIT_ENFORCED_PERCENT
+        value: "0"
     resources:
       requests:
-        cpu: 100m
-        memory: 32Mi
+        cpu: 50m
+        memory: 64Mi
       limits:
         cpu: 500m
-        memory: 65Mi
+        memory: 128Mi
     ingress:
       annotations:
         alb.ingress.kubernetes.io/healthcheck-path: /

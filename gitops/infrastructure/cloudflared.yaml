@@ -32,7 +32,10 @@ spec:
     spec:
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:2026.7.1
+          # Digest-pinned so the reference cannot follow an upstream retag.
+          # This is the digest both replicas already resolved 2026.7.1 to, so
+          # the pods come back on the same bytes they are running today.
+          image: cloudflare/cloudflared:2026.7.1@sha256:188bb03589a32affed3cf4d0590565ffe67b78866e6b5582574afab2b705bafe
           args:
             - tunnel
             - --no-autoupdate
@@ -46,6 +49,9 @@ spec:
                   name: cloudflared-tunnel-credentials
                   key: token
           securityContext:
+            runAsUser: 65532
+            runAsGroup: 65532
+            runAsNonRoot: true
             allowPrivilegeEscalation: false
             capabilities:
               drop:

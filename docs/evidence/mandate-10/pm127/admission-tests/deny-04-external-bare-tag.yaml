@@ -1,0 +1,16 @@
+# EXPECT DENY (allow-approved-external-image-digests): a tag can be repointed
+# upstream at any time, so a tag is not a pin. The catalogue holds
+# busybox@sha256:73aaf090..., and this string does not match it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: deny-04-external-bare-tag
+  namespace: techx-tf3
+  labels:
+    pm127-admission-test: "true"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: busybox:latest
+      command: ["sleep", "300"]

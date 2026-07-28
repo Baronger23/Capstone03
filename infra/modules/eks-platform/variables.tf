@@ -40,6 +40,35 @@ variable "stateful_node_instance_type" {
   type        = string
 }
 
+variable "enable_stateful_node_group" {
+  description = "Whether to provision the dedicated on-demand stateful node group."
+  type        = bool
+}
+
+variable "stateful_node_desired_size" {
+  description = "Desired size for the dedicated on-demand stateful node group."
+  type        = number
+}
+
+variable "stateful_node_min_size" {
+  description = "Minimum size for the dedicated on-demand stateful node group."
+  type        = number
+}
+
+variable "stateful_node_max_size" {
+  description = "Maximum size for the dedicated on-demand stateful node group."
+  type        = number
+}
+
 variable "eks_admin_principal_arns" {
   type = list(string)
+}
+
+variable "eks_kubernetes_group_principals" {
+  description = "IAM principal ARNs mapped to Kubernetes groups without an EKS cluster access policy."
+  type = map(object({
+    principal_arn     = string
+    kubernetes_groups = list(string)
+  }))
+  default = {}
 }

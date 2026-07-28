@@ -1,0 +1,17 @@
+# Service ClusterIP cho aiops-engine. clusterIP do API server gán nên không commit.
+apiVersion: v1
+kind: Service
+metadata:
+  name: aiops-engine
+  namespace: techx-tf3
+  labels:
+    app.kubernetes.io/name: aiops-engine
+spec:
+  type: ClusterIP
+  selector:
+    app: aiops-engine
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
