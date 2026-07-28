@@ -1,0 +1,8 @@
+=== KUBECTL DIFF OUTPUT ===
+[Empty — no differences between gitops/aiops-engine/ and live cluster state]
+
+=== EXIT CODE ===
+0
+
+=== DEPLOYMENT REVISION ===
+68

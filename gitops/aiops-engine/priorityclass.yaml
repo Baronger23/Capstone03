@@ -1,0 +1,10 @@
+# PriorityClass cho job huấn luyện — CLUSTER-SCOPED, không thuộc techx-tf3.
+# Đảm bảo training job nhường tài nguyên cho pod production khi cụm chật.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority
+value: 1000
+preemptionPolicy: PreemptLowerPriority
+globalDefault: false
+description: Low priority class for batch processing and training jobs.
