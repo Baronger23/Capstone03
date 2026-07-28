@@ -7,32 +7,17 @@ TRIVYIGNORE = REPO_ROOT / "aiops-engine" / ".trivyignore"
 DOCKERFILE = REPO_ROOT / "aiops-engine" / "Dockerfile"
 KUBECTL_BUILDER_GO_MOD = REPO_ROOT / "aiops-engine" / "kubectl-builder" / "go.mod"
 KUBECTL_BUILDER_MAIN = REPO_ROOT / "aiops-engine" / "kubectl-builder" / "main.go"
-
-VENDORED_SETUPTOOLS_CVES = {
-    "CVE-2026-23949",
-    "CVE-2026-24049",
-}
-KUBECTL_CVES = {
-    "CVE-2026-25681",
-    "CVE-2026-27136",
-    "CVE-2026-33814",
-    "CVE-2026-39821",
-}
+DEDICATED_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build-push-aiops.yml"
 
 
-def _ignored_cves() -> set[str]:
-    return {
-        line.strip()
-        for line in TRIVYIGNORE.read_text().splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    }
+def test_dedicated_gate_matches_common_zero_high_critical_policy():
+    workflow = DEDICATED_WORKFLOW.read_text()
 
-
-def test_trivyignore_only_suppresses_verified_vendored_setuptools_cves():
-    ignored = _ignored_cves()
-
-    assert ignored == VENDORED_SETUPTOOLS_CVES
-    assert ignored.isdisjoint(KUBECTL_CVES)
+    assert not TRIVYIGNORE.exists()
+    assert "--ignore-unfixed" not in workflow
+    assert "--ignorefile" not in workflow
+    assert '--severity "$TRIVY_SEVERITIES"' in workflow
+    assert "--exit-code 1" in workflow
 
 
 def test_dockerfile_builds_patched_stable_kubectl_without_changing_command_surface():
@@ -43,9 +28,13 @@ def test_dockerfile_builds_patched_stable_kubectl_without_changing_command_surfa
     assert "stable.txt" not in dockerfile
     assert "dl.k8s.io/release" not in dockerfile
     assert re.search(
-        r"FROM golang:1\.26\.5@sha256:[0-9a-f]{64} AS kubectl-builder",
+        r"FROM --platform=\$BUILDPLATFORM "
+        r"golang:1\.26\.5@sha256:[0-9a-f]{64} AS kubectl-builder",
         dockerfile,
     )
+    assert "ARG TARGETOS TARGETARCH" in dockerfile
+    assert 'CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH"' in dockerfile
+    assert "GOARCH=amd64" not in dockerfile
     assert "go build -mod=readonly -trimpath" in dockerfile
     assert (
         "COPY --chmod=0755 --from=kubectl-builder "
@@ -61,3 +50,22 @@ def test_dockerfile_builds_patched_stable_kubectl_without_changing_command_surfa
     assert "k8s.io/component-base/version.gitVersion=v1.36.3-aiops.1" in dockerfile
     assert '"k8s.io/kubectl/pkg/cmd"' in builder_main
     assert "cmd.NewDefaultKubectlCommand()" in builder_main
+
+
+def test_runtime_uses_pinned_alpine_without_python_build_tooling():
+    dockerfile = DOCKERFILE.read_text()
+
+    alpine_base = (
+        "python:3.10.20-alpine3.23@"
+        "sha256:81c5715bb79d8edd45a82de842a29c7d6ef2aff4b7fa88e712f93a93806337df"
+    )
+    assert f"FROM {alpine_base} AS python-builder" in dockerfile
+    assert f"FROM {alpine_base}" in dockerfile
+    assert "FROM python:3.10-slim" not in dockerfile
+    assert "RUN apk add --no-cache build-base" in dockerfile
+    assert "RUN apk add --no-cache libgomp libstdc++" in dockerfile
+    assert "RUN python -m pip uninstall -y pip setuptools wheel" in dockerfile
+    assert "python -m venv /venv" in dockerfile
+    assert "/venv/bin/pip uninstall -y pip setuptools wheel" in dockerfile
+    assert "COPY --from=python-builder /venv /venv" in dockerfile
+    assert 'ENV PATH="/venv/bin:$PATH"' in dockerfile

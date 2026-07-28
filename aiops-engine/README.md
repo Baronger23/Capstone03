@@ -40,13 +40,24 @@ Trong lúc chưa có stable release chứa bản vá, binary được build từ
 được ghim bằng digest để phần build binary kubectl tái lập được.
 
 Không nâng lên Kubernetes 1.37 beta: phiên bản đó chưa stable và vượt quá một minor so
-với API server 1.35. Các CVE của binary kubectl không được đưa vào `.trivyignore`.
+với API server 1.35. Các CVE của binary kubectl không bị bỏ qua trong Trivy.
+
+## Runtime base và Trivy gate
+
+Runtime dùng `python:3.10.20-alpine3.23` ghim theo digest. `scikit-learn` được build
+trong stage riêng có compiler; runtime chỉ giữ virtualenv cùng `libgomp` và
+`libstdc++`. `pip`, `setuptools` và `wheel` bị gỡ khỏi cả runtime Python lẫn
+virtualenv sau khi cài dependency.
+
+`build-push-aiops.yml` áp cùng cổng với pipeline production chung: zero
+HIGH/CRITICAL, không `--ignore-unfixed` và không ignorefile. Báo cáo JSON đầy đủ
+vẫn được lưu làm evidence trước khi push.
 
 ## Chạy test
 
 ```bash
 cd aiops-engine
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt && pip install pytest pytest-asyncio
+pip install -r requirements.txt && pip install pytest pytest-asyncio httpx
 pytest tests/
 ```

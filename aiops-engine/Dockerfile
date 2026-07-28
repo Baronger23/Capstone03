@@ -1,4 +1,6 @@
-FROM golang:1.26.5@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647 AS kubectl-builder
+FROM --platform=$BUILDPLATFORM golang:1.26.5@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647 AS kubectl-builder
+
+ARG TARGETOS TARGETARCH
 
 WORKDIR /src
 
@@ -7,7 +9,7 @@ WORKDIR /src
 COPY kubectl-builder/go.mod kubectl-builder/go.sum ./
 RUN go mod download
 COPY kubectl-builder/main.go ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     go build -mod=readonly -trimpath \
     -ldflags="-s -w \
       -X k8s.io/component-base/version.gitMajor=1 \
@@ -18,20 +20,27 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
       -X k8s.io/component-base/version.buildDate=2026-07-28T00:00:00Z" \
     -o /out/kubectl .
 
-FROM python:3.10-slim
+FROM python:3.10.20-alpine3.23@sha256:81c5715bb79d8edd45a82de842a29c7d6ef2aff4b7fa88e712f93a93806337df AS python-builder
+
+WORKDIR /build
+
+RUN apk add --no-cache build-base
+
+COPY requirements.txt .
+RUN python -m venv /venv \
+    && /venv/bin/pip install --no-cache-dir -r requirements.txt \
+    && /venv/bin/pip uninstall -y pip setuptools wheel
+
+FROM python:3.10.20-alpine3.23@sha256:81c5715bb79d8edd45a82de842a29c7d6ef2aff4b7fa88e712f93a93806337df
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Runtime libraries required by the compiled scientific Python extensions.
+RUN apk add --no-cache libgomp libstdc++
+RUN python -m pip uninstall -y pip setuptools wheel
 
 COPY --chmod=0755 --from=kubectl-builder /out/kubectl /usr/local/bin/kubectl
-
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=python-builder /venv /venv
 
 # Copy the rest of the application code
 COPY . .
@@ -43,6 +52,7 @@ RUN chown -R 10001:10001 /app
 EXPOSE 8000
 
 # Set environment variable defaults
+ENV PATH="/venv/bin:$PATH"
 ENV AIOPS_SIMULATION_MODE=false
 ENV PORT=8000
 
