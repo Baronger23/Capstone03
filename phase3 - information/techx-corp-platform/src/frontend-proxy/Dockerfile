@@ -14,6 +14,7 @@ USER envoy
 WORKDIR /home/envoy
 
 COPY ./src/frontend-proxy/envoy.tmpl.yaml envoy.tmpl.yaml
+COPY --chmod=755 ./src/frontend-proxy/entrypoint.sh entrypoint.sh
 
 # validate config
 RUN ENVOY_ADDR=0.0.0.0 \
@@ -48,4 +49,4 @@ RUN ENVOY_ADDR=0.0.0.0 \
 
 EXPOSE ${ENVOY_PORT}
 EXPOSE ${ENVOY_ADMIN_PORT}
-ENTRYPOINT ["/bin/sh", "-c", "envsubst < envoy.tmpl.yaml > envoy.yaml && envoy -c envoy.yaml;"]
+ENTRYPOINT ["./entrypoint.sh"]

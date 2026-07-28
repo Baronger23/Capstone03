@@ -13,7 +13,10 @@ ENVOY_DOCKERFILE = (
     ROOT
     / "phase3 - information/techx-corp-platform/src/frontend-proxy/Dockerfile"
 )
-CHART_VALUES = ROOT / "phase3 - information/techx-corp-chart/values.yaml"
+ENVOY_ENTRYPOINT = (
+    ROOT
+    / "phase3 - information/techx-corp-platform/src/frontend-proxy/entrypoint.sh"
+)
 PROFILE = (
     ROOT
     / "phase3 - information/techx-corp-platform/src/load-generator/mandate19_locustfile.py"
@@ -106,14 +109,16 @@ def test_rate_limit_promotion_knobs_are_explicit_and_build_validated():
         "LOCAL_RATE_LIMIT_ENABLED_PERCENT": "100",
         "LOCAL_RATE_LIMIT_ENFORCED_PERCENT": "0",
     }
-    chart = CHART_VALUES.read_text(encoding="utf-8")
     dockerfile = ENVOY_DOCKERFILE.read_text(encoding="utf-8")
+    entrypoint = ENVOY_ENTRYPOINT.read_text(encoding="utf-8")
     for name, value in expected_prod_values.items():
         yaml_pair = rf"name:\s+{name}\s+value:\s+[\"']{re.escape(value)}[\"']"
         assert re.search(yaml_pair, proxy)
-        assert re.search(yaml_pair, chart)
         assert f"{name}={value}" in dockerfile
+        assert f'${{{name}:={value}}}' in entrypoint
     assert "envoy --mode validate" in dockerfile
+    assert "envoy --mode validate" in entrypoint
+    assert 'ENTRYPOINT ["./entrypoint.sh"]' in dockerfile
 
 
 def test_overload_profile_separates_shedable_and_protected_streams():
