@@ -1,114 +1,60 @@
-# T10 — Kế hoạch migration: 22 ServiceAccount riêng, rolling từng service
+# T10 — Staged ServiceAccount migration plan
 
-> **Chiến lược:** Tạo 22 SA riêng → chuyển từng service một → theo dõi log → giữ hoặc rollback.
-> Không đổi tất cả cùng lúc để giảm blast radius nếu có lỗi.
->
-> **Điều kiện tiên quyết:**
-> - Chart đã hỗ trợ sẵn per-component `serviceAccount` override (xác nhận qua `component.yaml`).
-> - Khi component có key `serviceAccount:`, chart tự tạo SA riêng với tên = SA name, không dùng SA chung.
-> - Không có service nào gọi K8s API → `automountServiceAccountToken: false` cho tất cả.
+## Safety rule
 
----
+`values-serviceaccounts.yaml` is consumed automatically by Argo CD. Add exactly
+one wave per PR and retain already promoted waves. Never add all remaining
+services in one PR.
 
-## Cơ chế hoạt động trong chart
+Current candidate: **Wave 1 only**.
 
-```yaml
-# component.yaml logic (đã có sẵn):
-{{- if hasKey $config "serviceAccount" }}
-    {{- $serviceAccount = mergeOverwrite (deepCopy $.Values.serviceAccount) $config.serviceAccount }}
-    {{- $componentScopedServiceAccount = true }}
-{{- end }}
-# → Khi true: chart gọi techx-corp.componentServiceAccount → tạo SA riêng
-# → _objects.tpl dùng SA riêng đó cho Deployment
-```
+## Promotion waves
 
-Chỉ cần thêm block `serviceAccount:` vào từng component trong `values.yaml` là đủ.
-Không cần sửa template file nào.
+| Wave | Services | Risk |
+|---:|---|---|
+| 1 | image-provider, ad, recommendation | Low; non-critical stateless |
+| 2 | llm, product-catalog | Catalog/AI read path |
+| 3 | accounting, fraud-detection | Async consumers |
+| 4 | load-generator | Test tooling isolation |
+| 5 | frontend, frontend-proxy | Public request path |
+| 6 | currency, quote, shipping, email | Checkout dependencies |
+| 7 | payment, cart, checkout | Revenue-critical |
+| 8 | flagd | Feature configuration; migrate last |
 
----
+`product-reviews` is excluded because it already uses
+`product-reviews-bedrock`. Kafka, PostgreSQL and Valkey are excluded because
+their in-cluster components are disabled.
 
-## Thứ tự migration theo rủi ro (thấp → cao)
+## Gate for each wave
 
-| Thứ tự | Service | Lý do ưu tiên |
-|---|---|---|
-| 1 | `image-provider` | Stateless, serve ảnh tĩnh — rủi ro thấp nhất |
-| 2 | `ad` | Stateless, không trên checkout path |
-| 3 | `recommendation` | Stateless, chỉ đọc catalog |
-| 4 | `quote` | Stateless, tính giá ship đơn giản |
-| 5 | `currency` | Stateless, convert tiền |
-| 6 | `email` | Gửi email, không có state |
-| 7 | `shipping` | Tính ship, không có state |
-| 8 | `load-generator` | Tool test, không phải production |
-| 9 | `llm` | AI service, isolated |
-| 10 | `product-catalog` | Đọc DB, medium risk |
-| 11 | `product-reviews` | Đọc DB, medium risk |
-| 12 | `frontend` | Web frontend, medium risk |
-| 13 | `frontend-proxy` | Envoy gateway — quan trọng hơn nhưng không có state |
-| 14 | `fraud-detection` | Kafka consumer |
-| 15 | `accounting` | Kafka consumer + DB write |
-| 16 | `payment` | Revenue critical |
-| 17 | `checkout` | Revenue critical, orchestrator |
-| 18 | `cart` | Session state |
-| 19 | `kafka` | Message broker |
-| 20 | `valkey-cart` | Cache stateful |
-| 21 | `postgresql` | Database stateful |
-| 22 | `flagd` | BTC sync — migrate cuối cùng, thận trọng nhất |
+Before promotion:
 
----
+- record the current Git SHA and Argo application revision;
+- capture Pod-to-SA mapping and `kubectl auth can-i --list`;
+- confirm all Pods are Ready and no rollout is already in progress;
+- record restart counts and current browse/cart/checkout smoke result.
 
-## Cách áp từng service
+After Argo sync:
 
-### Pattern chung — thêm vào values.yaml
+- only services in the new wave may receive a new ReplicaSet;
+- Deployment/Rollout reaches Ready and Available;
+- every new Pod uses the expected SA;
+- no `kube-api-access-*` volume exists;
+- no new 401/403, restart, OOM or Pending Pod;
+- `kubectl auth can-i --list` shows no workload API permission;
+- browse, cart and checkout smoke tests pass.
 
-```yaml
-components:
-  <service-name>:
-    # ... các config hiện có giữ nguyên ...
-    serviceAccount:
-      create: true
-      name: "techx-<service-name>"
-      annotations: {}
-      automountServiceAccountToken: false
-```
+Hold each wave for at least five minutes after all replicas become Ready. Open
+the next PR only after its evidence is attached.
 
-### Lệnh deploy từng service (ví dụ image-provider)
+## Rollback
 
-```bash
-helm upgrade techx-corp ./techx-corp-chart \
-  --set default.image.repository=<ECR> \
-  -f deploy/values-flagd-sync.yaml \
-  -n techx-tf3 \
-  --wait --timeout 120s
-```
+Rollback is GitOps-owned:
 
-### Lệnh kiểm tra ngay sau rollout
+1. revert the commit that added the failing wave;
+2. merge the revert;
+3. sync the `techx-corp` Argo application;
+4. verify that Pods return to the previous SA and smoke tests recover.
 
-```bash
-# 1. SA mới đã tồn tại chưa?
-kubectl get sa -n techx-tf3 | grep techx-
-
-# 2. Pod đang dùng SA nào?
-kubectl get pod -n techx-tf3 -l opentelemetry.io/name=<service> \
-  -o jsonpath='{.items[0].spec.serviceAccountName}'
-
-# 3. Token không còn mount không?
-kubectl exec -n techx-tf3 deploy/<service> -- \
-  ls /var/run/secrets/kubernetes.io/serviceaccount/ 2>&1
-
-# 4. Log có lỗi 403/401 không?
-kubectl logs -n techx-tf3 deploy/<service> --tail=50 | \
-  grep -E "403|401|Forbidden|Unauthorized"
-
-# 5. Pod stable không?
-kubectl rollout status deploy/<service> -n techx-tf3
-```
-
-### Tiêu chí pass/fail
-
-| Kiểm tra | Pass | Fail → hành động |
-|---|---|---|
-| `rollout status` | `successfully rolled out` | `helm rollback` ngay |
-| SA token mount | `No such file or directory` | OK — đúng hành vi mong muốn |
-| Log 403/Forbidden | Không xuất hiện | Rollback + điều tra |
-| Log 401/Unauthorized | Không xuất hiện | Rollback + điều tra |
-| Pod ready | `1/1 Running`, restart=0 | Nếu restart > 0: xem log trước khi quyết định |
+Do not rely on a manual `helm rollback` while Argo self-heal is enabled because
+Argo will restore the Git-declared state.

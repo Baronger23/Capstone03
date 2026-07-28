@@ -25,6 +25,7 @@ set -euo pipefail
 SERVICE="${1:-}"
 NS="techx-tf3"
 EXPECTED_SA="techx-${SERVICE}"
+ROLLOUT_NAME="${SERVICE}-rollout"
 
 # Services dùng Argo Rollouts (replicasManagedExternally)
 ARGO_ROLLOUT_SERVICES=("checkout")
@@ -103,7 +104,7 @@ if is_argo_rollout "$SERVICE"; then
   warn "checkout dùng Argo Rollouts — kiểm tra Rollout object thay vì Deployment"
 
   # Kiểm tra SA trong Rollout spec
-  ROLLOUT_SA=$(kubectl get rollout "${SERVICE}" -n "${NS}" \
+  ROLLOUT_SA=$(kubectl get rollout "${ROLLOUT_NAME}" -n "${NS}" \
     -o jsonpath='{.spec.template.spec.serviceAccountName}' 2>/dev/null || echo "NOTFOUND")
 
   if [[ "$ROLLOUT_SA" == "$EXPECTED_SA" ]]; then
@@ -111,13 +112,13 @@ if is_argo_rollout "$SERVICE"; then
   else
     fail "Rollout spec vẫn dùng SA: '${ROLLOUT_SA}' (mong đợi: '${EXPECTED_SA}')"
     info "Cần patch Rollout thủ công:"
-    info "  kubectl -n ${NS} patch rollout ${SERVICE} \\"
+    info "  kubectl -n ${NS} patch rollout ${ROLLOUT_NAME} \\"
     info "    --type=merge -p '{\"spec\":{\"template\":{\"spec\":{\"serviceAccountName\":\"${EXPECTED_SA}\"}}}}'"
     ERRORS=$((ERRORS+1))
   fi
 
   # Kiểm tra rollout phase
-  ROLLOUT_PHASE=$(kubectl get rollout "${SERVICE}" -n "${NS}" \
+  ROLLOUT_PHASE=$(kubectl get rollout "${ROLLOUT_NAME}" -n "${NS}" \
     -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
   if [[ "$ROLLOUT_PHASE" == "Healthy" || "$ROLLOUT_PHASE" == "Paused" ]]; then
     pass "Rollout phase: ${ROLLOUT_PHASE}"
@@ -165,6 +166,29 @@ echo ""
 
 # ── CHECK 5: Không có lỗi 403/401 trong log ──────────────────────────────
 echo "▶ CHECK 5: Không có lỗi 403/401 trong log gần nhất"
+# Capture the effective authorization list required by T10, then fail closed
+# on representative workload API permissions. Kubernetes discovery entries in
+# `--list` are expected and are not workload privileges.
+echo "▶ AUTHORIZATION: kubectl auth can-i --list"
+SA_SUBJECT="system:serviceaccount:${NS}:${EXPECTED_SA}"
+kubectl auth can-i --list --as="${SA_SUBJECT}" -n "${NS}"
+
+for check in \
+  "get pods" \
+  "get secrets" \
+  "list secrets" \
+  "patch deployments.apps" \
+  "create pods/exec"; do
+  read -r verb resource <<<"${check}"
+  if [[ "$(kubectl auth can-i "${verb}" "${resource}" --as="${SA_SUBJECT}" -n "${NS}")" == "yes" ]]; then
+    fail "${SA_SUBJECT} can ${verb} ${resource}; expected no workload API permission"
+    ERRORS=$((ERRORS+1))
+  else
+    pass "${SA_SUBJECT} cannot ${verb} ${resource}"
+  fi
+done
+echo ""
+
 LOG_ERRORS=$(kubectl logs -n "${NS}" \
   "$(kubectl get pod -n "${NS}" -l "opentelemetry.io/name=${SERVICE}" \
      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)" \
