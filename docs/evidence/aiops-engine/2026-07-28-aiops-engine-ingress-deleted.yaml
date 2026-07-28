@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /readyz
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"annotations":{"alb.ingress.kubernetes.io/healthcheck-path":"/readyz","alb.ingress.kubernetes.io/listen-ports":"[{\"HTTP\": 80}]","alb.ingress.kubernetes.io/scheme":"internet-facing","alb.ingress.kubernetes.io/target-type":"ip"},"name":"aiops-engine-ingress","namespace":"techx-tf3"},"spec":{"ingressClassName":"alb","rules":[{"http":{"paths":[{"backend":{"service":{"name":"aiops-engine","port":{"number":80}}},"path":"/remediation","pathType":"Prefix"}]}}]}}
+  creationTimestamp: "2026-07-24T12:59:08Z"
+  finalizers:
+  - ingress.k8s.aws/resources
+  generation: 2
+  name: aiops-engine-ingress
+  namespace: techx-tf3
+  resourceVersion: "8388156"
+  uid: 2a410409-a219-49d0-bf96-d34e9a2475b7
+spec:
+  ingressClassName: alb
+  rules:
+  - http:
+      paths:
+      - backend:
+          service:
+            name: aiops-engine
+            port:
+              number: 80
+        path: /remediation
+        pathType: Prefix
+status:
+  loadBalancer:
+    ingress:
+    - hostname: k8s-techxtf3-aiopseng-ac927793fa-767978147.ap-southeast-1.elb.amazonaws.com
+      ports:
+      - port: 80
+        protocol: ""
