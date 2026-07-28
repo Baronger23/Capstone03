@@ -23,6 +23,8 @@ supply-chain gate PM-101 — khác với mọi workload khác trên cụm.
 | `models/` (7 file `.joblib`, 14MB) | Kho model thật là S3 `tf3-aiops-models-197826770971/current/`. `.dockerignore` vốn đã loại chúng khỏi ảnh, nên chúng chỉ là dung lượng chết trong git và đổi mỗi lần retrain. |
 | `scratch/` | Script debug chạy tay, cũng đã bị `.dockerignore` loại. |
 | `audit_log.jsonl` | State runtime, không phải source. |
+| `k8s/` | Manifest tay đã lạc hậu và **nguy hiểm**: `ingress.yaml` là bản `internet-facing` phơi `/remediation` ra Internet không xác thực (đã gỡ khỏi production 28/07); `rbac.yaml` bind vào ServiceAccount `default` với `pods/exec`+`pods:delete`. Nguồn sự thật là `gitops/aiops-engine/` do ArgoCD quản. |
+| `main.tf` | Terraform root thứ hai, không backend, tạo OpenSearch Serverless + Bedrock KB + S3 `force_destroy`. Repo này có đúng một TF root `infra/live/production/`. Hạ tầng AI nếu cần thì đưa vào đó, không để root rời. |
 
 ## Hai điểm cần AIO02 xử lý trong `Dockerfile`
 
