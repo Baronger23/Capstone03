@@ -1461,50 +1461,64 @@ async def simulate_replay(payload: ReplayPayload):
 class DriftReplayPayload(BaseModel):
     surface: str = "isolation_forest_metrics"
     baseline: List[dict] = []
-    data: List[dict]
+    data: List[dict] = []
+    ai_quality_stream: Dict[str, List[float]] = {}
+    embeddings: List[List[float]] = []
 
 @app.post("/simulate/drift")
 async def simulate_drift(payload: DriftReplayPayload):
     """
-    [DIRECTIVE #27 - MLOps Data & Model Drift Replay Gateway]
-    Cửa nhận chuỗi dữ liệu đầu vào từ Mentor để đánh giá khả năng phát hiện Data Drift & Model Quality Shift.
-    Sử dụng chỉ số Population Stability Index (PSI) và Kolmogorov-Smirnov (KS-Test).
+    [DIRECTIVE #27 - Production MLOps Data, AI Quality & Embedding Drift Replay Gateway]
+    Cửa nhận chuỗi dữ liệu từ Mentor để đánh giá:
+      1. Data Drift (Sliding Window PSI/KS trên time-series metrics chỉ rõ timestamp & row)
+      2. AI Output-Quality Drift (Proxy metrics: Abstention Rate, Fallback Rate, Confidence Score)
+      3. Text Embedding Cosine Distance Drift (Độ trôi khoảng cách Cosine trên vector nhúng)
     """
     import pandas as pd
     import numpy as np
 
-    current_records = payload.data
-    if not current_records:
-        raise HTTPException(status_code=400, detail="Empty data list for drift evaluation")
-
-    current_df = pd.DataFrame(current_records)
-
-    # Nếu payload truyền kèm baseline tùy chỉnh từ Mentor
+    # 1. Nếu payload truyền kèm baseline tùy chỉnh từ Mentor, cập nhật ngay
     if payload.baseline:
         base_df = pd.DataFrame(payload.baseline)
         for col in base_df.columns:
             if np.issubdtype(base_df[col].dtype, np.number):
                 drift_detector.set_baseline(col, base_df[col].values)
-    else:
-        # Nếu chưa có baseline, tạo baseline chuẩn ngầm định nếu chưa khởi tạo
-        for col in current_df.columns:
-            if col not in drift_detector.baselines and np.issubdtype(current_df[col].dtype, np.number):
-                # Baseline mặc định: phân phối chuẩn xung quanh giá trị trung bình 20 hàng đầu
-                head_vals = current_df[col].iloc[:min(20, len(current_df))].values
-                if len(head_vals) > 0:
-                    drift_detector.set_baseline(col, head_vals)
 
-    # Chạy thuật toán quét Data Drift
-    drift_result = drift_detector.detect_drift(current_df, psi_threshold=0.25)
-    
+    drift_result = {"drift_detected": False, "drifted_metrics": [], "overall_max_psi": 0.0}
+    ai_quality_result = {"ai_quality_drift_detected": False, "drifted_ai_metrics": []}
+    embedding_result = {"embedding_drift_detected": False, "mean_cosine_distance": 0.0}
+
+    # 2. Đánh giá Numerical Time-series Metrics bằng Sliding Window
+    if payload.data:
+        current_df = pd.DataFrame(payload.data)
+        drift_result = drift_detector.detect_sliding_window_drift(current_df, psi_threshold=0.25)
+
+    # 3. Đánh giá AI Text Surface Proxy Quality Metrics
+    if payload.ai_quality_stream:
+        ai_quality_result = drift_detector.detect_ai_quality_drift(payload.ai_quality_stream)
+
+    # 4. Đánh giá Text Embedding Cosine Distance Drift
+    if payload.embeddings:
+        embedding_result = drift_detector.detect_embedding_drift(payload.embeddings)
+
+    overall_drift_flag = (
+        drift_result.get("drift_detected", False) or
+        ai_quality_result.get("ai_quality_drift_detected", False) or
+        embedding_result.get("embedding_drift_detected", False)
+    )
+
     return {
         "status": "evaluated",
         "surface": payload.surface,
-        "drift_analysis": drift_result,
+        "overall_drift_flag": overall_drift_flag,
+        "sliding_window_data_drift": drift_result,
+        "ai_output_quality_drift": ai_quality_result,
+        "text_embedding_drift": embedding_result,
         "summary": (
-            f"[Directive #27 Data Drift] Detected: {drift_result['drift_detected']} | "
-            f"Max PSI: {drift_result['overall_max_psi']} | "
-            f"Drifted Metrics Count: {len(drift_result['drifted_metrics'])}"
+            f"[Directive #27 Drift Analysis] Overall Drift Flag: {overall_drift_flag} | "
+            f"Metrics Max PSI: {drift_result.get('overall_max_psi', 0.0)} | "
+            f"Drifted Metrics: {len(drift_result.get('drifted_metrics', []))} | "
+            f"AI Quality Drift: {ai_quality_result.get('ai_quality_drift_detected', False)}"
         )
     }
 
