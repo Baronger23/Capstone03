@@ -895,7 +895,7 @@ components:
       tag: 43dcf62-29569108433-product-reviews
     resources:
       requests:
-        cpu: 100m
+        cpu: 150m
         memory: 80Mi
       limits:
         cpu: 500m
