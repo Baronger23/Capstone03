@@ -1,6 +1,10 @@
 # Báo cáo công việc — PM-0016 `product-reviews` + nâng cấp bản AIO02 (28/07/2026)
 
-**Người thực hiện:** CDO02 (qua Claude Code) · **Ngày:** 28/07/2026 · **Đối tượng:** team TF3 (CDO02 + AIO02)
+**Người thực hiện:** CDO01 (qua Claude Code) · **Ngày:** 28/07/2026 · **Đối tượng:** team TF3 (CDO01 + CDO02 + AIO02)
+
+> **Lưu ý về phân công:** sự cố PM-0016 thuộc trụ **Reliability** (CDO02), nhưng đợt xử lý này do **CDO01**
+> thực hiện. Các việc còn lại ở mục 8 cần **CDO01 và CDO02 thống nhất ai nhận** — bảng dưới chỉ ghi theo
+> trụ chuyên môn, chưa phải phân công chính thức.
 
 **Tài liệu liên quan:**
 - Postmortem đầy đủ: [`docs/postmortem/0016-product-reviews-deadline-exceeded-under-synthetic-load.md`](postmortem/0016-product-reviews-deadline-exceeded-under-synthetic-load.md)
@@ -233,13 +237,15 @@ lại và throttle có thể quay lại**.
 
 ## 8. Còn lại (chưa làm)
 
-| Việc | Thuộc | Mức độ |
+Cột "trụ" ghi theo chuyên môn, **chưa phải phân công chính thức** — CDO01/CDO02 cần thống nhất ai nhận.
+
+| Việc | Trụ liên quan | Mức độ |
 |---|---|---|
-| **P3 đầy đủ** — tách AI ra deployment/service riêng | CDO02 | Quan trọng nhất. Cache che được ở mức tải hiện tại nhưng không phải cô lập thật |
-| **P5** — xem lại deadline 500ms theo p95/p99 thật | CDO02 | Cần export Locust CSV để có số chính xác |
-| **Capacity-arrival gap** — pod mới ~70-80s mới Ready | CDO02 | Hiện chỉ né được bằng pre-scale thủ công |
+| **P3 đầy đủ** — tách AI ra deployment/service riêng | Reliability (CDO02) | Quan trọng nhất. Cache che được ở mức tải hiện tại nhưng không phải cô lập thật |
+| **P5** — xem lại deadline 500ms theo p95/p99 thật | Reliability (CDO02) | Cần export Locust CSV để có số chính xác |
+| **Capacity-arrival gap** — pod mới ~70-80s mới Ready | Reliability (CDO02) + Perf (CDO01) | Hiện chỉ né được bằng pre-scale thủ công |
 | Theo dõi quota Bedrock cho trường hợp cache miss cao | AIO02 | **Không còn gấp** sau khi có cache |
-| `product-catalog` 20 conn/pod × 8 pod trên RDS 112 connection | CDO01/CDO02 | Rủi ro tiềm ẩn có sẵn, ngoài phạm vi đợt này |
+| `product-catalog` 20 conn/pod × 8 pod trên RDS 112 connection | Perf (CDO01) + Reliability (CDO02) | Rủi ro tiềm ẩn có sẵn, ngoài phạm vi đợt này |
 
 **Incident PM-0016 chưa đóng chính thức** — xem tiêu chí đầy đủ ở postmortem §8/§14.
 

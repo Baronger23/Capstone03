@@ -1,6 +1,6 @@
 # PM-0016 — Báo cáo tổng hợp: Product Reviews lỗi dưới tải, đã fix gì / còn gì / phần liên quan AIO02
 
-**Ngày:** 28/07/2026 · **Người tổng hợp:** CDO02 (qua Claude Code) · **Đối tượng đọc:** team CDO02 + AIO02
+**Ngày:** 28/07/2026 · **Người tổng hợp:** CDO01 (qua Claude Code) · **Đối tượng đọc:** team CDO01 + CDO02 + AIO02
 
 **Tài liệu gốc đầy đủ (kỹ thuật, log/số liệu chi tiết):**
 [`docs/postmortem/0016-product-reviews-deadline-exceeded-under-synthetic-load.md`](postmortem/0016-product-reviews-deadline-exceeded-under-synthetic-load.md)
@@ -47,9 +47,9 @@ load test, đã revert).
 
 | # | Vấn đề | Vì sao chưa fix được | Ai xử lý |
 |---|---|---|---|
-| 1 | **Pod mới mất 70-80s để sẵn sàng khi scale** | Đây là giới hạn hạ tầng (Kubernetes/Karpenter phải dựng node mới từ đầu), không phải bug code. Cách né duy nhất hiện tại là **pre-scale thủ công trước khi biết trước sẽ có tải** (đã áp dụng tạm cho lần test vừa rồi, không phải giải pháp thường trực). | CDO02 — cần việc riêng (P3 kiến trúc / cân nhắc capacity buffer) |
-| 2 | **AI và đọc review vẫn dùng chung 1 nhóm luồng xử lý** | Fix ở mục 2.2 chỉ giới hạn *thời gian* AI chiếm tài nguyên sau khi đã được nhận vào, KHÔNG ngăn được việc request đọc review phải xếp hàng phía sau một loạt request AI đã nộp trước đó nếu backlog đủ lớn. Cách fix triệt để là **tách hẳn AI ra một service/luồng xử lý riêng** (đã lên kế hoạch, chưa làm — việc lớn, cần đổi routing + canary). | CDO02 |
-| 3 | **Deadline 500ms chưa được xem lại theo số liệu thật** | Cần đo p95/p99 thật trước khi quyết định có nên đổi deadline không (tránh đổi mù dẫn tới che giấu vấn đề thay vì giải quyết). | CDO02 |
+| 1 | **Pod mới mất 70-80s để sẵn sàng khi scale** | Đây là giới hạn hạ tầng (Kubernetes/Karpenter phải dựng node mới từ đầu), không phải bug code. Cách né duy nhất hiện tại là **pre-scale thủ công trước khi biết trước sẽ có tải** (đã áp dụng tạm cho lần test vừa rồi, không phải giải pháp thường trực). | Trụ Reliability (CDO02) — cần việc riêng (P3 kiến trúc / capacity buffer) |
+| 2 | **AI và đọc review vẫn dùng chung 1 nhóm luồng xử lý** | Fix ở mục 2.2 chỉ giới hạn *thời gian* AI chiếm tài nguyên sau khi đã được nhận vào, KHÔNG ngăn được việc request đọc review phải xếp hàng phía sau một loạt request AI đã nộp trước đó nếu backlog đủ lớn. Cách fix triệt để là **tách hẳn AI ra một service/luồng xử lý riêng** (đã lên kế hoạch, chưa làm — việc lớn, cần đổi routing + canary). | Trụ Reliability (CDO02) |
+| 3 | **Deadline 500ms chưa được xem lại theo số liệu thật** | Cần đo p95/p99 thật trước khi quyết định có nên đổi deadline không (tránh đổi mù dẫn tới che giấu vấn đề thay vì giải quyết). | Trụ Reliability (CDO02) |
 
 ---
 
@@ -100,7 +100,7 @@ khi TTL cache (24h) hết, hoặc khi Redis lỗi → Bedrock sẽ bị gọi th
 
 - **Đã fix:** lỗi hiển thị sai (mục quan trọng nhất của postmortem gốc) + **Bedrock throttle không còn tái
   hiện** nhờ cache Redis từ bản nâng cấp AIO02.
-- **Chưa fix — CDO02 xử lý tiếp:**
+- **Chưa fix — thuộc trụ Reliability (CDO02), CDO01/CDO02 cần thống nhất ai nhận:**
   - Tách AI ra service riêng (P3 đầy đủ) — cache che được vấn đề ở mức tải hiện tại nhưng không phải cô
     lập thật; khi cache miss cao thì AI vẫn dùng chung tài nguyên với đường đọc review.
   - Xem lại deadline 500ms (P5) — đo lại thấy vẫn còn ~2.5% request đọc review vượt deadline ở 500 user.
