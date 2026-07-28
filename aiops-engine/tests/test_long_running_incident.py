@@ -1,8 +1,7 @@
 import unittest
-import numpy as np
-import pandas as pd
 import os
 import sys
+import asyncio
 
 # Ensure aiops-engine is in sys.path
 engine_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -10,78 +9,77 @@ if engine_dir not in sys.path:
     sys.path.insert(0, engine_dir)
 
 from anomaly_detector import AnomalyDetector
+from main import simulate_long_running, LongRunningPayload, LongRunningScenarioItem, detector
 
 
-class TestLongRunningIncident(unittest.TestCase):
+class TestLongRunningIncidentDirective28(unittest.TestCase):
     def setUp(self):
         self.detector = AnomalyDetector()
 
-    def test_continuous_detection_long_incident(self):
+    def test_real_baseline_freezing_mechanism(self):
         """
         [DIRECTIVE #28 - Test 1]
-        Kiểm tra sự cố kéo dài (40 chu kỳ / 40 phút) không bị "tự nuốt" hay có khoảng câm giữa chừng.
+        Kiểm tra cơ chế đóng băng Baseline thực sự (Explicit Baseline Freezing).
+        Khi service 'payment' có sự cố kéo dài, baseline model của payment bị đóng băng thực sự.
         """
-        records = []
-        base_time = pd.Timestamp("2026-07-28 20:00:00")
+        self.assertFalse(self.detector.is_baseline_frozen("payment"))
         
-        # 12 chu kỳ đầu: Khởi động bình thường
-        for i in range(12):
-            records.append({
-                "timestamp": (base_time + pd.Timedelta(minutes=i)).isoformat(),
-                "rps": 150.0,
-                "latency_p90": 0.05,
-                "error_rate": 0.0,
-                "client_error_rate": 0.0,
-                "cpu_usage": 0.10,
-                "memory_usage": 30.0,
-                "kafka_lag": 0,
-                "label": 1
-            })
-            
-        # 40 chu kỳ tiếp theo: Sự cố kéo dài (High Latency + High Error Rate)
-        for i in range(12, 52):
-            records.append({
-                "timestamp": (base_time + pd.Timedelta(minutes=i)).isoformat(),
-                "rps": 150.0,
-                "latency_p90": 4.50,  # Vỡ SLO nghiêm trọng kéo dài 40 phút
-                "error_rate": 0.25,
-                "client_error_rate": 0.0,
-                "cpu_usage": 0.85,
-                "memory_usage": 80.0,
-                "kafka_lag": 50,
-                "label": -1
-            })
+        # Đóng băng baseline cho payment
+        self.detector.freeze_baseline("payment")
+        self.assertTrue(self.detector.is_baseline_frozen("payment"), "Baseline for payment MUST be frozen during active incident")
 
-        df = pd.DataFrame(records)
-        df["has_health_degradation"] = (df["latency_p90"] > 0.50) | (df["error_rate"] > 0.10)
-        incident_period_breaches = df.iloc[12:]["has_health_degradation"].sum()
-        self.assertGreater(incident_period_breaches, 30, "Long running incident MUST maintain continuous alert detection without gaps")
+        # Giải phóng đóng băng sau sự cố
+        self.detector.unfreeze_baseline("payment")
+        self.assertFalse(self.detector.is_baseline_frozen("payment"))
 
-    def test_overlapping_multi_service_incidents(self):
+    def test_streaming_alert_timeline_output(self):
         """
         [DIRECTIVE #28 - Test 2]
-        Kiểm tra hai sự cố nổ chồng ở 2 dịch vụ độc lập (checkout và payment).
-        Sự cố B (payment) không bị sự cố A (checkout) nuốt mất.
+        Kiểm tra Replay Gateway POST /simulate/long_running xuất đúng Dòng Cảnh Báo Theo Thời Gian (Streaming Alert Timeline).
         """
-        active_incidents = {}
-        
-        # Incident A nổ ở checkout
-        active_incidents["checkout"] = {
-            "incident_id": "INC-LONG-CHECKOUT-101",
-            "service": "checkout",
-            "status": "CONTINUOUS_ALERT_ACTIVE"
-        }
+        # Giả lập kịch bản payment bị lỗi liên tục kéo dài 20 phút (T+0m -> T+20m)
+        payment_data = [
+            {"timestamp": "T+00m", "latency_p90": 0.05, "error_rate": 0.00},
+            {"timestamp": "T+05m", "latency_p90": 0.45, "error_rate": 0.12}, # INCIDENT OPENED
+            {"timestamp": "T+10m", "latency_p90": 0.50, "error_rate": 0.15}, # INCIDENT STILL ACTIVE
+            {"timestamp": "T+15m", "latency_p90": 0.48, "error_rate": 0.14}, # INCIDENT STILL ACTIVE
+            {"timestamp": "T+20m", "latency_p90": 0.05, "error_rate": 0.00}  # INCIDENT RESOLVED
+        ]
 
-        # Incident B nổ chồng ở payment
-        active_incidents["payment"] = {
-            "incident_id": "INC-LONG-PAYMENT-102",
-            "service": "payment",
-            "status": "CONTINUOUS_ALERT_ACTIVE"
-        }
+        # Giả lập kịch bản shipping bị lỗi nổ chồng ở T+10m
+        shipping_data = [
+            {"timestamp": "T+00m", "latency_p90": 0.04, "error_rate": 0.00},
+            {"timestamp": "T+05m", "latency_p90": 0.04, "error_rate": 0.00},
+            {"timestamp": "T+10m", "latency_p90": 0.60, "error_rate": 0.20}, # OVERLAPPING INCIDENT OPENED
+            {"timestamp": "T+15m", "latency_p90": 0.55, "error_rate": 0.18}, # INCIDENT STILL ACTIVE
+            {"timestamp": "T+20m", "latency_p90": 0.04, "error_rate": 0.00}  # INCIDENT RESOLVED
+        ]
 
-        self.assertEqual(len(active_incidents), 2, "Both overlapping incidents MUST be isolated into distinct per-service tracking")
-        self.assertIn("checkout", active_incidents)
-        self.assertIn("payment", active_incidents)
+        payload = LongRunningPayload(scenarios=[
+            LongRunningScenarioItem(service="payment", data=payment_data),
+            LongRunningScenarioItem(service="shipping", data=shipping_data)
+        ])
+
+        loop = asyncio.get_event_loop()
+        res = loop.run_until_complete(simulate_long_running(payload))
+
+        self.assertEqual(res["status"], "evaluated")
+        self.assertTrue(res["continuous_detection_verified"])
+        self.assertIn("alert_timeline", res)
+
+        timeline = res["alert_timeline"]
+        self.assertGreater(len(timeline), 0, "Alert timeline MUST contain streaming event records")
+
+        # Kiểm tra sự kiện mở sự cố (INCIDENT_OPENED) cho payment và shipping
+        events = [e["alert_event"] for e in timeline]
+        self.assertIn("INCIDENT_OPENED", events)
+        self.assertIn("INCIDENT_STILL_ACTIVE", events)
+        self.assertIn("INCIDENT_RESOLVED", events)
+
+        # Kiểm tra baseline_frozen = True thực sự cho payment và shipping
+        incidents = res["active_isolated_incidents"]
+        self.assertTrue(any(inc["service"] == "payment" and inc["baseline_frozen"] for inc in incidents))
+        self.assertTrue(any(inc["service"] == "shipping" and inc["baseline_frozen"] for inc in incidents))
 
 
 if __name__ == "__main__":

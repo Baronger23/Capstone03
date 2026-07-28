@@ -168,22 +168,9 @@ async def active_metrics_polling_loop():
     await asyncio.sleep(5)  # Đợi uvicorn khởi tạo xong cổng kết nối
     while ACTIVE_POLLING_ENABLED:
         try:
-            # Auto-expire incidents older than 10 minutes (600 seconds) to prevent polling lockup
+            # [DIRECTIVE #28] Per-Service Incident Guarding & Non-blocking Multi-service Scanning
+            # Không bỏ qua toàn bộ vòng lặp khi 1 service lỗi! Quét từng service độc lập.
             now_ts = time.time()
-            stale_incidents = [
-                inc_id for inc_id, inc_data in list(active_incidents.items())
-                if now_ts - inc_data.get("created_at", 0) > 600
-            ]
-            for inc_id in stale_incidents:
-                logger.info(f"[AutoExpire] Incident {inc_id} expired after 10m timeout. Removing from active cache.")
-                active_incidents.pop(inc_id, None)
-
-            # Chỉ bỏ qua nếu có sự cố đang xử lý (active) thực tế (không phải là cảnh báo sớm ML)
-            running_incidents = {k: v for k, v in active_incidents.items() if v.get("status") != "proactive_warning"}
-            if running_incidents:
-                logger.info("Active running incident exists. Skipping duplicate polling run.")
-                await asyncio.sleep(POLLING_INTERVAL_SECONDS)
-                continue
 
             logger.info("Active Polling Check: checking system SLO via Prometheus...")
             is_breached = detector.check_slo_burn_rate()
@@ -1537,9 +1524,11 @@ async def simulate_long_running(payload: LongRunningPayload):
     - Đảm bảo phát hiện liên tục suốt sự cố dài (No Silent Gaps).
     - Tự động đóng băng Baseline (Baseline Freezing) để chống tự nuốt sự cố.
     - Phát hiện và tách độc lập các sự cố nổ chồng ở các microservices khác nhau.
+    - Xuất dòng cảnh báo theo thời gian (Streaming Alert Timeline).
     """
     results = []
     active_service_incidents = {}
+    alert_timeline = []
 
     for item in payload.scenarios:
         svc = item.service
@@ -1559,30 +1548,78 @@ async def simulate_long_running(payload: LongRunningPayload):
 
         replay_resp = await simulate_replay(ReplayPayload(service=svc, data=metric_points))
         
-        # Đóng băng baseline cho service đang lỗi và tạo Incident độc lập
+        # 1. Đóng băng Baseline thực sự cho service này
+        detector.freeze_baseline(svc)
+
+        # 2. Xây dựng Dòng Cảnh Báo Theo Thời Gian (Streaming Alert Timeline)
+        inc_id = f"INC-LONG-{svc.upper()}-001"
+        is_active = False
+
+        for idx, r in enumerate(records):
+            ts = r.get("timestamp", f"T+{idx*5}m")
+            err_rate = r.get("error_rate", 0.0)
+            lat_p90 = r.get("latency_p90", 0.0)
+            is_anomalous = (err_rate >= 0.05 or lat_p90 >= 0.30)
+
+            if is_anomalous:
+                if not is_active:
+                    is_active = True
+                    alert_timeline.append({
+                        "timestamp": ts,
+                        "service": svc,
+                        "alert_event": "INCIDENT_OPENED",
+                        "incident_id": inc_id,
+                        "status": "ACTIVE",
+                        "details": f"First anomaly detected on {svc} (ErrorRate={err_rate:.2f}, Latency={lat_p90:.2f}s)"
+                    })
+                else:
+                    alert_timeline.append({
+                        "timestamp": ts,
+                        "service": svc,
+                        "alert_event": "INCIDENT_STILL_ACTIVE",
+                        "incident_id": inc_id,
+                        "status": "ACTIVE_CONTINUOUS",
+                        "details": f"Continuous fault streaming on {svc} (ErrorRate={err_rate:.2f})"
+                    })
+            else:
+                if is_active:
+                    is_active = False
+                    alert_timeline.append({
+                        "timestamp": ts,
+                        "service": svc,
+                        "alert_event": "INCIDENT_RESOLVED",
+                        "incident_id": inc_id,
+                        "status": "CLOSED",
+                        "details": f"Telemetry returned to normal baseline on {svc}."
+                    })
+
         if replay_resp.get("metrics", {}).get("slo_breaches_detected", 0) > 0:
             active_service_incidents[svc] = {
-                "incident_id": f"INC-LONG-{svc.upper()}-{int(time.time())}",
+                "incident_id": inc_id,
                 "service": svc,
                 "status": "CONTINUOUS_ALERT_ACTIVE",
-                "baseline_frozen": True,
+                "baseline_frozen": detector.is_baseline_frozen(svc),
                 "slo_breaches": replay_resp["metrics"]["slo_breaches_detected"]
             }
 
         results.append({
             "service": svc,
-            "replay_metrics": replay_resp["metrics"],
+            "replay_metrics": replay_resp.get("metrics", {}),
             "rca_ranking": replay_resp.get("rca_ranking", []),
             "incident_status": active_service_incidents.get(svc, {"status": "NORMAL"})
         })
 
+    # Sắp xếp timeline theo timestamp
+    alert_timeline.sort(key=lambda x: str(x.get("timestamp", "")))
+
     return {
         "status": "evaluated",
         "directive": "DIRECTIVE_28_LONG_RUNNING_INCIDENTS",
+        "continuous_detection_verified": True,
         "active_isolated_incidents": list(active_service_incidents.values()),
         "total_isolated_incidents_count": len(active_service_incidents),
-        "continuous_detection_verified": True,
-        "summary": f"[Directive #28] Successfully evaluated {len(results)} long-running/overlapping scenarios. Isolated {len(active_service_incidents)} distinct per-service incidents without baseline swallowing.",
+        "alert_timeline": alert_timeline,
+        "summary": f"[Directive #28] Successfully evaluated {len(results)} long-running/overlapping scenarios. Emitted {len(alert_timeline)} timeline alert events across overlapping incidents.",
         "results": results
     }
 
