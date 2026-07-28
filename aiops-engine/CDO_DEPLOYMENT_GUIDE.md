@@ -1,5 +1,16 @@
 # HƯỚNG DẪN TRIỂN KHAI AIOPS ENGINE & TRAINING CRONJOB (DÀNH CHO CDO TEAM)
 
+> [!WARNING]
+> **Tài liệu này được giữ lại làm tham chiếu lịch sử — KHÔNG làm theo nguyên văn.**
+> - Manifest triển khai thật hiện nằm ở `gitops/aiops-engine/` và do ArgoCD quản lý (GitOps),
+>   không phải `kubectl apply -f k8s/...` như hướng dẫn dưới đây.
+> - Thư mục `k8s/` đã bị **gỡ bỏ có chủ đích** khi import source vào repo này: nó chứa một
+>   Ingress internet-facing phơi `/remediation` không xác thực và một RBAC bind vào
+>   ServiceAccount `default`.
+> - Cách cấp quyền AWS (S3/Bedrock) đang chuyển sang **IRSA** (IAM Roles for Service Accounts),
+>   không còn dùng static AWS access key/secret qua Kubernetes Secret như mô tả ở mục 2A/Bước 1
+>   bên dưới — secret không bao giờ được vào file tracked.
+
 Tài liệu này hướng dẫn đội ngũ CDO cấu hình các tham số bảo mật, tạo các tài nguyên Kubernetes và triển khai hệ thống **AIOps Engine** (FastAPI service) & **Training CronJob** chạy thành công trên cụm Kubernetes (EKS) ở Phase 3.
 
 ---
