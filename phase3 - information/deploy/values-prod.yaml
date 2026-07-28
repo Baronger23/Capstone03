@@ -276,7 +276,7 @@ components:
       # build từ code fallback + postcss fix). Re-apply PR #448 - từng merge rồi bị revert (#450)
       # như biện pháp phòng ngừa trong lúc ổn định PM-129 (bug tooling trace-provenance đa-arch,
       # KHÔNG phải lỗi supply-chain); image đã qua Trivy + Cosign. Đừng revert lại.
-      digest: sha256:6e91e6c017ebea643845b1e493fe1a85e455e23d59d3970022a342fcc8ffded6
+      digest: sha256:292d3e51367d5f809898e974e4798c5ebdb1145b925092983ed9e2055c226d3b
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
