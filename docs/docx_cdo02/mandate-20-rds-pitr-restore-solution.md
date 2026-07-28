@@ -341,6 +341,37 @@ Các bước thực hiện an toàn:
 8. Lưu evidence.
 9. Cleanup DB drill sau khi mentor duyệt.
 
+## 5.2. Ma trận đối chiếu yêu cầu Mandate #20 với solution hiện tại
+
+| Yêu cầu Mandate #20 | Solution hiện tại cover bằng gì | Phạm vi CDO02 claim | Phần phụ thuộc CDO01/Security | Trạng thái trước drill |
+|---|---|---|---|---|
+| Không sót store stateful trên luồng browse -> cart -> checkout | Chọn RDS làm drill PITR chính; các store khác đi vào coverage matrix riêng | Inventory và giải thích RDS, ElastiCache, MSK, DynamoDB lock, EBS legacy, GitOps/IaC state | Xác nhận security posture của từng store nếu dùng làm backup/evidence | **Một phần** - RDS rõ, store khác cần verdict `covered/excluded/pending` |
+| RPO/RTO rõ ràng, cadence tương xứng | Đề xuất RDS RPO <= 5 phút, RTO <= 45 phút dựa trên RDS automated backup 7 ngày + PITR | Chốt target trước drill, đo RTO thực sau drill, ghi vào ADR/evidence | Review retention/security policy có phù hợp target không | **Chưa đạt** đến khi ADR/record ký target |
+| Point-in-time restore | Restore RDS `techx-tf3-postgres` về `T_restore` sang DB drill tách biệt | Chạy restore-to-point-in-time và query marker GOOD | Đảm bảo DB drill private, encrypted/default security posture không làm lộ dữ liệu | **Thiết kế đạt, chờ chạy thật** |
+| Tested restore drill | GOOD marker -> CORRUPTED marker -> restore DB drill -> query GOOD | Thực hiện drill, đo RTO, lưu raw SQL/AWS output | Không phải phần chính của CDO01, nhưng CDO01 có thể witness security boundary | **Chưa đạt** nếu chưa có evidence thật |
+| Backup an toàn: encrypted at-rest | RDS hiện encrypted, KMS; ElastiCache/MSK cũng encrypted/TLS theo baseline | Ghi baseline để chứng minh store không plaintext | CDO01 xác nhận KMS/key policy/security posture | **Đạt nền, cần Security xác nhận** |
+| Backup an toàn: tách quyền xóa backup | Solution ghi rõ gap: account còn admin rộng/no SCP, không claim chặn tuyệt đối | Ghi dependency và accepted limitation trong ADR | CDO01 xác nhận IAM deny/permission boundary/break-glass hoặc accepted risk | **Chưa đạt đầy đủ** nếu chưa có evidence CDO01 |
+| Retention hợp lý, không giữ vô tận | RDS backup retention 7 ngày; Valkey snapshot retention 3 ngày; MSK retention/replay xử lý riêng | Ghi retention/cadence theo từng store trong coverage matrix | CDO01 review retention guardrail nếu có policy enforce | **Một phần** |
+| Không phá production khi drill | DB drill tách biệt, không đổi app secret, không repoint traffic, chỉ thao tác schema `dr_drill` | CDO02 chịu trách nhiệm runbook safe và cleanup | CDO01 review nếu cần SG/IAM tạm | **Thiết kế đạt, phải tuân thủ khi chạy** |
+
+Kết luận từ ma trận yêu cầu: solution hiện tại **khả thi để đưa Mandate #20 tới trạng thái pass**, nhưng chưa được claim pass trước khi có restore drill thật và security/delete-permission verdict từ CDO01.
+
+## 5.3. Ma trận hạ tầng hiện có đối chiếu evidence cần để hiện thực hóa Mandate #20
+
+| Thành phần live | Hiện trạng quan sát/nguồn repo | Độ đáp ứng để làm evidence | Evidence cần lấy khi drill | Rủi ro / việc còn thiếu |
+|---|---|---|---|---|
+| RDS `techx-tf3-postgres` | Available, encrypted, private, backup retention 7 ngày, PITR sống, deletion protection, Multi-AZ | **Sẵn sàng làm drill chính** | `describe-db-instances`, `LatestRestorableTime`, restore command/action, DB drill available, SQL GOOD/CORRUPTED/RESTORED GOOD, RTO measured | Cần chọn đúng `T_restore`; không restore đè production |
+| RDS manual snapshot `techx-tf3-postgres-pre-cleanup-20260721-2242` | Available, encrypted | **Bằng chứng phụ**, không thay PITR drill | `describe-db-snapshots` để mentor thấy snapshot tồn tại | Snapshot mới nhất không chứng minh point-in-time restore |
+| ElastiCache `techx-tf3-valkey` | Available, encrypted at-rest, TLS, snapshot retention 3 ngày | **Coverage phụ**, không phải PITR chính | Snapshot retention/status; nếu claim restore thì cần restore replication group tạm hoặc ADR accepted cache-state strategy | Snapshot Valkey không có PITR theo giây; cần nói rõ RPO/RTO cart/cache |
+| MSK `techx-tf3-kafka` | ACTIVE, KMS at-rest, TLS in-transit, retention/replay model | **Coverage riêng**, không gọi là PITR backup | Cluster status, topic retention, producer/consumer replay hoặc order reconciliation evidence | Retention không giống backup restore; phải tránh claim sai |
+| DynamoDB `techx-tf3-terraform-lock` | Chỉ thấy Terraform lock table | **Có thể exclude** nếu chỉ là lock tái tạo được | ADR ghi exclusion reason | Nếu team coi Terraform state/lock là DR component thì cần security/PITR verdict riêng |
+| EBS/PVC legacy | Legacy/available volumes liên quan M8/M18 từng được ghi nhận | **Không dùng làm backup proof chính** | Ghi pending M8/M18 hoặc cleanup/retention decision | Có thể gạt Mandate 8/18 nếu xóa/detach vội; không nên làm trong M20 drill |
+| GitOps/IaC state | Git main + Terraform state/S3 state nếu có | **Cần coverage bằng process**, không nằm trong RDS drill | Commit SHA, Argo revision, state bucket/versioning/Object Lock nếu team claim | Phụ thuộc CDO01/Security cho state bucket/IAM/Object Lock posture |
+| IAM/KMS/delete permission | Solution ghi rõ chưa claim tuyệt đối vì account còn admin rộng/no SCP | **Security dependency** | CDO01 evidence: role nào được xóa backup, simulate policy hoặc accepted limitation | Nếu không có verdict, M20 vẫn có gap ở yêu cầu “backup phải an toàn” |
+| DB drill instance tạm | Chưa tồn tại trước drill | **Phải tạo trong cửa sổ nghiệm thu** | Identifier, endpoint private, create/available/delete timestamps | Tạo sai subnet/SG có thể không query được; cleanup chỉ sau mentor duyệt |
+
+Kết luận từ ma trận hạ tầng: hạ tầng live hiện tại đủ nền để chạy RDS PITR drill an toàn. Phần còn thiếu không phải thêm app code, mà là **drill evidence** và **security verdict** cho quyền xóa/retention.
+
 ## 6. Đánh giá pass/fail trước khi nộp
 
 | Yêu cầu Mandate #20 | Hiện trạng | Đánh giá |
