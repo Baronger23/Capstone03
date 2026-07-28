@@ -14,7 +14,6 @@ metadata:
   name: aiops-engine-role
   namespace: techx-tf3
   labels:
-    app.kubernetes.io/managed-by: argocd
     app.kubernetes.io/name: aiops-engine
 rules:
 - apiGroups:
@@ -56,7 +55,6 @@ metadata:
   name: aiops-engine-rolebinding
   namespace: techx-tf3
   labels:
-    app.kubernetes.io/managed-by: argocd
     app.kubernetes.io/name: aiops-engine
 roleRef:
   apiGroup: rbac.authorization.k8s.io

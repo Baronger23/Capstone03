@@ -14,7 +14,6 @@ metadata:
   namespace: techx-tf3
   labels:
     app: aiops-engine
-    app.kubernetes.io/managed-by: argocd
     app.kubernetes.io/name: aiops-engine
 spec:
   replicas: 1
