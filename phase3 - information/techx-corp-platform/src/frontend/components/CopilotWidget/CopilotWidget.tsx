@@ -116,9 +116,25 @@ const CopilotWidget = () => {
             marginBottom: 12,
           }}
         >
-          <div style={{ background: accent, color: '#fff', padding: '12px 16px', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div
+            style={{
+              background: accent,
+              color: '#fff',
+              padding: '12px 16px',
+              fontWeight: 600,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
             <span>Trợ lý mua sắm</span>
-            <button onClick={() => setOpen(false)} aria-label="Đóng" style={{ background: 'none', border: 'none', color: '#fff', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
+            <button
+              onClick={() => setOpen(false)}
+              aria-label="Đóng"
+              style={{ background: 'none', border: 'none', color: '#fff', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}
+            >
+              ×
+            </button>
           </div>
           <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 14, background: '#f7f7fb' }}>
             {messages.map((m, i) => (
@@ -140,7 +156,19 @@ const CopilotWidget = () => {
                   {m.content}
                   {m.token && (
                     <div style={{ marginTop: 8 }}>
-                      <button onClick={() => confirm(m.token as string)} disabled={loading} style={{ background: accent, color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13 }}>
+                      <button
+                        onClick={() => confirm(m.token as string)}
+                        disabled={loading}
+                        style={{
+                          background: accent,
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 8,
+                          padding: '6px 12px',
+                          cursor: 'pointer',
+                          fontSize: 13,
+                        }}
+                      >
                         Xác nhận
                       </button>
                     </div>
@@ -159,7 +187,20 @@ const CopilotWidget = () => {
               maxLength={1000}
               style={{ flex: 1, border: '1px solid #ddd', borderRadius: 8, padding: '9px 11px', fontSize: 14, outline: 'none' }}
             />
-            <button onClick={send} disabled={loading || !input.trim()} style={{ marginLeft: 8, background: accent, color: '#fff', border: 'none', borderRadius: 8, padding: '0 16px', cursor: 'pointer', fontWeight: 600 }}>
+            <button
+              onClick={send}
+              disabled={loading || !input.trim()}
+              style={{
+                marginLeft: 8,
+                background: accent,
+                color: '#fff',
+                border: 'none',
+                borderRadius: 8,
+                padding: '0 16px',
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+            >
               Gửi
             </button>
           </div>
