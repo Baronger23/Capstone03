@@ -11,6 +11,8 @@ kind: CronJob
 metadata:
   name: aiops-anomaly-training
   namespace: techx-tf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   schedule: 0 19 * * 0
   concurrencyPolicy: Forbid
@@ -68,6 +70,14 @@ spec:
               value: tf3-aiops-models-197826770971
             - name: AWS_REGION
               value: ap-southeast-1
+            - name: HTTPS_PROXY
+              value: http://aiops-egress-proxy.techx-tf3.svc.cluster.local:3128
+            - name: https_proxy
+              value: http://aiops-egress-proxy.techx-tf3.svc.cluster.local:3128
+            - name: NO_PROXY
+              value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,172.20.0.10,prometheus.techx-tf3.svc.cluster.local
+            - name: no_proxy
+              value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,172.20.0.10,prometheus.techx-tf3.svc.cluster.local
             # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY đã GỠ — xem lý do ở
             # deployment.yaml. Credential đến từ ServiceAccount aiops-trainer ->
             # role techx-corp-tf3-aiops-trainer (chỉ S3 model, không Bedrock).

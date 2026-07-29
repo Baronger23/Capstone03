@@ -16,6 +16,8 @@ metadata:
   labels:
     app: aiops-engine
     app.kubernetes.io/name: aiops-engine
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   replicas: 1
   revisionHistoryLimit: 10
@@ -86,6 +88,16 @@ spec:
           value: amazon.nova-lite-v1:0
         - name: BEDROCK_KB_ID
           value: GH3FUCYVOJ
+        # AIOps external HTTPS must go through the reviewed Envoy forward proxy.
+        # Internal service URLs are left on the direct cluster path by NO_PROXY.
+        - name: HTTPS_PROXY
+          value: http://aiops-egress-proxy.techx-tf3.svc.cluster.local:3128
+        - name: https_proxy
+          value: http://aiops-egress-proxy.techx-tf3.svc.cluster.local:3128
+        - name: NO_PROXY
+          value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,172.20.0.1,172.20.0.10,prometheus.techx-tf3.svc.cluster.local,jaeger.techx-tf3.svc.cluster.local,opensearch.techx-tf3.svc.cluster.local
+        - name: no_proxy
+          value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,172.20.0.1,172.20.0.10,prometheus.techx-tf3.svc.cluster.local,jaeger.techx-tf3.svc.cluster.local,opensearch.techx-tf3.svc.cluster.local
         resources:
           requests:
             cpu: 200m
