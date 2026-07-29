@@ -37,6 +37,10 @@ spec:
             app: aiops-engine
             component: trainer
         spec:
+          # Trước đây không khai -> chạy bằng SA `default` của namespace, và lấy
+          # credential AWS từ static key trong env. SA riêng này gắn IRSA role
+          # techx-corp-tf3-aiops-trainer (chỉ S3 model, không Bedrock).
+          serviceAccountName: aiops-trainer
           restartPolicy: OnFailure
           dnsPolicy: ClusterFirst
           schedulerName: default-scheduler
@@ -51,7 +55,7 @@ spec:
               type: RuntimeDefault
           containers:
           - name: trainer
-            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:94bad5a-30384952378-aiops-engine@sha256:7eb0b5120232a10266be897de53279dc6d5041f812829fd7a9e732ebd0726954
+            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:0cd7b98-30391640750-aiops-engine@sha256:d9371c5352e1b530ee1927e8c2893a79b0ea73cae2289549dce05f038de0d9ef
             imagePullPolicy: Always
             command:
             - python
