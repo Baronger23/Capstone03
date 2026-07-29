@@ -1,0 +1,31 @@
+# ArgoCD Application cho Job schema migration mot lan cua Long-term User Memory (shopping-copilot).
+# App-of-apps (techx-corp-bootstrap watch gitops/apps) tu nhat file nay - khong can thao tac tay.
+#
+# Cung khuon voi product-reviews-schema-migration (xem file canh ben de doi chieu ly do):
+#   - Khong dung PreSync hook tren Application techx-corp: hook do se chay lai migration o
+#     MOI lan sync ca chart, ke ca sync khong lien quan.
+#   - Khong bo vao gitops/infrastructure/: selfHeal:true se danh nhau voi Job da Complete
+#     (PodTemplate cua Job la immutable).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: copilot-user-memory-migration
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel.git'
+    targetRevision: main
+    path: gitops/jobs/copilot-user-memory
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: techx-tf3
+  syncPolicy:
+    automated:
+      # prune: true - Job con trong git thi prune KHONG dung toi no, chi khi file roi khoi git
+      # moi don. De false thi Job cu (neu Failed) nam lai vinh vien va giu Application o
+      # Degraded, che mat su co that sau nay.
+      prune: true
+      # selfHeal: PodTemplate cua Job la immutable. selfHeal se lien tuc thu patch mot resource
+      # khong the patch va giu Application OutOfSync vinh vien.
+      selfHeal: false
