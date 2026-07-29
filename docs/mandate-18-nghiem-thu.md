@@ -11,7 +11,7 @@
 
 Directive #18 đòi cắt **chi phí ẩn ngoài node compute**: data-transfer/NAT, storage (EBS sai loại/mồ côi/snapshot), và telemetry (log/trace/metric giữ full-fidelity vô hạn). Đo bằng **Usage**, không bằng $ (account đang được credit phủ).
 
-**Kết quả:** 3 đòn bẩy cắt tiền thật đã **áp dụng + verify live**; phần trace có **quyết định ký tên**; còn 1 mục chờ nghiệm thu Mandate #8.
+**Kết quả:** 3 đòn bẩy cắt tiền thật đã **áp dụng + verify live**; phần trace có **quyết định ký tên**; tài nguyên mồ côi **đã dọn sạch** sau khi Mandate #8 được nghiệm thu (29/07). **Đạt đủ 5/5 yêu cầu.**
 
 | Hạng mục | Trước | Sau | Trạng thái |
 |---|---|---|---|
@@ -19,7 +19,7 @@ Directive #18 đòi cắt **chi phí ẩn ngoài node compute**: data-transfer/N
 | Log OpenSearch `otel-logs` | không lifecycle, ~1 GB/ngày vô hạn | **cap 7 ngày** (CronJob) | ✅ live |
 | Metric active series (Prometheus) | **233.042** | **82.701** (−64,5%) | ✅ live |
 | Trace sampling | — | quyết định KHÔNG thêm (ADR 0013) | ✅ ký |
-| EBS mồ côi (store-cũ) | **3 vol / 6 GiB** | (chờ) | 🔴 **chờ nghiệm thu M8** |
+| EBS mồ côi (store-cũ) | **3 vol / 6 GiB** | **0** | ✅ đã dọn 29/07 |
 
 > **Top cost-driver ngoài compute đã chỉ ra và cắt: VPC interface endpoint** — trả $142/mo để né NAT chỉ tốn $7/mo. Đã cắt xuống 3 ENI.
 
@@ -39,7 +39,7 @@ Directive #18 đòi cắt **chi phí ẩn ngoài node compute**: data-transfer/N
 
 | Directive đòi nộp | Ở đâu | Trạng thái |
 |---|---|---|
-| Danh sách tài nguyên mồ côi đã dọn | §5 | 🟡 EIP/snapshot/LB sạch; **3 EBS chờ M8** (note rõ) |
+| Danh sách tài nguyên mồ côi đã dọn | §5 | ✅ EIP/snapshot/LB sạch + **3 EBS (6 GiB) đã xoá 29/07** |
 | EBS gp3 + volume right-size | §4 | ✅ gp3 + right-size (RDS 1,9/20GB) |
 | NAT → VPC endpoint (hoặc lý do) | §2 | ✅ 15→3 ENI + lý do |
 | Telemetry volume/retention trước-sau | §3 | ✅ log + metric trước/sau |
@@ -59,7 +59,7 @@ Phân rã chi phí ngoài EC2-node (nguồn: `docs/cost-breakdown-2026-07-22.md`
 | **VPC interface endpoint (15 ENI)** | **142** | ✅ **CẮT → 3 ENI** (đòn bẩy #18 chính) |
 | CloudWatch (99,8% là `audit`) | 75 | **Giữ có chủ đích** — Auditability (truy được ai apply tay sự cố 0012) |
 | NAT gateway | 50 | Giữ; data-processing thật chỉ $7/mo |
-| EBS mồ côi + ECR rác | ~2 | Chờ M8 / để sau |
+| EBS mồ côi + ECR rác | ~2 | ✅ EBS đã xoá (29/07); ECR rác để sau (§6) |
 
 **Kết luận:** cost-driver ẩn lớn nhất **có thể cắt** = VPC endpoint. Đã cắt.
 
@@ -116,7 +116,7 @@ Phân rã chi phí ngoài EC2-node (nguồn: `docs/cost-breakdown-2026-07-22.md`
 
 ---
 
-## 4. STORAGE ĐÚNG LOẠI + VÒNG ĐỜI (Yêu cầu #2) — 🟡 GẦN XONG
+## 4. STORAGE ĐÚNG LOẠI + VÒNG ĐỜI (Yêu cầu #2) — ✅ ĐẠT
 
 | Hạng mục | Trạng thái |
 |---|---|
@@ -124,27 +124,41 @@ Phân rã chi phí ngoài EC2-node (nguồn: `docs/cost-breakdown-2026-07-22.md`
 | MSK | 3× m7g.large, 30 GiB, retention 168h ✅ |
 | ECR lifecycle | `techx-corp`, `tf-2-ai-engine` có ✅ (`shopping-copilot` chưa — rác nhỏ, để sau) |
 | CloudTrail S3 lifecycle | 30 ngày ✅ |
-| gp2 còn lại | **chỉ 3 EBS orphan store-cũ** → xoá (không convert) — xem §5 |
+| gp2 còn lại | **0** ✅ — 3 volume gp2 duy nhất chính là orphan store-cũ, **đã xoá 29/07** (xem §5) |
 
-> **Note gp2→gp3:** mọi volume data đang dùng đã gp3; 3 volume gp2 duy nhất chính là orphan store-cũ, sẽ **xoá** chứ không convert.
+> **Note gp2→gp3:** mọi volume data đang dùng đã là gp3. 3 volume gp2 duy nhất trong account chính là orphan của store cũ — hướng xử lý đúng là **xoá** (kho đã ngừng dùng) chứ không phải convert sang gp3. Sau khi xoá, account **không còn volume gp2 nào**.
 
 ---
 
-## 5. KHÔNG TÀI NGUYÊN MỒ CÔI (Yêu cầu #1) — 🔴 CHỜ NGHIỆM THU M8
+## 5. KHÔNG TÀI NGUYÊN MỒ CÔI (Yêu cầu #1) — ✅ ĐẠT (đóng ngày 29/07)
 
 | Loại | Kết quả |
 |---|---|
 | EIP không gắn | **0** ✅ |
-| Snapshot/AMI self-owned rác | **0** (1 snapshot RDS `pre-cleanup-20260721` là Plan-B M8 có chủ đích) ✅ |
+| Snapshot/AMI self-owned rác | **0** (2 snapshot `pre-cleanup-20260721` là Plan-B M8 có chủ đích) ✅ |
 | Load balancer / target group không dùng | **0** — 2 ALB đều `LBs=1` ✅ |
-| **EBS `available` mồ côi** | 🔴 **3 vol / 6 GiB gp2:** `vol-05d59d76…`(1G), `vol-0f4b0c53…`(2G), `vol-0a22f1049…`(3G) |
+| **EBS `available` mồ côi** | **0** ✅ (trước: 3 vol / 6 GiB gp2) |
 
-> ### ⏳ ĐANG CHỜ — không tự đóng được
-> 3 EBS này là **PV của 3 PVC store-cũ** (`kafka-data`/`postgresql-data`/`valkey-cart`), hiện `available` vì pod đã tắt ở §8 Mandate #8. **Không xoá được cho tới khi mentor nghiệm thu Mandate #8** — cả 3 PV `reclaimPolicy:Delete`, xoá PVC = huỷ EBS **vĩnh viễn**, mất đường lui rollback M8.
->
-> **Cách xoá đúng (sau nghiệm thu M8):** `kubectl delete pvc kafka-data postgresql-data valkey-cart -n techx-tf3` → reclaim Delete tự huỷ PV + EBS. **KHÔNG** dùng `aws ec2 delete-volume` (để lại PV/PVC dangling).
->
-> Đây là **mục duy nhất** khiến Yêu cầu #1 chưa đạt đủ.
+**Verify:** `aws ec2 describe-volumes --filters Name=status,Values=available --query 'length(Volumes)'` → **0**
+`kubectl get pvc -A` → **rỗng** · `kubectl get pv` → không còn PV store-cũ
+
+### Diễn biến — vì sao mục này từng "chờ", và đã đóng thế nào
+
+3 EBS đó là PV của 3 PVC store-cũ (`kafka-data`/`postgresql-data`/`valkey-cart`), ở trạng thái `available` từ khi §8 Mandate #8 tắt pod. **Không xoá sớm được** vì cả 3 PV đặt `reclaimPolicy: Delete` — xoá PVC là huỷ EBS **vĩnh viễn**, tức tự tay phá đường lui rollback của M8 khi nó chưa được nghiệm thu.
+
+Sau khi **Mandate #8 được nghiệm thu (29/07)**, đã dọn theo đường GitOps thay vì xoá tay:
+
+1. Kiểm tra an toàn trước: không pod nào mount 3 PVC · RDS `available` / ElastiCache `available` / MSK `ACTIVE` · snapshot Plan-B còn nguyên
+2. **Gỡ khai báo khỏi GitOps source** (PR #530): xoá `gitops/infrastructure/datastore-pvc.yaml` + đặt `components.valkey-cart.persistence.enabled=false`
+3. ArgoCD (cả 2 app đều `prune: true`) tự prune 3 PVC → `reclaimPolicy: Delete` huỷ 3 EBS
+
+> **Vì sao không `kubectl delete pvc` trực tiếp:** cả 3 PVC do GitOps quản lý, nên selfHeal sẽ dựng lại ngay (kèm EBS mới). Phải gỡ khỏi source trước thì việc xoá mới "dính".
+
+**Dọn thêm cùng đợt (PR #625)** — cấu hình chết của store cũ, gây hiểu nhầm:
+- 3 NetworkPolicy trỏ vào pod không còn tồn tại (`component=kafka/postgresql/valkey-cart`, mỗi cái khớp **0 pod**). Chúng tạo cảm giác datastore đang được giới hạn mạng, trong khi store thật nằm **ngoài cluster** và cần `ipBlock` — cơ chế khác hẳn.
+- Dashboard Grafana PostgreSQL đọc metric của receiver đã gỡ (Prometheus trả vector rỗng → dashboard trống).
+
+**Còn lại (nhỏ, không thuộc "tài nguyên mồ côi"):** ECR `shopping-copilot` chưa có lifecycle policy, log group `/aws/lambda/tf2-finops-ai-test` retention vô hạn — xem §6.
 
 ---
 
@@ -186,18 +200,21 @@ Directive #18 ràng buộc: **giữ SLO** và **giữ khả năng quan sát/đi�
 
 | Yêu cầu #18 | Trạng thái |
 |---|---|
+| #1 Không tài nguyên mồ côi | ✅ **Xong** (đóng 29/07 — 0 EBS available) |
+| #2 Storage đúng loại + vòng đời | ✅ **Xong** (không còn volume gp2 nào) |
 | #3 Data-transfer (NAT→VPC endpoint) | ✅ Xong |
 | #4 Telemetry (log/metric/trace) | ✅ Xong |
 | #5 Top cost-driver + đã cắt | ✅ Xong |
-| #2 Storage đúng loại + vòng đời | 🟡 Gần xong (gp2 còn lại = orphan chờ xoá) |
-| #1 Không tài nguyên mồ côi | 🔴 Chờ — 3 EBS orphan chờ nghiệm thu M8 |
 
-**Việc còn mở:**
-1. ⏳ **B1 — xoá 3 EBS orphan** (+ dọn ECR `shopping-copilot`): **chờ mentor nghiệm thu Mandate #8**. Đây là phụ thuộc ngoài, không tự đóng.
+> **Đạt đủ 5/5 yêu cầu.** Không còn mục nào ở trạng thái chờ.
+
+**Việc còn mở (nhỏ, không chặn nghiệm thu):**
+1. 🔹 Rác nhẹ: ECR `shopping-copilot` chưa có lifecycle policy · log group `/aws/lambda/tf2-finops-ai-test` retention vô hạn (rác từ TF2).
 2. 🔹 **48 apiserver bucket sót** (kubelet phát apiserver client metrics ở job `kubernetes-nodes`): 0,02% tổng, không đáng — tùy chọn mở rộng drop sau (cần thêm 1 restart Prometheus).
-3. 🔹 Rác nhẹ log group `tf2-finops-ai-test` (retention vô hạn) — để sau.
+3. 🔹 Nodegroup `techx-corp-tf3-db-1a`: node giờ **rỗng hoàn toàn** (chỉ DaemonSet) vì nó sinh ra chỉ để chứa 3 store cũ. `enable_stateful_node_group=false` đã commit trên `main` nhưng chưa apply → gỡ được **−$8,9/tuần**. Thuộc Mandate #13, cần phối hợp CDO01 vì đụng nodegroup.
+4. 🔹 2 snapshot Plan-B M8 (`postgres`/`valkey-pre-cleanup-20260721`): giữ thêm một thời gian làm lưới an toàn, xoá sau.
 
-**Quá hạn:** directive hạn 22/07, trình 26/07. Nguyên nhân: ưu tiên xử lý ổn định sau đợt Mandate #13 (node churn) + phối hợp không đụng nodegroup khi CDO01 chạy elastic batch.
+**Quá hạn:** directive hạn 22/07, trình 26/07, đóng nốt Yêu cầu #1 ngày 29/07. Nguyên nhân: phần chủ động phải chờ ổn định sau đợt Mandate #13 (node churn) và tránh đụng nodegroup khi CDO01 chạy elastic batch; riêng Yêu cầu #1 **phụ thuộc mốc nghiệm thu Mandate #8** — không thể đóng sớm hơn mà không huỷ đường lui rollback.
 
 ---
 
