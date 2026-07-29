@@ -1,4 +1,4 @@
-# ADR 0011 — Mandate 10: Secure Delivery Pipeline
+# ADR 0016 — Mandate 10: Secure Delivery Pipeline
 
 **Date:** 2026-07-29
 
@@ -31,7 +31,7 @@ Mandate 10 đặt ra yêu cầu xây dựng một "Secure Delivery Pipeline" kh�
 
 - **Repository:** Mã nguồn và toàn bộ workflow GitHub Actions hiện tại.
 - **Cluster Namespace:** `techx-tf3`
-- **Workloads:** Toàn bộ 18 first-party application workloads được build và deploy bởi TechX Corp.
+- **Workloads:** Toàn bộ 21 digest first-party đã ký và 30 container first-party đang chạy được build và deploy bởi TechX Corp.
 
 ## Exceptions
 
@@ -41,12 +41,14 @@ Mandate 10 đặt ra yêu cầu xây dựng một "Secure Delivery Pipeline" kh�
 
 ## Rollback
 
-- **Admission Policy Rollback:** Trong trường hợp Kyverno chặn nhầm các dịch vụ hợp lệ (False Positive) gây sập luồng deploy, thực hiện hạ cấp policy `verify-first-party-signatures` từ `Enforce` xuống `Audit` khẩn cấp bằng lệnh:
-  ```bash
-  kubectl patch clusterpolicy verify-first-party-signatures --type='json' -p='[{"op": "replace", "path": "/spec/validationFailureAction", "value": "Audit"}]'
-  ```
-  *(Lưu ý: Sau khi điều tra và vá xong cấu hình GitOps, cần revert lại thành `Enforce`).*
-- **CI Pipeline Rollback:** Nếu Trivy/Semgrep báo lỗi giả (False Positive) quá nhiều, có thể linh động cấu hình tệp `.trivyignore` hoặc `.semgrepignore` thay vì tắt bỏ hoàn toàn bước quét bảo mật.
+- **Đường chính (GitOps):** sửa `validationFailureAction: Enforce` → `Audit` trong
+  `gitops/policies/kyverno/verify-first-party-signatures.yaml`, mở PR, merge vào `main`,
+  rồi sync Application `kyverno-policies`. Đây là đường **duy nhất giữ được** —
+  `selfHeal: true` sẽ revert mọi `kubectl patch` tay.
+- **Khẩn cấp:** `git revert` commit đã bật Enforce rồi sync. Nhanh hơn sửa tay,
+  giữ được audit trail, và không để lại cluster lệch khỏi Git.
+- **CI Pipeline:** nếu Trivy/Semgrep báo lỗi giả quá nhiều, cấu hình `.trivyignore` /
+  `.semgrepignore` có review, **không** tắt bước quét.
 
 ## Cutover outcome
 

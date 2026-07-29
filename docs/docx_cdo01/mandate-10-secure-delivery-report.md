@@ -1,8 +1,9 @@
 # Mandate #10 — Báo cáo Secure Delivery Pipeline (CI/CD Chuỗi cung ứng an toàn)
 
-**Directive:** Mandate 10 — Secure Delivery (xem `docs/adr/0011-mandate-10-secure-delivery-pipeline.md`)<br>
+**Directive:** Mandate 10 — Secure Delivery (xem `docs/adr/0016-mandate-10-secure-delivery-pipeline.md`)<br>
 **Ngày triển khai & Enforce:** 28-29/07/2026<br>
 **Nhóm thực hiện:** CDO01<br>
+**Phân công:** PM-124 / PM-125 / PM-126 / PM-129 — CDO01 · **PM-127 (ký, SBOM, admission enforce) — CDO02**<br>
 **Người xác nhận/chứng kiến (mentor):**<br>
 **Video demo toàn bộ kịch bản (29/07):** [Xem tại đây](https://youtu.be/xrqzUAIk7IA)<br>
 **Kết quả:** **PASS — Hệ thống CI/CD đã thiết lập thành công chuỗi cung ứng an toàn (Zero Trust). Mọi mã độc, lỗ hổng nghiêm trọng, và image chưa ký đều bị chặn đứng từ khâu CI cho tới cổng Admission của Kubernetes. Đảm bảo khả năng truy vết 100% (Provenance).**
@@ -29,10 +30,11 @@ Chứng minh hệ thống đạt 6 yêu cầu kỹ thuật khắt khe nhất c�
 
 | Lớp Bảo mật | Cơ chế áp dụng | File cấu hình / Bằng chứng | Trạng thái |
 |---|---|---|---|
-| Cổng chặn CI (Branch Protection) | Require Status Checks trên GitHub branch `main` | Cấu hình GitHub repo, PR #553 | **Enforce** |
-| Scan Lỗ hổng (SAST, IaC, Container) | Trivy (Image), Semgrep (SAST), tfsec (IaC) | `.github/workflows/build-push-ecr.yml`, `.github/workflows/terraform-plan.yml` | **Enforce** |
+| Cổng chặn CI (Branch Protection) | Require Status Checks trên GitHub branch `main` | Cấu hình GitHub repo, `branch-protection.json`, PR #350, #351 | **Enforce** |
+| Scan Lỗ hổng (SAST, IaC, Container) | Trivy (Image chặn pre-push), Semgrep (SAST), tfsec (IaC) | `.github/workflows/build-push-ecr.yml`, `.github/workflows/secure-delivery-gate.yml` | **Enforce** |
 | Ký điện tử & SBOM (Attestation) | Cosign Keyless (OIDC) + CycloneDX | `.github/workflows/build-push-ecr.yml` | **Enforce** |
 | Admission Control (Chặn Deploy Image chưa ký) | Kyverno `verifyImages` | `gitops/policies/kyverno/verify-first-party-signatures.yaml` | **Enforce** |
+| Admission Control (image bên thứ ba) | Kyverno catalog digest tuyệt đối | `gitops/policies/kyverno/allow-approved-external-image-digests.yaml` | **Enforce** |
 | Pin Action theo SHA | Cấu hình thủ công commit SHA | Toàn bộ `.github/workflows/*.yml` | **Enforce** |
 | Provenance Traceability | Custom script tra cứu `sourceSha`, `sourcePr` | `scripts/ci/trace-provenance.sh` | **Hoạt động 100%** |
 
@@ -104,8 +106,8 @@ Kết quả test thực tế tại Cluster `techx-tf3` cho thấy:
 
 ## 8. Bài học kinh nghiệm
 
-- Không bao giờ test Policy Admission mà bỏ quên lớp RBAC của Kubernetes. Cần dùng đúng account có quyền để thấy được thông điệp lỗi của Admission Controller.
-- Cấu trúc API/CLI của các công cụ bên thứ ba (như Cosign) có thể thay đổi bất cứ lúc nào. Các script automation (như `trace-provenance.sh`) cần được viết lỏng (loose parsing) hoặc theo sát phiên bản để tránh lỗi.
+- **Bẫy tín hiệu Admission:** Khi test admission, tín hiệu đáng tin duy nhất là message có nêu tên policy đang test hay không. Nếu message nhắc RBAC, PodSecurity, hay mandate05-native-* thì kết quả phải bỏ — dù nó vẫn "lỗi". `techx-tf3` có 4 lớp kiểm tra xếp chồng, và ba lớp đầu chặn trước khi Kyverno được gọi. Cần dùng đúng account có quyền và đúng loại resource (như Deployment thay vì Pod) để lọt qua các lớp ngoài.
+- **Cấu trúc CLI:** Cấu trúc API/CLI của các công cụ bên thứ ba (như Cosign) có thể thay đổi bất cứ lúc nào. Các script automation (như `trace-provenance.sh`) cần được viết lỏng (loose parsing) hoặc theo sát phiên bản để tránh lỗi.
 
 ## 9. Điểm mạnh của lần triển khai này
 
@@ -142,9 +144,9 @@ bash scripts/ci/trace-provenance.sh --namespace techx-tf3 --pod $POD_NAME
 
 | Yêu cầu | Trạng thái | Bằng chứng / Chi tiết |
 |---|---|---|
-| **Yêu cầu 1: Cổng chặn thật CI đỏ** (PR hỏng build, test, lỗi bảo mật thì chặn merge) |  **ĐẠT** | Đã cấu hình Branch Protection chặn merge khi các job (Trivy, Semgrep, Terraform) báo đỏ. PR #553 minh họa rõ quá trình này. |
+| **Yêu cầu 1: Cổng chặn thật CI đỏ** (PR hỏng build, test, lỗi bảo mật thì chặn merge) |  **ĐẠT** | Branch protection require `Secure delivery gate` + 1 approval (`branch-protection.json`). Hai PR đỏ có chủ đích **#350** (IaC/CRITICAL) và **#351** (secret/HIGH) đều bị chặn và phải đóng, không merge được. Ảnh: `assets/pm-124-intentional-red-pr-blocked.png` |
 | **Yêu cầu 2: Scan HIGH/CRITICAL chặn merge** | **ĐẠT** | Tích hợp Trivy quét Image, tfsec quét Terraform, và Semgrep quét mã nguồn. Bất kỳ lỗi High/Critical nào cũng làm fail CI. |
-| **Yêu cầu 3: Bất biến + xác thực nguồn gốc** | **ĐẠT** | Mọi Image đẩy lên ECR đều được ký bằng Cosign (Keyless qua GitHub OIDC) và tạo SBOM (CycloneDX). Kyverno chặn đứng các Image chưa ký tại cổng Admission của Kubernetes. |
+| **Yêu cầu 3: Bất biến + xác thực nguồn gốc** | **ĐẠT** | Hai policy phủ kín namespace, không chừa khe: `verify-first-party-signatures` kiểm chữ ký + SBOM cho `techx-corp@sha256:*`; `allow-approved-external-image-digests` bắt mọi image còn lại phải khớp tuyệt đối catalog đã review (11/11 đều pin digest). Cả hai Enforce/Ready=True. CI gate `check-external-image-allowlist-drift.py` chặn PR nếu catalog lệch với chart.<br>*(Lưu ý đối với image bên thứ ba: không ký lại mà chỉ ghim digest tuyệt đối trong catalog đã review).* |
 | **Yêu cầu 4: Pin theo SHA/digest** | **ĐẠT** | Tất cả các GitHub Actions bên thứ 3 trong Workflow (như checkout, setup, login, v.v.) đều đã được pin cứng theo commit SHA thay vì dùng tag lỏng lẻo như `@v2`, `@v3`. |
 | **Yêu cầu 5: Truy ngược được** | **ĐẠT** | Bằng chứng: Script `trace-provenance.sh` đã chạy thành công 100%, lôi xuất chính xác mã SHA, Workflow ID, PR number từ một Pod đang chạy trên cluster. |
 | **Yêu cầu 6: Chỉ đụng cái gì đổi** | **ĐẠT** | Job `prepare` trong CI tính toán chính xác phạm vi module thay đổi, bỏ qua việc build lại toàn bộ repo nếu không cần thiết. |
@@ -157,6 +159,6 @@ bash scripts/ci/trace-provenance.sh --namespace techx-tf3 --pod $POD_NAME
 - Sẵn sàng bàn giao hệ thống Secure Delivery Pipeline.
 
 ## 14. Tài liệu liên quan
-- ADR: `docs/adr/0011-mandate-10-secure-delivery-pipeline.md`
+- ADR: `docs/adr/0016-mandate-10-secure-delivery-pipeline.md`
 - Code Script Traceability: `scripts/ci/trace-provenance.sh`
 - Kyverno Policy: `gitops/policies/kyverno/verify-first-party-signatures.yaml`
