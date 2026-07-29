@@ -12,8 +12,10 @@ weights and keeps duplicate steady-state capacity.
 
 Set `components.checkout.replicasManagedExternally: true` in the production
 values. The rendered source Deployment will retain its pod template but omit
-`spec.replicas`, while `checkout-rollout` continues to declare two replicas and
-`checkout-hpa` continues to target the Rollout scale subresource.
+`spec.replicas`. The rendered Rollout already omits `spec.replicas` through its
+existing `rollouts.checkout.replicasManagedExternally: true` setting, while
+`checkout-hpa` continues to target the Rollout scale subresource with a
+two-replica minimum.
 
 After the PR is merged and Argo CD is Synced/Healthy at its merge revision,
 perform one explicitly approved migration action:
@@ -32,9 +34,9 @@ Deployment during its workload-reference rollback behavior.
   contains `spec.replicas`.
 - The exact Argo CD Helm render must show:
   - checkout Deployment without `spec.replicas`;
-  - checkout Rollout with two replicas and
+  - checkout Rollout without `spec.replicas` and with
     `workloadRef.scaleDown: progressively`;
-  - checkout HPA targeting `checkout-rollout`;
+  - checkout HPA targeting `checkout-rollout` with `minReplicas: 2`;
   - no change to the checkout pod template, image, probes, resources,
     scheduling, feature flags, or MSK configuration.
 - Before the one-time scale, Argo CD must be Synced/Healthy at the merge

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stop Argo CD from declaring replicas for the checkout source Deployment while keeping `checkout-rollout` and its HPA at a two-replica baseline.
+**Goal:** Stop Argo CD from declaring replicas for the checkout source Deployment while keeping the HPA-owned `checkout-rollout` at a two-replica minimum.
 
-**Architecture:** The checkout Deployment remains the `workloadRef` pod-template source, but its replica field is omitted by the existing chart switch. The Rollout keeps its separate replica value and the existing Argo ignore rule preserves controller ownership.
+**Architecture:** The checkout Deployment remains the `workloadRef` pod-template source, but its replica field is omitted by the existing chart switch. The Rollout already omits its replica field; `checkout-hpa` owns the Rollout scale subresource and the existing Argo ignore rules preserve both controller boundaries.
 
 **Tech Stack:** Helm, Kubernetes/Argo Rollouts manifests, Pytest, PyYAML.
 
@@ -24,7 +24,7 @@
 
 **Interfaces:**
 - Consumes: the exact Helm value-file order declared by `gitops/apps/techx-corp.yaml`.
-- Produces: a rendered checkout Deployment without `spec.replicas`; the existing checkout Rollout remains at two replicas with progressive source scale-down.
+- Produces: rendered checkout Deployment and Rollout objects without `spec.replicas`; the HPA keeps a two-replica Rollout minimum and progressive source scale-down remains enabled.
 
 - [ ] **Step 1: Write the failing render contract**
 
@@ -35,7 +35,7 @@ deployment = named_document(documents, "Deployment", "checkout")
 rollout = named_document(documents, "Rollout", "checkout-rollout")
 
 assert "replicas" not in deployment["spec"]
-assert rollout["spec"]["replicas"] == 2
+assert "replicas" not in rollout["spec"]
 assert rollout["spec"]["workloadRef"] == {
     "apiVersion": "apps/v1",
     "kind": "Deployment",
@@ -46,8 +46,8 @@ assert rollout["spec"]["workloadRef"] == {
 
 The same test must parse `gitops/infrastructure/hpa-hotpath.yaml` and
 `gitops/apps/techx-corp.yaml` to assert that `checkout-hpa` targets
-`checkout-rollout` and Argo CD still ignores only
-`Deployment/checkout/spec.replicas`.
+`checkout-rollout` with `minReplicas: 2` and `maxReplicas: 8`, and that Argo CD
+still ignores `/spec/replicas` for both checkout controllers.
 
 - [ ] **Step 2: Run the contract and verify RED**
 
@@ -69,8 +69,9 @@ Under `components.checkout` in
 replicasManagedExternally: true
 ```
 
-Keep `replicas: 2`; it remains the documented workload baseline and the
-Rollout has its own separate `rollouts.checkout.replicas: 2`.
+Keep `replicas: 2` as the documented component baseline. The live Rollout
+replica count remains HPA-owned through
+`rollouts.checkout.replicasManagedExternally: true`.
 
 - [ ] **Step 4: Run the contract and verify GREEN**
 
@@ -86,8 +87,9 @@ Expected: PASS.
 
 Run Helm dependency build, lint, and template with the value-file order from
 `gitops/apps/techx-corp.yaml`. Confirm the rendered checkout Deployment omits
-`spec.replicas` while image, probes, resources, scheduling, environment,
-service account, and pod template remain unchanged.
+`spec.replicas`, the checkout Rollout also omits `spec.replicas`, and image,
+probes, resources, scheduling, environment, service account, and pod template
+remain unchanged.
 
 - [ ] **Step 6: Run repository verification**
 
