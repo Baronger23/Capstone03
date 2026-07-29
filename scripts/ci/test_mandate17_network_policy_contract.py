@@ -895,6 +895,22 @@ def test_aiops_egress_proxy_enables_connect_upgrades_on_connection_manager():
     assert {"upgrade_type": "CONNECT"} in hcm_config["upgrade_configs"]
 
 
+def test_aiops_egress_proxy_accepts_http10_connect_clients():
+    documents = load_documents(REPO / "gitops/aiops-engine/egress-proxy.yaml")
+    config_map = next(
+        document
+        for document in documents
+        if document["kind"] == "ConfigMap"
+        and document["metadata"]["name"] == "aiops-egress-proxy-config"
+    )
+    envoy_config = yaml.safe_load(config_map["data"]["egress-proxy.yaml"])
+    hcm_config = envoy_config["static_resources"]["listeners"][0]["filter_chains"][0][
+        "filters"
+    ][0]["typed_config"]
+
+    assert hcm_config["http_protocol_options"]["accept_http_10"] is True
+
+
 def test_default_deny_is_empty_and_marked_last():
     policy = load_policy("90-default-deny-all.yaml")
     assert policy["spec"]["podSelector"] == {}
