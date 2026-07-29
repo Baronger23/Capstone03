@@ -187,11 +187,7 @@ async def active_metrics_polling_loop():
             is_breached = detector.check_slo_burn_rate()
             
             if is_breached:
-                if now_ts - last_slo_alert_timestamp < 300:
-                    logger.info(f"SLO Burn Rate breach detected but throttling to prevent alert fatigue (cooldown: {300 - (now_ts - last_slo_alert_timestamp):.1f}s remaining).")
-                else:
-                    last_slo_alert_timestamp = now_ts
-                    logger.warning("SLO Burn Rate breach detected via Active Polling!")
+                logger.warning("SLO Burn Rate breach detected via Active Polling!")
                 
                 # Check xem đã có cảnh báo sớm ML trong cache chưa để nâng cấp
                 proactive_inc_id = None
@@ -236,7 +232,7 @@ async def active_metrics_polling_loop():
                     if culprit_service == "unknown-service":
                         culprit_service = "checkout"  # Fallback mặc định
                         
-                    # SLO State-based Dedup Check (Conflict A fix)
+                    # SLO State-based Dedup Check (Conflict A & 5 fix)
                     existing_inc = next((inc for inc in incidents_lifecycle.values() if inc.get("culprit_service") == culprit_service and inc.get("status") in ["pending_approval", "open", "proactive_warning"]), None)
                     if existing_inc:
                         existing_inc["alert_count"] = existing_inc.get("alert_count", 1) + 1
@@ -247,34 +243,39 @@ async def active_metrics_polling_loop():
                             reminder_msg = f"⚠️ [Reminder #{reminder_num}] {existing_inc['incident_id']} (Service {culprit_service} pending approval for {count} polling cycles)"
                             notifier.send_custom_message(reminder_msg)
                     else:
-                        logger.info(f"Triggering CMDR Pipeline for {incident_id} (Culprit: {culprit_service}, Trace ID: {trace_id})")
-                        incidents_lifecycle[incident_id] = {
-                            "incident_id": incident_id,
-                            "status": "pending_approval",
-                            "culprit_service": culprit_service,
-                            "opened_at": time.time(),
-                            "last_alerted_at": time.time(),
-                            "alert_count": 1,
-                            "diagnosis": {}
-                        }
-                        active_incidents[incident_id] = {
-                            "incident_id": incident_id,
-                            "culprit_service": culprit_service,
-                            "status": "pending_approval",
-                            "created_at": time.time()
-                        }
-                        consecutive_healthy_count[culprit_service] = 0  # Conflict D fix
-                        
-                        # Chạy luồng chẩn đoán và sửa lỗi bất đồng bộ
-                        loop = asyncio.get_running_loop()
-                        loop.run_in_executor(
-                            None,
-                            process_incident_background,
-                            incident_id,
-                            culprit_service,
-                            trace_id,
-                            time.time()
-                        )
+                        # SLO Cooldown Check (300s per new incident creation)
+                        if now_ts - last_slo_alert_timestamp < 300:
+                            logger.info(f"SLO Burn Rate breach detected for {culprit_service} but throttling to prevent alert fatigue (cooldown: {300 - (now_ts - last_slo_alert_timestamp):.1f}s remaining).")
+                        else:
+                            last_slo_alert_timestamp = now_ts
+                            logger.info(f"Triggering CMDR Pipeline for {incident_id} (Culprit: {culprit_service}, Trace ID: {trace_id})")
+                            incidents_lifecycle[incident_id] = {
+                                "incident_id": incident_id,
+                                "status": "pending_approval",
+                                "culprit_service": culprit_service,
+                                "opened_at": time.time(),
+                                "last_alerted_at": time.time(),
+                                "alert_count": 1,
+                                "diagnosis": {}
+                            }
+                            active_incidents[incident_id] = {
+                                "incident_id": incident_id,
+                                "culprit_service": culprit_service,
+                                "status": "pending_approval",
+                                "created_at": time.time()
+                            }
+                            consecutive_healthy_count[culprit_service] = 0  # Conflict D fix
+                            
+                            # Chạy luồng chẩn đoán và sửa lỗi bất đồng bộ
+                            loop = asyncio.get_running_loop()
+                            loop.run_in_executor(
+                                None,
+                                process_incident_background,
+                                incident_id,
+                                culprit_service,
+                                trace_id,
+                                time.time()
+                            )
             else:
                 # Lớp 2: Quét máy học (Isolation Forest) cho từng dịch vụ chủ động
                 logger.info("SLO is stable. Running ML Isolation Forest proactive scans on core services...")
@@ -321,7 +322,8 @@ async def active_metrics_polling_loop():
                                     if inc_id in incidents_lifecycle:
                                         incidents_lifecycle[inc_id]["status"] = "resolved"
                                     last_proactive_alert_time[service] = 0
-                                    logger.info(f"[AutoResolve] Service {service} healthy for 2 consecutive cycles (60s). Resolved incident {inc_id}.")
+                                    rolling_alert_buffer[:] = [e for e in rolling_alert_buffer if e.get("service") != service]
+                                    logger.info(f"[AutoResolve] Service {service} healthy for 2 consecutive cycles (60s). Resolved incident {inc_id} & cleared rolling buffer.")
                                     active_incidents.pop(inc_id, None)
 
                 # Pre-check active_incidents for 600s timeout: stale vs. expired (Conflict 2 & 4 fix)
@@ -353,7 +355,8 @@ async def active_metrics_polling_loop():
                             inc_data["status"] = "expired"
                             if inc_id in incidents_lifecycle:
                                 incidents_lifecycle[inc_id]["status"] = "expired"
-                            logger.info(f"[Lifecycle] Incident {inc_id} ({svc}) timed out after 600s and telemetry is healthy -> EXPIRED.")
+                            rolling_alert_buffer[:] = [e for e in rolling_alert_buffer if e.get("service") != svc]
+                            logger.info(f"[Lifecycle] Incident {inc_id} ({svc}) timed out after 600s and telemetry is healthy -> EXPIRED & cleared rolling buffer.")
                             active_incidents.pop(inc_id, None)
 
                 # Xóa service đã hồi phục khỏi rolling buffer
@@ -702,6 +705,18 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
             logger.warning("Culprit service is 'frontend' (Main Gateway). Elevating to MEDIUM RISK for safety.")
             current_risk = "MEDIUM"
 
+    # [Upstream Health Check] Culprit enrichment
+    enriched_culprit = enrich_culprit_with_upstream_check(culprit_service, lookback_minutes=15)
+    if enriched_culprit != culprit_service:
+        logger.warning(
+            f"[SLO {incident_id}] Culprit enriched via Prometheus upstream check: "
+            f"{culprit_service} → {enriched_culprit}"
+        )
+        if incident_id in incidents_lifecycle:
+            incidents_lifecycle[incident_id]["culprit_service"] = enriched_culprit
+        consecutive_healthy_count[enriched_culprit] = 0
+        culprit_service = enriched_culprit
+
     diagnosis["risk_level"] = current_risk
     diagnosis["blast_radius"] = blast_radius
 
@@ -731,6 +746,8 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
                 message="Dry-run command execution failed safety check"
             )
             active_incidents.pop(incident_id, None)
+            if incident_id in incidents_lifecycle:
+                incidents_lifecycle[incident_id]["status"] = "failed"
             return
 
         # 2.2 Thực thi lệnh thật (Live Action Execution)
@@ -755,6 +772,8 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
                 message="Live command execution failed"
             )
             active_incidents.pop(incident_id, None)
+            if incident_id in incidents_lifecycle:
+                incidents_lifecycle[incident_id]["status"] = "failed"
             return
 
         # 2.3 Verify Telemetry thật trong 5 phút
@@ -779,6 +798,9 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
                 message="Telemetry verification passed. Service restored."
             )
             active_incidents.pop(incident_id, None)
+            if incident_id in incidents_lifecycle:
+                incidents_lifecycle[incident_id]["status"] = "resolved"
+            last_proactive_alert_time[culprit_service] = 0
         else:
             # 2.4 TỰ ĐỘNG ROLLBACK khi Verify FAIL (Mandate #22 requirement)
             logger.warning(f"⚠️ Telemetry Verification FAILED for {culprit_service}! Triggering AUTO-ROLLBACK: {rollback_command}")
@@ -824,6 +846,8 @@ def process_incident_background(incident_id: str, culprit_service: str, trace_id
                     message="Verification failed and auto-rollback failed. Escalated to SRE."
                 )
             active_incidents.pop(incident_id, None)
+            if incident_id in incidents_lifecycle:
+                incidents_lifecycle[incident_id]["status"] = "failed"
 
     elif current_risk == "MEDIUM":
         # Mức MEDIUM RISK: Gửi Slack chờ Approve
@@ -856,6 +880,9 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
             f"[Proactive {incident_id}] Culprit enriched via Prometheus upstream check: "
             f"{culprit_service} → {enriched_culprit}"
         )
+        if incident_id in incidents_lifecycle:
+            incidents_lifecycle[incident_id]["culprit_service"] = enriched_culprit
+        consecutive_healthy_count[enriched_culprit] = 0
         culprit_service = enriched_culprit
     
     # 1. Thu thập bằng chứng
@@ -873,6 +900,7 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
     diagnosis["alert_time"] = alert_time
     diagnosis["trace_id"] = trace_id
     diagnosis["trace_analysis"] = evidence.get("trace_analysis", culprit_service)
+    diagnosis["evidence"] = evidence  # Conflict 4 Fix: Store evidence in diagnosis so promotion path can read it
     
     proposed_action = diagnosis.get("proposed_action", "none")
     
@@ -899,23 +927,10 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
         action_command = diagnosis.get("action_command", "")
         rollback_command = diagnosis.get("rollback_command", "")
         
-    diagnosis["action_command"] = action_command
-    diagnosis["rollback_command"] = rollback_command
-    active_incidents[incident_id] = diagnosis
-    
-    # Validation Gate
-    if not handler.validate_action(proposed_action, action_command):
-        logger.warning("[PROACTIVE] Action failed safety validation gate. Rejecting.")
-        diagnosis["analysis"] = f"[SAFETY REJECTED] {diagnosis['analysis']}"
-        diagnosis["action_command"] = "Command blocked due to C6 policy violation."
-        notifier.send_incident_notification(incident_id, diagnosis)
-        return
-        
-    # Quality Gate Validation: Suppress unfilled placeholders or low-confidence empty evidence packs (Conflict B Fix)
+    # Quality Gate Validation (Conflict 5 Fix): Check before saving to active_incidents cache
     analysis_text = diagnosis.get("analysis", "")
     if "[Template]" in analysis_text or "lỗi '[Template]'" in analysis_text or "[X]" in analysis_text:
         logger.warning(f"[QualityGate] LLM returned unfilled template for {culprit_service}. Suppressing Slack notification.")
-        active_incidents.pop(incident_id, None)
         if incident_id in incidents_lifecycle:
             incidents_lifecycle[incident_id]["status"] = "suppressed"
         last_proactive_alert_time[culprit_service] = 0
@@ -924,10 +939,19 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
     log_templates = evidence.get("log_templates", [])
     if not log_templates and diagnosis.get("confidence_score", 0.0) < 0.5:
         logger.warning(f"[QualityGate] Empty evidence pack with low confidence ({diagnosis.get('confidence_score', 0.0)}) for {culprit_service}. Suppressing Slack notification.")
-        active_incidents.pop(incident_id, None)
         if incident_id in incidents_lifecycle:
             incidents_lifecycle[incident_id]["status"] = "suppressed"
         last_proactive_alert_time[culprit_service] = 0
+        return
+
+    active_incidents[incident_id] = diagnosis
+    
+    # Validation Gate
+    if not handler.validate_action(proposed_action, action_command):
+        logger.warning("[PROACTIVE] Action failed safety validation gate. Rejecting.")
+        diagnosis["analysis"] = f"[SAFETY REJECTED] {diagnosis['analysis']}"
+        diagnosis["action_command"] = "Command blocked due to C6 policy violation."
+        notifier.send_incident_notification(incident_id, diagnosis)
         return
 
     # Ép buộc rủi ro là MEDIUM để tuyệt đối không tự động chạy
@@ -947,8 +971,15 @@ def process_incident_promotion_background(incident_id: str):
     inc_data["status"] = "active"
     if incident_id in incidents_lifecycle:
         incidents_lifecycle[incident_id]["status"] = "pending_approval"  # Conflict C Fix
-    evidence = inc_data["evidence"]
-    culprit_service = inc_data["culprit_service"]
+    culprit_service = inc_data.get("culprit_service", "checkout")
+    evidence = inc_data.get("evidence")
+    if not evidence:
+        logger.warning(f"[Promotion {incident_id}] Evidence key missing in cache. Rebuilding evidence pack...")
+        evidence = evidence_collector.build_evidence_pack(
+            culprit_service,
+            inc_data.get("alert_time", time.time()),
+            inc_data.get("trace_id", "unknown-trace")
+        )
     
     # 2. Giai đoạn 4: Gọi Bedrock Chẩn đoán
     logger.info("Step 2: Invoking LLM Bedrock Diagnostician (Promoted Path)...")
@@ -995,6 +1026,8 @@ def process_incident_promotion_background(incident_id: str):
         diagnosis["analysis"] = f"[SAFETY REJECTED] {diagnosis['analysis']}"
         diagnosis["action_command"] = "Command blocked due to C6 policy violation."
         notifier.send_incident_notification(incident_id, diagnosis)
+        if incident_id in incidents_lifecycle:
+            incidents_lifecycle[incident_id]["status"] = "failed"
         return
         
     confidence_score = float(diagnosis.get("confidence_score", 1.0))
@@ -1020,9 +1053,18 @@ def process_incident_promotion_background(incident_id: str):
             is_resolved = handler.verify_remediation(culprit_service)
             if is_resolved:
                 active_incidents.pop(incident_id, None)
+                if incident_id in incidents_lifecycle:
+                    incidents_lifecycle[incident_id]["status"] = "resolved"
+                last_proactive_alert_time[culprit_service] = 0
+            else:
+                active_incidents.pop(incident_id, None)
+                if incident_id in incidents_lifecycle:
+                    incidents_lifecycle[incident_id]["status"] = "failed"
         else:
             logger.error("Low risk action execution failed.")
             active_incidents.pop(incident_id, None)
+            if incident_id in incidents_lifecycle:
+                incidents_lifecycle[incident_id]["status"] = "failed"
             
     elif current_risk == "MEDIUM":
         logger.info(f"Action '{proposed_action}' classified as MEDIUM RISK. Sending Slack card...")
@@ -1033,6 +1075,8 @@ def process_incident_promotion_background(incident_id: str):
         diagnosis["analysis"] = f"[AUTO-REJECTED] Dangerous/Uncertain command blocked: {diagnosis['analysis']}"
         notifier.send_incident_notification(incident_id, diagnosis)
         active_incidents.pop(incident_id, None)
+        if incident_id in incidents_lifecycle:
+            incidents_lifecycle[incident_id]["status"] = "failed"
 
 
 @app.post("/webhook/alerts")
