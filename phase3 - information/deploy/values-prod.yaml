@@ -1442,8 +1442,8 @@ components:
       failureThreshold: 3
     replicas: 2        # cổng vào DUY NHẤT (Envoy) — SPOF của toàn hệ thống
     imageOverride: # mandate-01: gỡ route Envoy - xem comment imageOverride đầu components:
-      digest: sha256:3067e404dceb58eb4eb4c50fe13c7206866867c7cf83987196c116e1390ef269
-      tag: ae6ac7f-30341306942-frontend-proxy
+      digest: sha256:395ec88a66bc66bdf5ba9b6f2fc44cc0eb6a27b82ffe5bdfa7f7539648ac221a
+      tag: 6564f7f-30428844691-frontend-proxy
     # Mandate #19: browse shedding is enforced after staged route-validation
     # gates. Protected routes remain non-binding via the global fallback bucket.
     envOverrides:
