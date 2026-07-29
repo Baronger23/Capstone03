@@ -21,6 +21,10 @@ spec:
       activeDeadlineSeconds: 10800
       template:
         spec:
+          # Trước đây không khai -> chạy bằng SA `default` của namespace, và lấy
+          # credential AWS từ static key trong env. SA riêng này gắn IRSA role
+          # techx-corp-tf3-aiops-trainer (chỉ S3 model, không Bedrock).
+          serviceAccountName: aiops-trainer
           restartPolicy: OnFailure
           dnsPolicy: ClusterFirst
           schedulerName: default-scheduler
