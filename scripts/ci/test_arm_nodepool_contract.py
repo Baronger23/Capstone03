@@ -31,7 +31,7 @@ def requirements(nodepool: dict) -> dict[str, dict]:
     }
 
 
-def test_arm_spot_uses_c_m_with_bounded_four_node_capacity():
+def test_arm_spot_uses_c_m_with_bounded_two_node_capacity():
     nodepool = resource(SPOT, "NodePool", "flash-sale-spot-arm64")
     requirement = requirements(nodepool)
     taint = taints(nodepool)
@@ -73,7 +73,7 @@ def test_arm_spot_uses_c_m_with_bounded_four_node_capacity():
     assert nodepool["spec"]["limits"] == {
         "cpu": "16",
         "memory": "64Gi",
-        "nodes": 4,
+        "nodes": 2,
     }
 
 
@@ -174,7 +174,7 @@ def test_arm_fallback_uses_dedicated_pinned_arm_nodeclass():
     assert nodeclass["spec"]["tags"]["techx.io/arch"] == "arm64"
 
 
-def test_existing_amd_fallback_cap_stays_at_two_nodes():
+def test_existing_amd_fallback_cap_stays_at_one_node():
     nodepool = resource(FALLBACK, "NodePool", "elastic-ondemand-fallback")
     requirement = requirements(nodepool)
 
@@ -189,7 +189,7 @@ def test_existing_amd_fallback_cap_stays_at_two_nodes():
     assert nodepool["spec"]["limits"] == {
         "cpu": "4",
         "memory": "16Gi",
-        "nodes": 2,
+        "nodes": 1,
     }
 
 
