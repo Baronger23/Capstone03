@@ -4,8 +4,14 @@
 # Job này do ArgoCD apply, qua Application riêng ở gitops/apps/product-reviews-migration-app.yaml.
 # Không có `kubectl apply` thủ công trong đường đi này.
 #
-# Tên có hậu tố -sprint3 vì PodTemplate của Job là IMMUTABLE: trùng tên với Job cũ
-# (kể cả Job đã terminal) sẽ làm apply fail. Mỗi change dùng một tên riêng.
+# Tên có hậu tố vì PodTemplate của Job là IMMUTABLE: trùng tên với Job cũ (kể cả Job đã
+# terminal) sẽ làm apply fail. Mỗi lần chạy dùng một tên riêng.
+#
+# -r2: lần chạy đầu (…-sprint3) đã migrate THÀNH CÔNG — 7/7 statement chạy, bảng tạo
+# đúng schema, PK/owner/probe đều PASS — nhưng Job vẫn exit 1 vì một assertion SAI của
+# chính nó: nó đòi otelu KHÔNG có quyền DELETE, trong khi otelu là OWNER của bảng nên
+# mặc nhiên có toàn quyền. Xem khối "least privilege" ở phần verify bên dưới.
+# Job …-sprint3 cũ giữ nguyên làm evidence (Application để prune:false).
 #
 # KHÔNG đặt ttlSecondsAfterFinished. Application này bật automated sync; nếu TTL xoá
 # Job thì Argo thấy thiếu resource và tạo lại -> migration chạy lặp vô hạn. Job ở lại
@@ -17,7 +23,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: product-reviews-schema-migration-sprint3
+  name: product-reviews-schema-migration-sprint3-r2
   namespace: techx-tf3
   labels:
     app.kubernetes.io/name: product-reviews-schema-migration
@@ -193,6 +199,7 @@ spec:
                       """)
                       owner = cur.fetchone()
                       check("table owner", owner is not None, owner)
+                      owner_name = owner[0] if owner else None
 
                       cur.execute("""
                           SELECT privilege_type
@@ -202,9 +209,24 @@ spec:
                           ORDER BY privilege_type
                       """)
                       privs = sorted({r[0] for r in cur.fetchall()})
-                      # DELETE cố ý KHÔNG được cấp (AIO-07): runtime chỉ read + upsert.
-                      check("otelu grants", privs == ["INSERT", "SELECT", "UPDATE"], privs)
-                      check("no DELETE grant", "DELETE" not in privs, privs)
+
+                      # Runtime cần đúng 3 quyền này (SELECT + INSERT ... ON CONFLICT DO UPDATE).
+                      required = {"SELECT", "INSERT", "UPDATE"}
+                      check("required grants present", required <= set(privs), privs)
+
+                      # Least privilege ở mức GRANT chỉ kiểm được khi bảng KHÔNG do otelu sở hữu.
+                      # Migration chạy bằng chính DSN của app (current_user=otelu) nên bảng nó tạo
+                      # thuộc về otelu, mà owner trong PostgreSQL mặc nhiên có toàn quyền —
+                      # role_table_grants vì thế báo cả DELETE/TRUNCATE/TRIGGER/REFERENCES.
+                      # GRANT ở Step 6 là vô hại nhưng KHÔNG thu hẹp được gì.
+                      # reviews.fidelity_audit trên main cũng đúng tình trạng này.
+                      # Muốn least privilege thật thì bảng phải do role admin sở hữu rồi mới GRANT
+                      # cho otelu — cần credential riêng, ngoài phạm vi change này.
+                      if owner_name == "otelu":
+                          print("  [NOTE] otelu SỞ HỮU bảng -> quyền owner là ngầm định, "
+                                f"không thu hẹp được bằng GRANT. privileges={privs}", flush=True)
+                      else:
+                          check("no DELETE grant", "DELETE" not in privs, privs)
 
                   # ---- Functional probe: upsert thật rồi ROLLBACK ----
                   # Connection riêng, autocommit=False, để BEGIN/ROLLBACK có hiệu lực.

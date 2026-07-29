@@ -33,3 +33,7 @@ def test_product_reviews_uses_arm_elastic_scheduling_contract():
             "effect": "NoSchedule",
         },
     ]
+
+
+def test_currency_uses_arm_elastic_scheduling_contract():
+    assert scheduling_rules("currency") == scheduling_rules("product-reviews")
