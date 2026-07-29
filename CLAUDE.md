@@ -5,7 +5,11 @@ File này được Claude Code tự động đọc ở đầu mỗi phiên làm 
 là để **không phải giải thích lại bối cảnh dự án từ đầu mỗi lần mở chat mới**. Giữ file này
 cập nhật; nó có giá trị bằng đúng mức nó phản ánh đúng thực tế hiện tại.
 
-> **Cập nhật gần nhất: 23/07/2026** (Mandate #2 + #3 demo PASS; AI Bedrock live cho product-reviews;
+> **Cập nhật gần nhất: 29/07/2026** — product-reviews Sprint 3 Release A (Tier-2 PostgreSQL fallback)
+> đã deploy production, zero downtime; xem mục "AI trong sản phẩm". ⚠️ Mục "Truy cập cluster" đã sửa:
+> **`AWS_PROFILE=techx-new` không còn tồn tại**.
+>
+> (23/07/2026: Mandate #2 + #3 demo PASS; AI Bedrock live cho product-reviews;
 > **Mandate #8 HOÀN TẤT + §8 XONG — 3/3 store lên managed, đã TẮT 3 component tự host (PR #324):
 > Valkey→ElastiCache ✅, Postgres→RDS ✅, Kafka→MSK ✅**; Cloudflare Access thêm mail mentor; PM-101.
 > **⚠️ Sự cố 20/07: batch NetworkPolicy Mandate #5 của CDO01 gây outage ~30ph — rollback, postmortem 0012.**)
@@ -85,13 +89,24 @@ Auditability là trụ chung. Nếu người dùng nói "trụ của mình"/"tea
   đang audit).
 
 ### Truy cập cluster — 2 đường song song
-- **⚠️ PHẢI dùng `export AWS_PROFILE=techx-new`** cho mọi lệnh AWS/kubectl. Profile `default` trỏ
-  account CŨ `012619468490` (không còn dùng) — quên set là truy cập nhầm account, mọi thứ fail.
+- **⚠️ Profile `techx-new` KHÔNG CÒN TỒN TẠI** (xác minh 29/07 — `aws sts get-caller-identity` trả
+  `The config profile (techx-new) could not be found`). Mục này trước đây bắt dùng nó; ai làm theo sẽ
+  fail ngay lệnh đầu. Profile hiện có trong `~/.aws/`, **tất cả đều trỏ đúng account `197826770971`**:
+
+  | Profile | Danh tính | Dùng khi |
+  |---|---|---|
+  | `default` / `nvtank-readonly` | role `tf3-production-readonly` | Mặc định. Đủ cho mọi thao tác đọc: node, pod, deploy, Application, ExternalSecret, log, describe. **Không** đọc được `secrets` |
+  | `acc-moi` | user `cdo-admin-team` | Khi cần quyền ghi (apply, delete, đọc secret) |
+  | `tf3-member-base` | user `tf3-members-readonly` | readonly, ít dùng |
+
+  Preflight/verify nên chạy bằng `default` — tối thiểu quyền, và readonly không đọc được `secrets` là
+  đúng thiết kế: verify trạng thái secret qua `ExternalSecret` (`READY=True`, `SecretSynced`) thay vì
+  đọc giá trị.
 - **SSM bastion** (mặc định): bastion ID **không cố định** (Terraform replace là đổi ID — 23/07 id cũ
   `i-02a8d3e39b87180ce` bị terminate, hiện là `i-0f5959afa0eb31e7c`; luôn tra động theo tag, xem lệnh
   dưới). Cluster endpoint `ADA05FFC84146C0AED730F78786EB320.gr7.ap-southeast-1.eks.amazonaws.com`. Mở tunnel:
   ```sh
-  export AWS_PROFILE=techx-new; export MSYS_NO_PATHCONV=1   # Windows git-bash
+  export AWS_PROFILE=acc-moi; export MSYS_NO_PATHCONV=1   # 'techx-new' đã chết, xem bảng trên
   # KHÔNG hardcode bastion ID — Terraform replace bastion là ID đổi (đã xảy ra 23/07: id cũ
   # i-02a8d3e39b87180ce bị terminate). Tra động theo tag + endpoint theo tên cluster:
   BASTION_ID=$(aws ec2 describe-instances --region ap-southeast-1 \
@@ -175,6 +190,31 @@ Auditability là trụ chung. Nếu người dùng nói "trụ của mình"/"tea
   `values-aio-llm.yaml` (đã có trong `gitops/apps/techx-corp.yaml`). Có guardrail: summary evaluator
   reject nội dung bịa, grounding "No information in reviews". Runbook `docs/runbooks/aio-bedrock-rollout.md`.
   (Việc AIO02, không phải CDO02.)
+- **✅ Sprint 3 Release A — Tier-2 PostgreSQL fallback (deploy 29/07, digest `sha256:be5cd78a…`).**
+  Khi Bedrock lỗi / circuit breaker OPEN / rate-limit / timeout, `AskProductAIAssistant` trả bản tóm tắt
+  canonical đã duyệt gần nhất từ `reviews.product_summaries` (Tier-2) thay vì rơi thẳng xuống thông báo
+  tĩnh (Tier-3). Rollout 45 giây, `readyReplicas` không tụt dưới 2, **45/45 request đo được trả 200**.
+  - **Port CHỌN LỌC từ `feature/product-review`, KHÔNG merge nhánh.** Nhánh AIO thiếu 1.440 commit của
+    `main` và commit `860c116` đã xoá phần lớn cây mã nguồn ngoài `product-reviews` — merge/copy nguyên
+    nhánh sẽ mất readiness DB-aware (REL-02), semaphore PM-0016, fix pool REL-05 và Dockerfile hardened.
+  - **Hai lỗi semantics của bản AIO đã vá khi port**, mỗi lỗi có test khoá + mutation-verified:
+    (1) persist thêm gate `is_summary_request` — bản gốc để câu "có chống nước không?" ghi đè bản tóm tắt;
+    (2) `resolve_fallback_summary` so `review_version`, lệch/NULL → Tier-3 (fail closed).
+    Persist đi qua `db_write_executor`, không chặn đường request.
+  - **⚠️ Mới kiểm chứng ĐƯỜNG GHI trên production.** Đường ĐỌC (fallback thật sự trả Tier-2) chưa test
+    end-to-end vì phải bơm lỗi LLM thật (`llmRateLimitError` gây lỗi ~50% request). **Đừng báo cáo
+    "Tier-2 hoạt động đầy đủ"** cho tới khi làm xong.
+  - Schema qua ArgoCD Application riêng `product-reviews-schema-migration` (`gitops/jobs/product-reviews-sprint3/`),
+    **không `kubectl apply` tay**. PR: #590 code · #591+#598 migration · #593 image bump.
+    Evidence `docs/evidence/product-reviews-sprint3/`.
+  - **Bài học values-prod vs values-mandate13**: `values-mandate13.yaml` là file #4, load **sau**
+    `values-prod.yaml` (#3), và `tolerations` là **list** → Helm **THAY THẾ** cả list. Thêm toleration ở
+    `values-prod.yaml` cho component đã có mặt trong `values-mandate13.yaml` là **no-op** (đã mất một PR
+    vào đúng bẫy này — #594 rồi revert bằng #601).
+  - **OPEN, không gộp vào kết luận Release A:** Release B/S6 isolation · thay đổi hành vi trả lời AI
+    (2 deterministic router, prompt rewrite, ép output tiếng Anh — chờ eval set AIO-15) · Bedrock Guardrail ·
+    CDO-06 (candidate Deployment) · CDO-11 (CI mới render 3/6 lớp values) · least privilege cho
+    `product_summaries` + `fidelity_audit` (bảng do `otelu` sở hữu nên GRANT không thu hẹp được gì).
 
 ### Security / supply-chain (CDO01) — PM-101
 - **Image supply-chain gate**: Trivy release gate (chặn image lỗ hổng **trước** push) + Cosign keyless
