@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "status": "INVALID_INCOMPLETE",
+  "source": {
+    "name": "Kết quả test mandate 19.txt",
+    "repositoryCopyAvailable": false,
+    "rawLocustCsvAvailable": false,
+    "prometheusRangeExportsAvailable": false
+  },
+  "observedStages": [
+    {"users": 100, "currentRps": 20.5, "nodeCount": 9},
+    {"users": 150, "currentRps": 34.2, "nodeCount": 10},
+    {"users": 200, "currentRps": 44.4, "nodeCount": 10},
+    {"users": 250, "currentRps": 52.4, "nodeCount": 10},
+    {"users": 300, "currentRps": 69.2, "nodeCount": 11},
+    {"users": 350, "currentRps": 73.0, "nodeCount": 11},
+    {"users": 380, "currentRps": 79.7, "nodeCount": 11},
+    {"users": 410, "currentRps": 81.8, "nodeCount": 11}
+  ],
+  "finalSnapshot": {
+    "users": 410,
+    "currentRps": 81.8,
+    "frontendHpa": {
+      "currentCpuPercent": 64,
+      "targetCpuPercent": 65,
+      "replicas": 5,
+      "maxReplicas": 8
+    },
+    "frontendProxyHpa": {
+      "currentCpuPercent": 52,
+      "targetCpuPercent": 65,
+      "replicas": 3,
+      "maxReplicas": 8
+    },
+    "checkoutCumulativeSnapshot": {
+      "requests": 7915,
+      "failures": 1,
+      "successPercent": 99.9873657612,
+      "p95Milliseconds": 190,
+      "p99Milliseconds": 490
+    },
+    "frontendPendingPodAge": "8m49s"
+  },
+  "invalidReasons": [
+    "Node count and node identities changed during the run.",
+    "A frontend pod remained Pending during high-load stages.",
+    "The captured traffic was not the canonical 70/20/10 Mandate 19 profile.",
+    "No sustained exact-window SLO evidence was supplied.",
+    "No enforced load-shedding demonstration was supplied."
+  ],
+  "mandate19Pass": false
+}
