@@ -1,6 +1,11 @@
 # AIO: cắm LLM thật thay mock (envOverrides = upsert, không xoá env khác).
 # Production-safe path: dùng IRSA riêng cho product-reviews để gọi Bedrock,
 # không cấp quyền Bedrock cho toàn bộ workload đang dùng serviceAccount chung.
+productReviewsEgressProxy:
+  enabled: true
+  service:
+    clusterIP: 172.20.255.151
+
 components:
   product-reviews:
     serviceAccount:
@@ -21,6 +26,17 @@ components:
       - name: AWS_REGION
         value: us-east-1
 
+      # Boto3 uses this proxy for both regional STS web-identity exchange and
+      # Bedrock Runtime. Internal service and datastore traffic stays direct.
+      - name: HTTPS_PROXY
+        value: http://product-reviews-egress-proxy.techx-tf3.svc.cluster.local:3128
+      - name: https_proxy
+        value: http://product-reviews-egress-proxy.techx-tf3.svc.cluster.local:3128
+      - name: NO_PROXY
+        value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,product-catalog.techx-tf3.svc.cluster.local,flagd.techx-tf3.svc.cluster.local,otel-gateway.techx-tf3.svc.cluster.local,techx-tf3-postgres.czwcs2ocww3q.ap-southeast-1.rds.amazonaws.com,master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com
+      - name: no_proxy
+        value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,product-catalog.techx-tf3.svc.cluster.local,flagd.techx-tf3.svc.cluster.local,otel-gateway.techx-tf3.svc.cluster.local,techx-tf3-postgres.czwcs2ocww3q.ap-southeast-1.rds.amazonaws.com,master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com
+
       # Mandate #8 buoc 2 (cutover Postgres -> RDS, runbook §5 buoc 4): DB_CONNECTION_STRING -> RDS
       # qua secret techx-tf3-postgres-conn (format libpq keyword, sslmode=require). product-reviews CHI DOC.
       # DAT O DAY (khong o values-prod.yaml): file nay override sau -> envOverrides list nay la list cuoi
@@ -30,6 +46,29 @@ components:
           secretKeyRef:
             name: techx-tf3-postgres-conn
             key: libpq
+
+      # AIO02 guardrails upgrade: LLM response cache + circuit-breaker state live in
+      # Redis. Reuses the EXISTING ElastiCache Valkey (Mandate #8) that cart already
+      # uses — no new billable resource. Keys are namespaced `product_reviews:*` so
+      # they cannot collide with cart's.
+      #
+      # Failure mode is safe by design: guardrails/cache.py and circuit_breaker.py
+      # wrap every Redis call in try/except with a 1s socket timeout, and the circuit
+      # breaker falls back to in-memory state. Verified in code that NEITHER
+      # GetProductReviews NOR GetAverageProductReviewScore touches Redis — only the
+      # AI-assistant path does — so a Valkey outage cannot affect the two RPCs that
+      # carry the frontend's 500ms PRODUCT_REVIEWS_DEADLINE_MS.
+      - name: REDIS_HOST
+        value: master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com
+      - name: REDIS_PORT
+        value: "6379"
+      - name: REDIS_USE_TLS
+        value: "true"
+      - name: REDIS_AUTH_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: techx-tf3-valkey-auth
+            key: auth_token
 
       # Nếu cần rollback sang OpenAI/LiteLLM, thêm lại các biến sau:
       # - name: LLM_BASE_URL

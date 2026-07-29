@@ -14,6 +14,9 @@
     "default": {
       "$ref": "#/definitions/Default"
     },
+    "productReviewsEgressProxy": {
+      "$ref": "#/definitions/ProductReviewsEgressProxy"
+    },
     "serviceAccount": {
       "$ref": "#/definitions/ServiceAccountConfig"
     },
@@ -53,6 +56,56 @@
     "serviceAccount"
   ],
   "definitions": {
+    "ProductReviewsEgressProxy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxActiveConnections": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "clusterIP": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "clusterIP"
+          ]
+        },
+        "allowedAuthorities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9.-]+:443$"
+          }
+        }
+      },
+      "required": [
+        "enabled",
+        "replicas",
+        "image",
+        "maxActiveConnections",
+        "service",
+        "allowedAuthorities"
+      ]
+    },
     "ServiceAccountConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -67,7 +120,8 @@
           "type": "string"
         },
         "automountServiceAccountToken": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Whether to automount the SA token into pods. Set false for workloads that do not call the Kubernetes API."
         }
       },
       "required": [

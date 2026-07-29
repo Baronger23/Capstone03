@@ -22,10 +22,10 @@ must use a separate PR and a low-traffic change window.
   caller identity.
 - Managed RDS, ElastiCache, and MSK endpoints live in the three production
   private subnets. Only their required ports are allowed.
-- Standard NetworkPolicy cannot restrict HTTPS by FQDN. `product-reviews`,
-  `cloudflared`, and `aiops-engine` therefore remain promotion-blocked while
-  their staged rules contain `0.0.0.0/0`. They require a reviewed FQDN-aware
-  egress control or maintained destination CIDRs before promotion.
+- Standard NetworkPolicy cannot restrict HTTPS by FQDN. Public HTTPS is
+  therefore isolated to dedicated proxy workloads with reviewed FQDN RBAC;
+  business pods may reach only their proxy Service and cannot use
+  `0.0.0.0/0` directly.
 - `flagd` keeps its protected runtime read path and can synchronize only with
   the configured `122.248.223.194` HTTPS source. Nothing here changes or
   removes `/flagservice`.
@@ -148,9 +148,13 @@ kubectl -n techx-tf3 exec deploy/cart -- nc -vz -w 5 payment 8080
 kubectl -n techx-tf3 exec deploy/cart -- \
   curl -I -L --connect-timeout 5 https://example.com
 
-# Bedrock exception owner: DNS and HTTPS must still work from product-reviews.
+# Bedrock must work through the dedicated Product Reviews egress proxy.
 kubectl -n techx-tf3 exec deploy/product-reviews -- \
   curl -I --connect-timeout 5 https://bedrock-runtime.us-east-1.amazonaws.com
+
+# An authority outside the proxy allowlist must return CONNECT 403.
+kubectl -n techx-tf3 exec deploy/product-reviews -- \
+  curl -I --connect-timeout 5 https://example.com
 ```
 
 An HTTP 403/404 from the Bedrock endpoint is sufficient network evidence; a

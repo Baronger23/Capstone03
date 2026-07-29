@@ -78,7 +78,12 @@ EXPECTED_EGRESS_COMPONENTS = {
     "fraud-detection": {"flagd", "otel-gateway"},
     "shipping": {"quote", "otel-gateway"},
     "recommendation": {"product-catalog", "flagd", "otel-gateway"},
-    "product-reviews": {"product-catalog", "flagd", "otel-gateway"},
+    "product-reviews": {
+        "product-catalog",
+        "flagd",
+        "otel-gateway",
+        "product-reviews-egress-proxy",
+    },
     "checkout": {
         "cart",
         "currency",
@@ -105,12 +110,9 @@ EXPECTED_EGRESS_COMPONENTS = {
     "flagd": {"otel-gateway"},
 }
 
-# 06-cloudflared.yaml left this set once its egress was narrowed from 0.0.0.0/0 to the
-# published Cloudflare ranges, so it is now promotable like any other policy.
-PUBLIC_EGRESS_FILES = {
-    "07-aiops-engine.yaml",
-    "32-product-reviews.yaml",
-}
+# Public egress is permitted only on dedicated proxy workloads, never in staged
+# business or platform policies.
+PUBLIC_EGRESS_FILES = set()
 
 
 def load_documents(path):
@@ -137,6 +139,16 @@ def load_active_policy(filename, name):
         ):
             return document
     raise AssertionError(f"{name} was not found in active {filename}")
+
+
+def load_policy_from_file(path, name):
+    for document in load_documents(path):
+        if (
+            document.get("kind") == "NetworkPolicy"
+            and document.get("metadata", {}).get("name") == name
+        ):
+            return document
+    raise AssertionError(f"{name} was not found in {path}")
 
 
 def ingress_ports_from_source(policy, source):
@@ -512,6 +524,106 @@ def test_product_catalog_has_observed_service_and_rds_peers():
     )
 
 
+def test_product_reviews_has_observed_callers_and_runtime_dependencies():
+    product_reviews = load_policy("32-product-reviews.yaml")
+    private_subnets = {"10.0.0.0/20", "10.0.16.0/20", "10.0.32.0/20"}
+
+    assert ingress_ports_from_source(product_reviews, "frontend") == {3551}
+    assert ingress_ports_from_source(product_reviews, "shopping-copilot") == {3551}
+    assert ipblocks_for_egress_port(product_reviews, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(product_reviews, 8080) == {
+        "172.20.145.185/32"
+    }
+    assert ipblocks_for_egress_port(product_reviews, 8013) == {
+        "172.20.213.30/32"
+    }
+    assert ipblocks_for_egress_port(product_reviews, 4317) == {
+        "172.20.117.175/32"
+    }
+    assert ipblocks_for_egress_port(product_reviews, 5432) == private_subnets
+    assert ipblocks_for_egress_port(product_reviews, 6379) == private_subnets
+    assert ports_for_egress_destination(
+        product_reviews, "product-reviews-egress-proxy"
+    ) == {3128}
+    assert ipblocks_for_egress_port(product_reviews, 3128) == {
+        "172.20.255.151/32"
+    }
+    assert not contains_public_cidr(product_reviews)
+    assert product_reviews["metadata"]["annotations"][
+        "mandate-17.techx.io/ingress-caller-evidence"
+    ] == "2026-07-29:frontend-and-shopping-copilot-to-product-reviews:3551"
+    assert product_reviews["metadata"]["annotations"][
+        "mandate-17.techx.io/service-clusterip-evidence"
+    ] == (
+        "2026-07-29:kube-dns=172.20.0.10,"
+        "product-catalog=172.20.145.185,flagd=172.20.213.30,"
+        "otel-gateway=172.20.117.175,"
+        "product-reviews-egress-proxy=172.20.255.151"
+    )
+
+
+def test_product_reviews_uses_a_dedicated_least_privilege_fqdn_proxy():
+    chart_values = yaml.safe_load(
+        (REPO / "phase3 - information/techx-corp-chart/values.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    runtime_values = yaml.safe_load(
+        (REPO / "phase3 - information/deploy/values-aio-llm.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    template = (
+        REPO
+        / "phase3 - information/techx-corp-chart/templates/product-reviews-egress-proxy.yaml"
+    ).read_text(encoding="utf-8")
+    chart_schema = yaml.safe_load(
+        (REPO / "phase3 - information/techx-corp-chart/values.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    proxy_defaults = chart_values["productReviewsEgressProxy"]
+    assert proxy_defaults["enabled"] is False
+    assert proxy_defaults["replicas"] == 2
+    assert proxy_defaults["maxActiveConnections"] == 1024
+    assert set(proxy_defaults["allowedAuthorities"]) == {
+        "sts.us-east-1.amazonaws.com:443",
+        "bedrock-runtime.us-east-1.amazonaws.com:443",
+    }
+
+    proxy_schema = chart_schema["definitions"]["ProductReviewsEgressProxy"]
+    assert proxy_schema["additionalProperties"] is False
+    assert proxy_schema["properties"]["replicas"]["minimum"] == 2
+    assert proxy_schema["properties"]["allowedAuthorities"]["uniqueItems"] is True
+
+    proxy_runtime = runtime_values["productReviewsEgressProxy"]
+    assert proxy_runtime["enabled"] is True
+    assert proxy_runtime["service"]["clusterIP"] == "172.20.255.151"
+
+    overrides = {
+        item["name"]: item
+        for item in runtime_values["components"]["product-reviews"]["envOverrides"]
+    }
+    proxy_url = "http://product-reviews-egress-proxy.techx-tf3.svc.cluster.local:3128"
+    assert overrides["HTTPS_PROXY"]["value"] == proxy_url
+    assert overrides["https_proxy"]["value"] == proxy_url
+    assert overrides["NO_PROXY"]["value"] == overrides["no_proxy"]["value"]
+    assert ".svc.cluster.local" in overrides["NO_PROXY"]["value"]
+    assert "techx-tf3-postgres" in overrides["NO_PROXY"]["value"]
+    assert "techx-tf3-valkey" in overrides["NO_PROXY"]["value"]
+
+    assert "kind: PodDisruptionBudget" in template
+    assert "minAvailable: 1" in template
+    assert "accept_http_10: true" in template
+    assert "upgrade_type: CONNECT" in template
+    assert "envoy.filters.http.rbac" in template
+    assert "global_downstream_max_connections" in template
+    assert "app.kubernetes.io/component: product-reviews" in template
+    assert "automountServiceAccountToken: false" in template
+    assert "readOnlyRootFilesystem: true" in template
+
+
 def test_jaeger_accepts_otel_gateway_grpc_ingest():
     jaeger = load_policy("02-jaeger.yaml")
     matching_ports = set()
@@ -780,15 +892,27 @@ def test_public_egress_is_blocked_from_promotion_and_never_active():
         assert annotations.get("mandate-17.techx.io/promotion-blocked") == "true"
         assert annotations.get("mandate-17.techx.io/promotion-blocker")
 
-    for path in INFRA.glob("*.yaml"):
+    allowed_active_public = {
+        (
+            REPO / "gitops/aiops-engine/networkpolicy.yaml",
+            "aiops-egress-proxy-policy",
+        )
+    }
+
+    for path in list(INFRA.glob("*.yaml")) + [
+        REPO / "gitops/aiops-engine/networkpolicy.yaml"
+    ]:
         for document in load_documents(path):
             if document.get("kind") == "NetworkPolicy":
+                identity = (path, document.get("metadata", {}).get("name"))
+                if identity in allowed_active_public:
+                    continue
                 assert not contains_public_cidr(document), (
                     f"active policy {path.name} must not allow 0.0.0.0/0"
                 )
 
 
-def test_ad_is_the_clusterip_canary_and_aiops_api_use_is_unverified():
+def test_ad_is_the_clusterip_canary_and_aiops_api_use_is_verified():
     ad = load_policy("14-ad.yaml")
     ad_annotations = ad["metadata"]["annotations"]
     assert ad_annotations["mandate-17.techx.io/rollout-role"] == "first-canary"
@@ -803,9 +927,90 @@ def test_ad_is_the_clusterip_canary_and_aiops_api_use_is_unverified():
     assert ipblocks_for_egress_port(ad, 8013) == {"172.20.213.30/32"}
     assert ipblocks_for_egress_port(ad, 4318) == {"172.20.117.175/32"}
     aiops_annotations = load_policy("07-aiops-engine.yaml")["metadata"]["annotations"]
-    assert aiops_annotations["mandate-17.techx.io/kubernetes-api-dependency"] == (
-        "unverified"
+    assert aiops_annotations["mandate-17.techx.io/kubernetes-api-dependency"].startswith(
+        "verified:"
     )
+
+
+def test_aiops_active_policies_force_public_https_through_fqdn_proxy():
+    policies = REPO / "gitops/aiops-engine/networkpolicy.yaml"
+    proxy = load_policy_from_file(policies, "aiops-egress-proxy-policy")
+    engine = load_policy_from_file(policies, "aiops-engine-platform-policy")
+    trainer = load_policy_from_file(policies, "aiops-trainer-platform-policy")
+
+    assert proxy["spec"]["podSelector"]["matchLabels"] == {
+        "app.kubernetes.io/name": "aiops-egress-proxy"
+    }
+    assert engine["spec"]["podSelector"]["matchLabels"] == {
+        "app.kubernetes.io/name": "aiops-engine"
+    }
+    assert trainer["spec"]["podSelector"]["matchLabels"] == {
+        "app": "aiops-engine",
+        "component": "trainer",
+    }
+
+    assert contains_public_cidr(proxy)
+    assert not contains_public_cidr(engine)
+    assert not contains_public_cidr(trainer)
+    assert ipblocks_for_egress_port(proxy, 443) == {"0.0.0.0/0"}
+
+    assert ipblocks_for_egress_port(engine, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(engine, 9090) == {"172.20.123.8/32"}
+    assert ipblocks_for_egress_port(engine, 16686) == {"172.20.93.48/32"}
+    assert ipblocks_for_egress_port(engine, 9200) == {"172.20.106.195/32"}
+    assert ipblocks_for_egress_port(engine, 443) == {
+        "172.20.0.1/32",
+        "10.0.0.0/20",
+        "10.0.16.0/20",
+        "10.0.32.0/20",
+    }
+    assert ports_for_egress_destination(engine, "aiops-egress-proxy") == {3128}
+    assert ipblocks_for_egress_port(engine, 3128) == {"172.20.255.150/32"}
+
+    assert ipblocks_for_egress_port(trainer, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(trainer, 9090) == {"172.20.123.8/32"}
+    assert ports_for_egress_destination(trainer, "aiops-egress-proxy") == {3128}
+    assert ipblocks_for_egress_port(trainer, 3128) == {"172.20.255.150/32"}
+
+    proxy_annotations = proxy["metadata"]["annotations"]
+    assert proxy_annotations["mandate-17.techx.io/public-egress-control"] == (
+        "envoy-forward-proxy-fqdn-rbac"
+    )
+    assert "bedrock-runtime.us-east-1.amazonaws.com:443" in proxy_annotations[
+        "mandate-17.techx.io/allowed-external-authorities"
+    ]
+
+
+def test_aiops_egress_proxy_enables_connect_upgrades_on_connection_manager():
+    documents = load_documents(REPO / "gitops/aiops-engine/egress-proxy.yaml")
+    config_map = next(
+        document
+        for document in documents
+        if document["kind"] == "ConfigMap"
+        and document["metadata"]["name"] == "aiops-egress-proxy-config"
+    )
+    envoy_config = yaml.safe_load(config_map["data"]["egress-proxy.yaml"])
+    hcm_config = envoy_config["static_resources"]["listeners"][0]["filter_chains"][0][
+        "filters"
+    ][0]["typed_config"]
+
+    assert {"upgrade_type": "CONNECT"} in hcm_config["upgrade_configs"]
+
+
+def test_aiops_egress_proxy_accepts_http10_connect_clients():
+    documents = load_documents(REPO / "gitops/aiops-engine/egress-proxy.yaml")
+    config_map = next(
+        document
+        for document in documents
+        if document["kind"] == "ConfigMap"
+        and document["metadata"]["name"] == "aiops-egress-proxy-config"
+    )
+    envoy_config = yaml.safe_load(config_map["data"]["egress-proxy.yaml"])
+    hcm_config = envoy_config["static_resources"]["listeners"][0]["filter_chains"][0][
+        "filters"
+    ][0]["typed_config"]
+
+    assert hcm_config["http_protocol_options"]["accept_http_10"] is True
 
 
 def test_default_deny_is_empty_and_marked_last():

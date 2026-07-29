@@ -1,15 +1,18 @@
 # CronJob huấn luyện lại mô hình anomaly, 02:00 thứ Hai giờ VN (19:00 CN UTC).
 #
-# LƯU Ý DRIFT: image ở đây là IF-v25 trong khi engine chạy IF-v63 — lệch 38 bản.
-# Giữ nguyên ở Phase 1 (nguyên tắc khớp live state). Nâng version là việc Phase 3,
-# và phải hỏi AIO02 trước xem train_anomaly_model_eks.py ở IF-v63 còn tương thích.
+# Dùng cùng ảnh first-party đã ký/SBOM-attest với Deployment để không còn phụ thuộc
+# allowlist external image. activeDeadlineSeconds tăng lên 3h vì hai lần chạy gần
+# nhất bị kill ở mốc 1h trước khi hoàn tất training.
 #
-# AWS_ACCESS_KEY_ID/SECRET cũng là static key — gỡ ở Phase 2 cùng lúc với Deployment.
+# Credential AWS: qua IRSA (ServiceAccount aiops-trainer -> role
+# techx-corp-tf3-aiops-trainer, chỉ S3 model). Static key đã gỡ khỏi env.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: aiops-anomaly-training
   namespace: techx-tf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   schedule: 0 19 * * 0
   concurrencyPolicy: Forbid
@@ -18,9 +21,29 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      activeDeadlineSeconds: 3600
+      activeDeadlineSeconds: 10800
       template:
+        metadata:
+          # Pod của trainer trước đây KHÔNG có label nào. Đó là lỗ hổng chờ xảy ra:
+          # NetworkPolicy `90-default-deny-all` chọn `podSelector: {}` (mọi pod trong
+          # namespace), còn policy cho aiops (`07-aiops-engine`) chỉ chọn
+          # `app: aiops-engine`. Ngày default-deny được promote, pod trainer sẽ không
+          # khớp policy nào -> mất DNS + Prometheus + S3 -> treo tới khi
+          # activeDeadlineSeconds giết, MỖI TUẦN.
+          #
+          # `app: aiops-engine` để policy chung áp được; `component: trainer` để sau này
+          # siết riêng cho trainer (nó chỉ cần Prometheus + S3, không cần Jaeger/
+          # OpenSearch/Slack/kube-apiserver như engine).
+          #
+          # Đổi jobTemplate KHÔNG restart gì - chỉ áp cho Job sinh ra từ lần chạy sau.
+          labels:
+            app: aiops-engine
+            component: trainer
         spec:
+          # Trước đây không khai -> chạy bằng SA `default` của namespace, và lấy
+          # credential AWS từ static key trong env. SA riêng này gắn IRSA role
+          # techx-corp-tf3-aiops-trainer (chỉ S3 model, không Bedrock).
+          serviceAccountName: aiops-trainer
           restartPolicy: OnFailure
           dnsPolicy: ClusterFirst
           schedulerName: default-scheduler
@@ -28,14 +51,14 @@ spec:
           terminationGracePeriodSeconds: 30
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-            fsGroup: 1000
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
             seccompProfile:
               type: RuntimeDefault
           containers:
           - name: trainer
-            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/tf-2-ai-engine:IF-v25
+            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:6f5d440-30415515350-aiops-engine@sha256:91fa5e1e28e0cf4e0ac0df1769370f66a143ab0f7129e7fff13f68ead93d9f22
             imagePullPolicy: Always
             command:
             - python
@@ -47,16 +70,17 @@ spec:
               value: tf3-aiops-models-197826770971
             - name: AWS_REGION
               value: ap-southeast-1
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: aiops-engine-secrets
-                  key: aws-access-key-id
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: aiops-engine-secrets
-                  key: aws-secret-access-key
+            - name: HTTPS_PROXY
+              value: http://aiops-egress-proxy.techx-tf3.svc.cluster.local:3128
+            - name: https_proxy
+              value: http://aiops-egress-proxy.techx-tf3.svc.cluster.local:3128
+            - name: NO_PROXY
+              value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,172.20.0.10,prometheus.techx-tf3.svc.cluster.local
+            - name: no_proxy
+              value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,172.20.0.10,prometheus.techx-tf3.svc.cluster.local
+            # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY đã GỠ — xem lý do ở
+            # deployment.yaml. Credential đến từ ServiceAccount aiops-trainer ->
+            # role techx-corp-tf3-aiops-trainer (chỉ S3 model, không Bedrock).
             resources:
               requests:
                 cpu: 500m
@@ -67,7 +91,7 @@ spec:
             securityContext:
               allowPrivilegeEscalation: false
               runAsNonRoot: true
-              runAsUser: 1000
+              runAsUser: 10001
               capabilities:
                 drop:
                 - ALL

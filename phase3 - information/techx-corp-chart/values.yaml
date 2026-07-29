@@ -56,6 +56,17 @@ default:
       cpu: 200m
       memory: 256Mi
 
+productReviewsEgressProxy:
+  enabled: false
+  replicas: 2
+  image: envoyproxy/envoy:v1.34.10@sha256:3343a698c1bdfdbb174f1bd907dea789d728692f4f99a943e3e6f0bc5ef6513f
+  maxActiveConnections: 1024
+  service:
+    clusterIP: ""
+  allowedAuthorities:
+    - sts.us-east-1.amazonaws.com:443
+    - bedrock-runtime.us-east-1.amazonaws.com:443
+
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
@@ -1799,6 +1810,15 @@ otelLogsRetention:
 
 opensearch:
   enabled: true
+  # T10: OpenSearch chart 3.6.0 only accepts a custom serviceAccountName when
+  # rbac.create=true, which would also create an unnecessary RoleBinding.
+  # Keep RBAC disabled and make the no-token behavior explicit. Cloudflared is
+  # moved off `default`, so this data workload no longer shares identity with
+  # the public edge. A dedicated OpenSearch SA requires an upstream chart fix
+  # or a separately reviewed chart-vendoring change.
+  rbac:
+    create: false
+    automountServiceAccountToken: false
   # PM-127: opensearch subchart has no image.digest field and computes opensearch.majorVersion
   # via semver(image.tag). Pin majorVersion explicitly so we can embed the digest in the tag;
   # rendered image = opensearchproject/opensearch:3.6.0@sha256:... which matches the exact-digest
