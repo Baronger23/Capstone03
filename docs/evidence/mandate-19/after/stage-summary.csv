@@ -1,0 +1,9 @@
+users,current_rps,node_count,frontend_cpu_percent,frontend_hpa_target_percent,frontend_replicas,proxy_cpu_percent,proxy_hpa_target_percent,proxy_replicas,observation
+100,20.5,9,50,65,2,31,65,2,"initial snapshot"
+150,34.2,10,40,65,3,34,65,2,"node added; several pods ContainerCreating"
+200,44.4,10,40,65,3,34,65,2,"snapshot appears to repeat the 150-user infrastructure sample"
+250,52.4,10,62,65,3,48,65,2,"node identities differ from earlier snapshot"
+300,69.2,11,58,65,4,60,65,2,"second additional node observed"
+350,73.0,11,56,65,5,67,65,2,"frontend pod Pending"
+380,79.7,11,67,65,5,53,65,3,"frontend pod Pending for 4m18s"
+410,81.8,11,64,65,5,52,65,3,"frontend pod Pending for 8m49s; checkout cumulative p99 490ms"
