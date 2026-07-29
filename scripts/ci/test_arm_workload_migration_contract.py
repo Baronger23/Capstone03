@@ -5,6 +5,9 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 ARM_VALUES = REPO / "phase3 - information/deploy/values-mandate13.yaml"
+OTEL_GATEWAY_TEMPLATE = (
+    REPO / "phase3 - information/techx-corp-chart/templates/otel-gateway.yaml"
+)
 
 
 def scheduling_rules(component: str) -> dict:
@@ -65,3 +68,14 @@ def test_frontend_proxy_uses_arm_elastic_scheduling_contract():
 
 def test_checkout_uses_arm_elastic_scheduling_contract():
     assert scheduling_rules("checkout") == scheduling_rules("product-reviews")
+
+
+def test_otel_gateway_uses_arm_elastic_scheduling_contract():
+    template = OTEL_GATEWAY_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "nodeSelector:\n        techx.io/workload: elastic\n        techx.io/arch: arm64" in template
+    assert """\
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule""" in template
