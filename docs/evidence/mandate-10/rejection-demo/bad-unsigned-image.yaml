@@ -1,0 +1,37 @@
+# Deployment cố ý dùng digest techx-corp CÓ THẬT trong ECR nhưng CHƯA KÝ.
+#
+# Digest thật + chưa ký là điều làm lỗi trả về thành bằng chứng KIỂM CHỮ KÝ.
+# Nếu bịa một digest không tồn tại thì lỗi chỉ chứng minh "image không có",
+# không chứng minh gì về cơ chế xác thực - và mentor tinh ý sẽ bắt được.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mandate10-unsigned-image-demo
+  namespace: techx-tf3
+  labels:
+    mandate10-demo: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mandate10-unsigned-image-demo
+  template:
+    metadata:
+      labels:
+        app: mandate10-unsigned-image-demo
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp@sha256:5eb7fe61735c9176dd4d02b401b156c71151d13007824ab2e2c6dcfd81eec860
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 50m, memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
