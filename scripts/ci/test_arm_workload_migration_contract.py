@@ -41,3 +41,7 @@ def test_currency_uses_arm_elastic_scheduling_contract():
 
 def test_quote_uses_arm_elastic_scheduling_contract():
     assert scheduling_rules("quote") == scheduling_rules("product-reviews")
+
+
+def test_shipping_uses_arm_elastic_scheduling_contract():
+    assert scheduling_rules("shipping") == scheduling_rules("product-reviews")
