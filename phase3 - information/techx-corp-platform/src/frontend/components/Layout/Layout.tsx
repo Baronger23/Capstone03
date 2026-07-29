@@ -3,7 +3,6 @@
 
 import Header from '../Header';
 import Footer from '../Footer';
-import CopilotWidget from '../CopilotWidget';
 
 interface IProps {
   children: React.ReactNode;
@@ -15,7 +14,6 @@ const Layout = ({ children }: IProps) => {
       <Header />
       <main>{children}</main>
       <Footer />
-      <CopilotWidget />
     </>
   );
 };
