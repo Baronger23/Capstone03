@@ -61,3 +61,7 @@ def test_frontend_uses_arm_elastic_scheduling_contract():
 
 def test_frontend_proxy_uses_arm_elastic_scheduling_contract():
     assert scheduling_rules("frontend-proxy") == scheduling_rules("product-reviews")
+
+
+def test_checkout_uses_arm_elastic_scheduling_contract():
+    assert scheduling_rules("checkout") == scheduling_rules("product-reviews")
