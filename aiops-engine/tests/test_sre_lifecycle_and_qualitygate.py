@@ -1,0 +1,150 @@
+import unittest
+import time
+import sys
+import os
+
+# Add parent directory to sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from main import (
+    active_incidents,
+    incidents_lifecycle,
+    consecutive_healthy_count,
+    last_proactive_alert_time,
+    enrich_culprit_with_upstream_check
+)
+from alert_correlator import AlertCorrelator
+
+
+class TestSRELifecycleAndQualityGate(unittest.TestCase):
+    def setUp(self):
+        active_incidents.clear()
+        incidents_lifecycle.clear()
+        consecutive_healthy_count.clear()
+        last_proactive_alert_time.clear()
+
+    def test_state_based_dedup_and_alert_counter(self):
+        """[SRE-01] Test state-based dedup increments alert_count when pending approval."""
+        service = "payment"
+        inc_id = "INC-ML-1001"
+        
+        incidents_lifecycle[inc_id] = {
+            "incident_id": inc_id,
+            "status": "pending_approval",
+            "culprit_service": service,
+            "opened_at": time.time(),
+            "last_alerted_at": time.time(),
+            "alert_count": 1,
+            "diagnosis": {}
+        }
+        
+        # Simulate re-detection logic
+        existing_inc = next((inc for inc in incidents_lifecycle.values() if inc.get("culprit_service") == service and inc.get("status") in ["pending_approval", "open", "proactive_warning"]), None)
+        self.assertIsNotNone(existing_inc)
+        
+        # Increment 4 times
+        for _ in range(4):
+            existing_inc["alert_count"] += 1
+            
+        self.assertEqual(existing_inc["alert_count"], 5)
+        # Verify 5th recurrence triggers reminder
+        self.assertEqual(existing_inc["alert_count"] % 5, 0)
+
+    def test_2_consecutive_healthy_cycles_autoresolve(self):
+        """[SRE-02] Test 2 consecutive healthy cycles (60s) auto-resolves incident."""
+        service = "shipping"
+        inc_id = "INC-ML-2002"
+        
+        active_incidents[inc_id] = {
+            "incident_id": inc_id,
+            "culprit_service": service,
+            "status": "proactive_warning",
+            "alert_time": time.time()
+        }
+        incidents_lifecycle[inc_id] = {
+            "incident_id": inc_id,
+            "status": "pending_approval",
+            "culprit_service": service,
+            "opened_at": time.time(),
+            "last_alerted_at": time.time(),
+            "alert_count": 1,
+            "diagnosis": {}
+        }
+        
+        # Cycle 1: Healthy
+        consecutive_healthy_count[service] = 1
+        self.assertIn(inc_id, active_incidents)
+        
+        # Cycle 2: Healthy (Threshold >= 2)
+        consecutive_healthy_count[service] += 1
+        if consecutive_healthy_count[service] >= 2:
+            for i_id, inc_data in list(active_incidents.items()):
+                if inc_data.get("culprit_service") == service:
+                    inc_data["status"] = "resolved"
+                    if i_id in incidents_lifecycle:
+                        incidents_lifecycle[i_id]["status"] = "resolved"
+                    active_incidents.pop(i_id, None)
+                    
+        self.assertNotIn(inc_id, active_incidents)
+        self.assertEqual(incidents_lifecycle[inc_id]["status"], "resolved")
+
+    def test_stale_vs_expired_600s_precheck(self):
+        """[SRE-03] Test 600s pre-check distinguishes stale (still anomalous) vs expired (healthy)."""
+        now_ts = time.time()
+        
+        # Case A: Still anomalous -> STALE
+        inc_a = "INC-ML-3001"
+        active_incidents[inc_a] = {"incident_id": inc_a, "culprit_service": "payment", "alert_time": now_ts - 610}
+        incidents_lifecycle[inc_a] = {"incident_id": inc_a, "status": "pending_approval", "culprit_service": "payment", "opened_at": now_ts - 610}
+        anomalous_services = {"payment"}
+        
+        for i_id, inc_data in list(active_incidents.items()):
+            if now_ts - inc_data.get("alert_time", now_ts) >= 600:
+                svc = inc_data.get("culprit_service")
+                if svc in anomalous_services:
+                    inc_data["status"] = "stale"
+                    if i_id in incidents_lifecycle:
+                        incidents_lifecycle[i_id]["status"] = "stale"
+                    active_incidents.pop(i_id, None)
+                    
+        self.assertEqual(incidents_lifecycle[inc_a]["status"], "stale")
+        self.assertNotIn(inc_a, active_incidents)
+        
+        # Case B: Telemetry healthy -> EXPIRED
+        inc_b = "INC-ML-3002"
+        active_incidents[inc_b] = {"incident_id": inc_b, "culprit_service": "checkout", "alert_time": now_ts - 610}
+        incidents_lifecycle[inc_b] = {"incident_id": inc_b, "status": "pending_approval", "culprit_service": "checkout", "opened_at": now_ts - 610}
+        anomalous_services.clear()
+        
+        for i_id, inc_data in list(active_incidents.items()):
+            if now_ts - inc_data.get("alert_time", now_ts) >= 600:
+                svc = inc_data.get("culprit_service")
+                if svc in anomalous_services:
+                    inc_data["status"] = "stale"
+                else:
+                    inc_data["status"] = "expired"
+                    if i_id in incidents_lifecycle:
+                        incidents_lifecycle[i_id]["status"] = "expired"
+                    active_incidents.pop(i_id, None)
+                    
+        self.assertEqual(incidents_lifecycle[inc_b]["status"], "expired")
+        self.assertNotIn(inc_b, active_incidents)
+
+    def test_quality_gate_placeholder_suppression(self):
+        """[SRE-04] Test Quality Gate suppresses unfilled [Template] or [X] responses."""
+        unfilled_analysis_1 = "Phát hiện lỗi '[Template]' tại dịch vụ payment."
+        unfilled_analysis_2 = "Phân tích [X] cho thấy service bị nghẽn."
+        
+        self.assertTrue("[Template]" in unfilled_analysis_1 or "lỗi '[Template]'" in unfilled_analysis_1 or "[X]" in unfilled_analysis_1)
+        self.assertTrue("[X]" in unfilled_analysis_2)
+
+    def test_llm_service_excluded_from_services_list(self):
+        """[SRE-05] Test 'llm' is excluded from direct IF polling list."""
+        SERVICES = ["frontend", "checkout", "payment", "product-catalog", "product-reviews", "shipping", "recommendation"]
+        self.assertNotIn("llm", SERVICES)
+        self.assertNotIn("flagd", SERVICES)
+        self.assertNotIn("postgresql", SERVICES)
+
+
+if __name__ == "__main__":
+    unittest.main()

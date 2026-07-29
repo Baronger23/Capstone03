@@ -35,6 +35,8 @@ correlator = AlertCorrelator(window_seconds=600)  # 10 phút — đủ bao phủ
 # Bộ đếm số lần chạy hành động chống chạy lặp vô hạn (C6 Invariant 4)
 action_counters = {}  # {incident_id: count}
 active_incidents = {}  # {incident_id: diagnosis_dict}
+incidents_lifecycle = {}  # {incident_id: {"status": str, "culprit_service": str, "opened_at": float, "last_alerted_at": float, "alert_count": int, "diagnosis": dict}}
+consecutive_healthy_count = {}  # {service_name: consecutive_healthy_cycles_int}
 emergency_stop_state = {"active": False, "stopped_at": 0, "reason": ""}
 AUTO_REMEDIATION_LIVE_TEST = os.getenv("AUTO_REMEDIATION_LIVE_TEST", "false").lower() == "true"
 last_proactive_alert_time = {}  # {service_name: timestamp} (Chống alert fatigue)
@@ -272,15 +274,36 @@ async def active_metrics_polling_loop():
                     if is_anomalous:
                         logger.warning(f"ML Isolation Forest proactively detected ANOMALY on service: {service}!")
                         anomalous_services.add(service)
+                        consecutive_healthy_count[service] = 0
+                    else:
+                        consecutive_healthy_count[service] = consecutive_healthy_count.get(service, 0) + 1
+                        # 2 consecutive cycles (60s) healthy check -> Auto-Resolve active incidents for service
+                        if consecutive_healthy_count[service] >= 2:
+                            for inc_id, inc_data in list(active_incidents.items()):
+                                if inc_data.get("culprit_service") == service:
+                                    inc_data["status"] = "resolved"
+                                    if inc_id in incidents_lifecycle:
+                                        incidents_lifecycle[inc_id]["status"] = "resolved"
+                                    logger.info(f"[AutoResolve] Service {service} healthy for 2 consecutive cycles (60s). Resolved incident {inc_id}.")
+                                    active_incidents.pop(inc_id, None)
 
-
-                            
-                # Dọn dẹp các proactive warning cũ của các service đã trở lại bình thường
+                # Pre-check active_incidents for 600s timeout: stale vs. expired
+                now_ts = time.time()
                 for inc_id, inc_data in list(active_incidents.items()):
-                    if inc_data.get("status") == "proactive_warning":
+                    alert_time = inc_data.get("alert_time", now_ts)
+                    if now_ts - alert_time >= 600:
                         svc = inc_data.get("culprit_service")
-                        if svc not in anomalous_services:
-                            logger.info(f"Proactive anomaly resolved for service {svc}. Removing {inc_id} from cache.")
+                        if svc in anomalous_services:
+                            inc_data["status"] = "stale"
+                            if inc_id in incidents_lifecycle:
+                                incidents_lifecycle[inc_id]["status"] = "stale"
+                            logger.warning(f"[Lifecycle] Incident {inc_id} ({svc}) timed out after 600s while STILL anomalous -> STALE (recurring).")
+                            active_incidents.pop(inc_id, None)
+                        else:
+                            inc_data["status"] = "expired"
+                            if inc_id in incidents_lifecycle:
+                                incidents_lifecycle[inc_id]["status"] = "expired"
+                            logger.info(f"[Lifecycle] Incident {inc_id} ({svc}) timed out after 600s and telemetry is healthy -> EXPIRED.")
                             active_incidents.pop(inc_id, None)
 
                 # Xóa service đã hồi phục khỏi rolling buffer
@@ -342,17 +365,44 @@ async def active_metrics_polling_loop():
                     for cluster in clusters:
                         service = cluster["culprit_service"]
                         trace_id = cluster["trace_id"]
-                        
-                        # Chống alert fatigue: Giữ 300s (5 phút) Cooldown cho từng Culprit
                         now_ts = time.time()
+
+                        # Check State-based Dedup: If service has an incident pending approval / open / proactive_warning
+                        existing_inc = next((inc for inc in incidents_lifecycle.values() if inc.get("culprit_service") == service and inc.get("status") in ["pending_approval", "open", "proactive_warning"]), None)
+                        if existing_inc:
+                            existing_inc["alert_count"] = existing_inc.get("alert_count", 1) + 1
+                            count = existing_inc["alert_count"]
+                            logger.info(f"[LifecycleDeduP] Service {service} has open incident {existing_inc['incident_id']} in status '{existing_inc['status']}'. Incrementing alert_count to {count}.")
+                            if count % 5 == 0:
+                                reminder_num = count // 5
+                                reminder_msg = f"⚠️ [Reminder #{reminder_num}] {existing_inc['incident_id']} (Service {service} pending approval for {count} polling cycles)"
+                                logger.info(f"[SlackReminder] Dispatching reminder notification: {reminder_msg}")
+                                notifier.send_custom_message(reminder_msg)
+                            continue
+                        
+                        # Cooldown Check: 600s (10 phút) per Culprit Service
                         last_alert_ts = last_proactive_alert_time.get(service, 0)
-                        if now_ts - last_alert_ts < 150:
-                            logger.info(f"Proactive warning for {service} was sent recently. Throttling to prevent alert fatigue (cooldown remaining: {150 - (now_ts - last_alert_ts):.1f}s).")
+                        if now_ts - last_alert_ts < 600:
+                            logger.info(f"Proactive warning for {service} was sent recently. Throttling to prevent alert fatigue (cooldown remaining: {600 - (now_ts - last_alert_ts):.1f}s).")
                         else:
                             last_proactive_alert_time[service] = now_ts
+                            is_recurring = any(inc.get("culprit_service") == service and inc.get("status") == "stale" for inc in incidents_lifecycle.values())
                             incident_id = f"INC-ML-{int(now_ts)}"
+                            if is_recurring:
+                                logger.info(f"[RecurringIncident] Service {service} was previously stale. Tagging new incident {incident_id} as RECURRING.")
                             
                             logger.info(f"Triggering PROACTIVE CMDR Pipeline for {incident_id} (Culprit: {service}, Clustered Services: {cluster['services']}, Trace ID: {trace_id})")
+                            
+                            incidents_lifecycle[incident_id] = {
+                                "incident_id": incident_id,
+                                "status": "pending_approval",
+                                "culprit_service": service,
+                                "opened_at": now_ts,
+                                "last_alerted_at": now_ts,
+                                "alert_count": 1,
+                                "recurring": is_recurring,
+                                "diagnosis": {}
+                            }
                             
                             loop = asyncio.get_running_loop()
                             loop.run_in_executor(
@@ -811,6 +861,19 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
         notifier.send_incident_notification(incident_id, diagnosis)
         return
         
+    # Quality Gate Validation: Suppress unfilled placeholders or low-confidence empty evidence packs
+    analysis_text = diagnosis.get("analysis", "")
+    if "[Template]" in analysis_text or "lỗi '[Template]'" in analysis_text or "[X]" in analysis_text:
+        logger.warning(f"[QualityGate] LLM returned unfilled template for {culprit_service}. Suppressing Slack notification.")
+        active_incidents.pop(incident_id, None)
+        return
+        
+    log_templates = evidence.get("log_templates", [])
+    if not log_templates and diagnosis.get("confidence_score", 0.0) < 0.5:
+        logger.warning(f"[QualityGate] Empty evidence pack with low confidence ({diagnosis.get('confidence_score', 0.0)}) for {culprit_service}. Suppressing Slack notification.")
+        active_incidents.pop(incident_id, None)
+        return
+
     # Ép buộc rủi ro là MEDIUM để tuyệt đối không tự động chạy
     logger.info(f"[PROACTIVE] Action '{proposed_action}' forced to MEDIUM RISK for manual SRE approval.")
     notifier.send_incident_notification(incident_id, diagnosis)
