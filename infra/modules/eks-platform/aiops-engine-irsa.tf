@@ -18,12 +18,21 @@
 //   train_anomaly_model_eks.py head_bucket + upload_file -> cần ListBucket + PutObject
 
 locals {
-  aiops_namespace          = "techx-tf3"
-  aiops_engine_sa          = "aiops-engine"
-  aiops_trainer_sa         = "aiops-trainer"
-  aiops_models_bucket      = "tf3-aiops-models-197826770971"
-  aiops_bedrock_region     = "us-east-1"
-  aiops_bedrock_model_ids  = ["amazon.nova-lite-v1:0", "amazon.nova-micro-v1:0"]
+  aiops_namespace      = "techx-tf3"
+  aiops_engine_sa      = "aiops-engine"
+  aiops_trainer_sa     = "aiops-trainer"
+  aiops_models_bucket  = "tf3-aiops-models-197826770971"
+  aiops_bedrock_region = "us-east-1"
+  // nova-lite/nova-micro: chẩn đoán RCA và judge (BEDROCK_MODEL_ID).
+  // titan-embed-*: llm_diagnostician.py dùng để nhúng vector cho RAG cục bộ; nó thử
+  // lần lượt nhiều model embedding nên phải cấp cả hai, thiếu là "All embedding
+  // models failed" và phần tra playbook chết im lặng.
+  aiops_bedrock_model_ids = [
+    "amazon.nova-lite-v1:0",
+    "amazon.nova-micro-v1:0",
+    "amazon.titan-embed-text-v1",
+    "amazon.titan-embed-text-v2:0",
+  ]
   aiops_knowledge_base_arn = "arn:aws:bedrock:us-east-1:197826770971:knowledge-base/GH3FUCYVOJ"
 }
 
