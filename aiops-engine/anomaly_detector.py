@@ -27,8 +27,11 @@ class AnomalyDetector:
     def download_models_from_s3(self):
         """Tải các model Isolation Forest từ S3 về models/ nếu có."""
         try:
-            # Chỉ chạy khi có biến môi trường AWS
-            if not os.getenv("AWS_ACCESS_KEY_ID"):
+            # Chỉ chạy khi thực sự phân giải được credential.
+            # KHÔNG kiểm bằng os.getenv("AWS_ACCESS_KEY_ID"): dưới IRSA credential đến từ
+            # web identity token file chứ không phải biến môi trường, nên cách kiểm cũ
+            # luôn sai và engine bỏ qua bước tải model (Loaded 0 Isolation Forest models).
+            if boto3.Session().get_credentials() is None:
                 logger.info("No AWS credentials found. Skipping S3 model download.")
                 return
 
@@ -396,7 +399,9 @@ class AnomalyDetector:
         manifest_loaded = False
         
         try:
-            if os.getenv("AWS_ACCESS_KEY_ID"):
+            # Xem ghi chú ở download_models_from_s3: phải để boto3 tự phân giải
+            # credential thì mới chạy được dưới IRSA.
+            if boto3.Session().get_credentials() is not None:
                 s3 = boto3.client("s3")
                 manifest_local_path = os.path.join(self.models_dir, "active_manifest.json")
                 
