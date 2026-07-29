@@ -48,9 +48,12 @@ Chứng minh hệ thống đạt 6 yêu cầu kỹ thuật khắt khe nhất c�
    - Khắc phục lỗi script `trace-provenance.sh` không thể đọc được `docker-reference` do Cosign CLI version 2.4.0 thay đổi cấu trúc trả về.
    - Bỏ qua check annotation dư thừa.
    - Sửa lỗi PR head không khớp bằng cách tối ưu hóa logic kiểm tra hash.
-4. **Enforce Admission Control (PM-127):** 
-   - Chuyển Kyverno Policy `verify-first-party-signatures` từ `Audit` sang `Enforce`.
-   - Dry-run với hàng loạt bộ test (`docs/evidence/mandate-10/pm127/admission-tests/`) để đảm bảo không chặn nhầm image hợp lệ (False Positive) và chặn tuyệt đối image không hợp lệ.
+4. **Enforce Admission Control (PM-127 — CDO02):** 
+   - Chuyển **cả hai** Kyverno Policy từ `Audit` sang `Enforce`, tách làm **hai bước** để cô lập rủi ro:
+     `allow-approved-external-image-digests` trước (PR #537), sau khi ổn định mới tới
+     `verify-first-party-signatures` (PR #540). Nếu có sự cố thì biết ngay do vế nào.
+   - Dry-run với bộ test `docs/evidence/mandate-10/pm127/admission-tests/` — **6 case: 2 ACCEPT + 4 DENY** —
+     để đảm bảo vừa không chặn nhầm image hợp lệ (False Positive) vừa chặn tuyệt đối image không hợp lệ.
 
 ## 4. Quy trình demo mentor (Video Demo 29/07)
 
@@ -83,7 +86,9 @@ Chi tiết thực hành 3 kịch bản lớn đã được quay lại trong vide
 ## 5. Kết quả (Verify sống trước khi ghi vào báo cáo)
 
 Kết quả test thực tế tại Cluster `techx-tf3` cho thấy:
-- Policy `verify-first-party-signatures` đã lọc chính xác và chặn 100% các request vi phạm, trong khi vẫn cho phép các request hợp lệ đi qua.
+- **Cả hai** policy lọc chính xác: chặn 100% request vi phạm, đồng thời **vẫn cho image hợp lệ đi qua**
+  — 30 container first-party và 11 external trong catalog đều chạy bình thường, **0 false-positive**
+  trên pod đang chạy.
 - CI/CD không có điểm nghẽn (bottleneck) không cần thiết nhờ cơ chế tối ưu Job `prepare`.
 
 ## 6. Nghiệm thu
@@ -125,11 +130,12 @@ Kết quả test thực tế tại Cluster `techx-tf3` cho thấy:
 
 ```bash
 # Checkout nhánh hiện tại
-git pull
-git checkout main
+git checkout main && git pull
 
-# Xem Kyverno Policy đã được bật Enforce hay chưa
-kubectl get clusterpolicy verify-first-party-signatures -o yaml
+# Xem CẢ HAI policy đã Enforce và Ready hay chưa
+kubectl get clusterpolicy \
+  verify-first-party-signatures allow-approved-external-image-digests \
+  -o custom-columns=NAME:.metadata.name,ACTION:.spec.validationFailureAction,READY:.status.ready
 
 # Chạy lại test Kịch bản 2
 kubectl apply --dry-run=server -f docs/evidence/mandate-10/rejection-demo/bad-unsigned-image.yaml
@@ -160,5 +166,10 @@ bash scripts/ci/trace-provenance.sh --namespace techx-tf3 --pod $POD_NAME
 
 ## 14. Tài liệu liên quan
 - ADR: `docs/adr/0016-mandate-10-secure-delivery-pipeline.md`
-- Code Script Traceability: `scripts/ci/trace-provenance.sh`
-- Kyverno Policy: `gitops/policies/kyverno/verify-first-party-signatures.yaml`
+- Kyverno Policy (first-party): `gitops/policies/kyverno/verify-first-party-signatures.yaml`
+- Kyverno Policy (external): `gitops/policies/kyverno/allow-approved-external-image-digests.yaml`
+- Catalog image bên thứ ba: `docs/evidence/mandate-10/external-image-allowlist.yaml`
+- CI drift gate cho catalog: `scripts/ci/check-external-image-allowlist-drift.py`
+- Script truy ngược: `scripts/ci/trace-provenance.sh`
+- Bằng chứng PM-127 (CDO02): `docs/evidence/mandate-10/pm127/acceptance-matrix.md`
+- Tổng kết PM-127 cho cả team: `docs/mandate-10-pm127-tong-ket.md`

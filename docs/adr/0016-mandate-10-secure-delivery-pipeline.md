@@ -54,6 +54,7 @@ Mandate 10 đặt ra yêu cầu xây dựng một "Secure Delivery Pipeline" kh�
 
 Quá trình Enforce Cutover đã hoàn tất vào ngày **28-29/07/2026**.
 - Policy `verify-first-party-signatures` đã được đẩy lên `Enforce` thành công trên nhánh `main` và sync tự động qua ArgoCD.
+- Policy `allow-approved-external-image-digests` cũng đã lên `Enforce` (PR #537, trước first-party một bước để cô lập rủi ro). 11/11 image bên thứ ba pin digest tuyệt đối và khớp catalog đã review.
 - Kịch bản chặn CI (Trivy/Semgrep báo đỏ) hoạt động trơn tru, GitHub Branch Protection đã chặn merge thành công.
 - Kịch bản chặn Kubernetes Admission hoạt động chính xác. Các image chưa ký hoặc bị làm giả digest đã bị Kyverno chặn đứng với lỗi `no signatures found` (đã demo với quyền Admin).
 - Script `trace-provenance.sh` trả về kết quả `PASS` cho toàn bộ các trụ bảo mật (Trivy, Cosign, SBOM) và trích xuất thành công `sourceSha`.
