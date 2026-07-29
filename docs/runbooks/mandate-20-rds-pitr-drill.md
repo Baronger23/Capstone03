@@ -1,6 +1,6 @@
 # Mandate 20 runbook - RDS PITR restore drill
 
-Runbook này dùng để chạy restore drill RDS cho Mandate #20 trước mentor/PM.
+Runbook này dùng để chạy restore drill RDS cho Mandate #20 trước mentor/PM hoặc quay video evidence đầy đủ.
 
 **Scope:** CDO02 Reliability/Operations  
 **Source DB:** `techx-tf3-postgres`  
@@ -27,7 +27,18 @@ Expected data loss in probe: 0 row
 - Không repoint app sang DB drill.
 - Không thao tác bảng khách hàng.
 - Chỉ tạo/corrupt marker trong schema `dr_drill`.
-- Không cleanup DB drill trước khi mentor/PM xác nhận evidence đủ.
+- Không cleanup DB drill trước khi mentor/PM xác nhận evidence đủ hoặc video/raw output đã capture đủ.
+
+## 2.1. SQL client path for current drill
+
+RDS là private. Đường thao tác SQL hiện dùng trong video script:
+
+```text
+Docker postgres:17 psql -> host.docker.internal:15432
+localhost:15432 -> SSM bastion -> RDS/private endpoint:5432
+```
+
+Không yêu cầu cài `psql` local; dùng Docker image `postgres:17` làm `psql` client mặc định.
 
 ## 3. Preflight read-only
 
@@ -179,7 +190,7 @@ Trong trường hợp fail, không claim pass. Dừng lại, lưu lỗi, không 
 
 ## 9. Cleanup
 
-Chỉ cleanup sau khi mentor/PM xác nhận evidence đủ:
+Chỉ cleanup sau khi mentor/PM xác nhận evidence đủ hoặc video/raw output đã capture đủ:
 
 ```powershell
 aws rds delete-db-instance `
@@ -223,5 +234,5 @@ RTO measured:
 Production corrupt query:
 Restored DB GOOD query:
 Cleanup result:
-Mentor/PM witness:
+Witness mode: mentor/PM live hoặc recorded video
 ```

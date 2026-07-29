@@ -10,7 +10,7 @@ Mục tiêu là trả lời 3 câu hỏi trước khi claim pass Mandate 20:
 
 1. ADR/runbook hiện đã cover được bao nhiêu phần của directive.
 2. Production thật còn thiếu evidence nào.
-3. CDO02 còn phải làm gì tiếp, phần nào cần CDO01/Security chốt.
+3. CDO02 còn phải làm gì tiếp, phần nào cần Security/delete-authority verdict hoặc accepted risk.
 
 ## 1. Tóm tắt trạng thái hiện tại
 
@@ -19,25 +19,25 @@ Hiện tại CDO02 đã có:
 - ADR chốt hướng `RDS PITR restore drill` làm proof chính.
 - Runbook restore drill an toàn, restore ra DB tách biệt.
 - Evidence index cho Mandate 20.
+- Production baseline cho từng tầng dữ liệu/state.
+- RDS PITR drill record thật: `docs/evidence/mandate-20/rds-pitr-drill-20260729-181943.md`.
 
-Hiện tại CDO02 chưa có:
+Hiện tại CDO02 vẫn còn cần chốt:
 
-- Record restore drill thật với `RTO measured`.
-- Live inventory record cho từng tầng dữ liệu/state.
-- Security verdict về quyền xóa backup/snapshot.
-- Coverage evidence cuối cùng cho các state ngoài RDS.
+- Security/delete-authority verdict về quyền xóa backup/snapshot, hoặc accepted-risk note nếu account còn admin-wide.
+- Coverage/accepted limitation cuối cùng cho các state ngoài RDS.
 
-Kết luận ngắn: trạng thái hiện tại là **ready to execute**, chưa phải **ready to claim pass**.
+Kết luận ngắn: RDS drill đã pass; Mandate 20 overall còn phụ thuộc mentor/PM chấp nhận scope/limitation cho non-RDS stores và delete-authority posture.
 
 ## 2. Đối chiếu directive với artifact đã merge
 
 | Yêu cầu directive | Artifact hiện có | Trạng thái |
 |---|---|---|
 | 1. Không sót store nào trên luồng ra tiền | ADR đã có data-tier commitments và coverage matrix | `Partial` |
-| 2. RPO/RTO rõ ràng, cadence tương xứng | ADR đã ghi target cho RDS, có hướng cho store khác | `Partial` |
-| 3. Point-in-time restore chứng minh được | ADR + runbook đã mô tả PITR restore cho RDS | `Design-ready` |
-| 4. Tested restore drill | Chưa có evidence thật | `Missing` |
-| 5. Backup an toàn, tách quyền xóa | ADR đã nêu dependency CDO01 | `Open dependency` |
+| 2. RPO/RTO rõ ràng, cadence tương xứng | RDS có target và measured result; store khác ghi limitation/strategy | `RDS passed / Non-RDS partial` |
+| 3. Point-in-time restore chứng minh được | RDS PITR drill đã restore về `T_restore` và trả marker GOOD | `Passed for RDS` |
+| 4. Tested restore drill | Evidence record `rds-pitr-drill-20260729-181943.md`, RTO 23.83 phút | `Passed for RDS` |
+| 5. Backup an toàn, tách quyền xóa | ADR đã nêu delete-authority matrix | `Needs enforcement evidence or accepted risk` |
 
 ## 3. Data-tier baseline cần có trước buổi drill
 
@@ -45,18 +45,18 @@ Mandate 20 không cho phép chỉ nhìn mỗi RDS. Trước buổi drill, cần 
 
 | Tầng dữ liệu / state | CDO02 hiện claim gì | Baseline production cần lưu | Trạng thái |
 |---|---|---|---|
-| RDS PostgreSQL `techx-tf3-postgres` | PITR proof chính | backup retention, latest restorable time, deletion protection, encryption, Multi-AZ, restore target window | Chờ capture live |
-| ElastiCache Valkey `techx-tf3-valkey` | Coverage phụ, không phải proof chính | snapshot cadence/retention, encryption, recovery stance cho cart-state | Chờ capture live |
-| MSK Kafka `techx-tf3-kafka` | Replay/reconciliation, không gọi PITR | retention window, encryption, replay/reconciliation path, destructive-control note | Chờ capture live |
-| DynamoDB lock table | Có thể exclude nếu chỉ là Terraform lock | tên bảng, chức năng thực tế, PITR có bật hay exclude có lý do | Chờ verdict |
-| EBS / volume legacy | Không dùng làm proof chính | volume/snapshot ownership hoặc accepted limitation | Chờ verdict |
-| GitOps / IaC state | Covered bằng source-of-truth process nếu team claim | Git baseline, state backend/versioning/Object Lock nếu có, secret reference path | Chờ capture live |
+| RDS PostgreSQL `techx-tf3-postgres` | PITR proof chính | backup retention, latest restorable time, deletion protection, encryption, Multi-AZ, restore target window | Captured + drill passed |
+| ElastiCache Valkey `techx-tf3-valkey` | Coverage phụ, không phải proof chính | snapshot cadence/retention, encryption, recovery stance cho cart-state | Captured as limitation/coverage |
+| MSK Kafka `techx-tf3-kafka` | Replay/reconciliation, không gọi PITR | retention window, encryption, replay/reconciliation path, destructive-control note | Captured as limitation/coverage |
+| DynamoDB lock table | Exclude nếu chỉ là Terraform lock | tên bảng, chức năng thực tế, PITR có bật hay exclude có lý do | Excluded from business-data restore under current evidence |
+| EBS / volume legacy | Không dùng làm proof chính | volume/snapshot ownership hoặc accepted limitation | Accepted limitation / avoid M8-M18 conflict |
+| GitOps / IaC state | Covered bằng source-of-truth process nếu team claim | Git baseline, state backend/versioning/Object Lock nếu có, secret reference path | Captured as source-of-truth/state-backend limitation |
 
 ## 4. Gap còn thiếu để pass theo từng yêu cầu
 
 ### Requirement 1 - Không sót store nào trên luồng ra tiền
 
-ADR đã ghi đủ các store/state cần nói tới, nhưng chưa có một baseline record gom lại production thật cho:
+ADR và production baseline đã ghi đủ các store/state cần nói tới:
 
 - RDS
 - Valkey
@@ -65,16 +65,25 @@ ADR đã ghi đủ các store/state cần nói tới, nhưng chưa có một bas
 - legacy volume/EBS
 - GitOps/IaC state
 
-Phần còn thiếu:
+Phần còn thiếu không phải inventory nền nữa, mà là chốt acceptance:
 
-- chụp inventory production thật cho từng tầng
-- chốt rõ tầng nào `covered`, tầng nào `excluded`, tầng nào `accepted limitation`
+- tầng nào `covered`
+- tầng nào `excluded`
+- tầng nào `accepted limitation`
+- mentor/PM có chấp nhận RDS là proof chính và non-RDS là coverage/limitation hay không
 
 ### Requirement 2 - RPO/RTO và cadence
 
-RDS đã có target cụ thể trong ADR.
+RDS đã có target cụ thể trong ADR và có measured result:
 
-Phần còn thiếu:
+```text
+RDS RPO target: <= 5 phút
+RDS RPO evidence: T_restore cách GOOD 41.248131 giây, restored marker GOOD, 0 row data loss
+RDS RTO target: <= 45 phút
+RDS RTO measured: 23.83 phút
+```
+
+Phần còn thiếu cho non-RDS stores:
 
 - điền cadence/retention production thật của Valkey, MSK, state backend
 - chỉ ra vì sao cadence đó đủ hoặc chưa đủ so với target
@@ -82,22 +91,28 @@ Phần còn thiếu:
 
 ### Requirement 3 - PITR restore
 
-RDS đã đáp ứng về mặt thiết kế.
+RDS đã đáp ứng bằng evidence thật.
 
-Phần còn thiếu:
+Evidence đã có:
 
-- chọn `T_good_commit`, `T_restore`, `T_corrupt_commit` trong buổi drill thật
-- lưu raw output chứng minh restore đúng về thời điểm trước sự cố
+- `T_good_commit_utc`: 2026-07-29T12:02:18.751869Z
+- `T_restore`: 2026-07-29T12:03:00Z
+- `T_corrupt_commit_utc`: 2026-07-29T12:15:18.439171Z
+- RPO evidence: `T_restore` cách GOOD 41.248131 giây, restored marker GOOD, 0 row data loss
+- RTO measured: 23.83 phút
+- Restored DB GOOD query: captured in video/evidence record
 
 ### Requirement 4 - Tested restore drill
 
-Đây là gap lớn nhất hiện tại.
+RDS tested restore drill đã chạy thật.
 
-Phần còn thiếu:
+Evidence:
 
-- chạy thật trước mentor/PM hoặc quay video đầy đủ
-- đo `RTO measured`
-- lưu evidence production corrupt query và restored DB GOOD query
+- `docs/evidence/mandate-20/rds-pitr-drill-20260729-181943.md`
+- 4 video đã quay, Drive links pending
+- RTO `23.83 phút`, trong target `<= 45 phút`
+- Production marker vẫn `CORRUPTED_AFTER_GOOD_TIME`
+- Restored drill DB marker trả `GOOD_BEFORE_CORRUPTION`
 
 ### Requirement 5 - Backup an toàn
 
@@ -108,7 +123,7 @@ Phần còn thiếu:
 - ai được phép xóa backup/snapshot
 - ai không được phép xóa
 - accepted risk nếu account còn admin rộng
-- encryption / delete-permission verdict từ CDO01
+- encryption / delete-permission verdict hoặc accepted-risk note
 
 ## 5. Checklist production baseline cần chụp trước khi drill
 
@@ -162,13 +177,12 @@ Phải có:
 
 ## 6. Việc CDO02 nên làm tiếp ngay
 
-1. Chạy một lượt capture baseline production cho toàn bộ data-tier/state.
-2. Tạo file evidence đầu tiên, ví dụ:
-   `docs/evidence/mandate-20/production-baseline-YYYYMMDD.md`
-3. Sau đó mới chạy restore drill RDS theo runbook.
-4. Khi có raw evidence, cập nhật lại `docs/evidence/mandate-20/README.md`.
+1. Gắn link Drive cho 4 video vào `rds-pitr-drill-20260729-181943.md`.
+2. Cleanup DB drill tạm sau khi team/mentor xác nhận đã lưu đủ evidence.
+3. Chốt accepted limitation hoặc security verdict cho quyền xóa backup/snapshot.
+4. Chốt wording với mentor/PM: RDS drill passed; non-RDS stores là coverage/limitation, không claim PITR như RDS.
 
-## 7. Việc cần CDO01 / Security chốt
+## 7. Việc cần Security/delete-authority chốt
 
 - bảng quyền xóa backup/snapshot
 - verdict cho DynamoDB PITR / exclusion
@@ -177,17 +191,16 @@ Phải có:
 
 ## 8. Kết luận
 
-ADR 0016 và runbook hiện tại đã đưa Mandate 20 từ mức "ý tưởng" lên mức "có hướng chạy thật".
+ADR 0016, runbook, baseline và drill evidence đã đưa Mandate 20 từ mức "có hướng chạy thật" sang "RDS restore drill đã pass".
 
-Để pass theo đúng directive, CDO02 vẫn cần bổ sung 2 lớp evidence:
+CDO02 hiện có:
 
 1. **production baseline cho mọi tầng dữ liệu/state**
-2. **restore drill thật với RTO measured**
+2. **restore drill thật với RPO/RTO measured**
 
-Cho đến khi đủ hai lớp này và có security verdict tương ứng, Mandate 20 nên được xem là:
+Cho đến khi có security/delete-authority verdict tương ứng và mentor/PM chấp nhận scope non-RDS, Mandate 20 nên được xem là:
 
 ```text
-Design accepted
-Execution pending
-Not claimable as Done yet
+RDS restore drill passed
+Overall Done pending accepted scope/limitations for non-RDS stores and delete-authority posture
 ```
