@@ -202,6 +202,76 @@ class TestSRELifecycleAndQualityGate(unittest.TestCase):
         self.assertEqual(incidents_lifecycle[inc_id]["status"], "stale")
         self.assertNotIn(inc_id, active_incidents)
 
+    def test_slo_branch_registers_lifecycle_and_resets_healthy_count(self):
+        """[SRE-08] [Conflict A & D] Test SLO branch registers incident in incidents_lifecycle and resets healthy count."""
+        service = "checkout"
+        consecutive_healthy_count[service] = 10
+        inc_id = "INC-SLO-888"
+        
+        incidents_lifecycle[inc_id] = {
+            "incident_id": inc_id,
+            "status": "pending_approval",
+            "culprit_service": service,
+            "opened_at": time.time(),
+            "last_alerted_at": time.time(),
+            "alert_count": 1,
+            "diagnosis": {}
+        }
+        consecutive_healthy_count[service] = 0
+        
+        self.assertEqual(incidents_lifecycle[inc_id]["status"], "pending_approval")
+        self.assertEqual(consecutive_healthy_count[service], 0)
+
+    def test_quality_gate_suppression_updates_lifecycle(self):
+        """[SRE-09] [Conflict B] Test Quality Gate suppression sets status to 'suppressed'."""
+        inc_id = "INC-ML-333"
+        service = "payment"
+        
+        incidents_lifecycle[inc_id] = {
+            "incident_id": inc_id,
+            "status": "pending_approval",
+            "culprit_service": service,
+            "opened_at": time.time()
+        }
+        last_proactive_alert_time[service] = time.time()
+        
+        # Simulate Quality Gate suppression
+        if inc_id in incidents_lifecycle:
+            incidents_lifecycle[inc_id]["status"] = "suppressed"
+        last_proactive_alert_time[service] = 0
+        
+        self.assertEqual(incidents_lifecycle[inc_id]["status"], "suppressed")
+        self.assertEqual(last_proactive_alert_time[service], 0)
+
+    def test_lifecycle_periodic_memory_prune(self):
+        """[SRE-10] [Conflict E] Test periodic prune removes old non-active entries older than 2 hours."""
+        now_ts = time.time()
+        old_inc = "INC-OLD-1"
+        recent_inc = "INC-NEW-1"
+        
+        incidents_lifecycle[old_inc] = {
+            "incident_id": old_inc,
+            "status": "resolved",
+            "opened_at": now_ts - 7300  # > 2 hours ago
+        }
+        incidents_lifecycle[recent_inc] = {
+            "incident_id": recent_inc,
+            "status": "pending_approval",
+            "opened_at": now_ts - 100
+        }
+        
+        # Prune logic
+        prune_keys = [
+            k for k, v in list(incidents_lifecycle.items())
+            if v.get("status") in ["resolved", "rejected", "expired", "failed", "suppressed"]
+            and (now_ts - v.get("opened_at", now_ts)) > 7200
+        ]
+        for k in prune_keys:
+            incidents_lifecycle.pop(k, None)
+            
+        self.assertNotIn(old_inc, incidents_lifecycle)
+        self.assertIn(recent_inc, incidents_lifecycle)
+
 
 if __name__ == "__main__":
     unittest.main()

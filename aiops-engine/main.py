@@ -174,6 +174,15 @@ async def active_metrics_polling_loop():
             # Không bỏ qua toàn bộ vòng lặp khi 1 service lỗi! Quét từng service độc lập.
             now_ts = time.time()
 
+            # [Conflict E Fix] Periodic prune of incidents_lifecycle (entries > 2 hours in non-active state)
+            prune_keys = [
+                k for k, v in list(incidents_lifecycle.items())
+                if v.get("status") in ["resolved", "rejected", "expired", "failed", "suppressed"]
+                and (now_ts - v.get("opened_at", now_ts)) > 7200
+            ]
+            for k in prune_keys:
+                incidents_lifecycle.pop(k, None)
+
             logger.info("Active Polling Check: checking system SLO via Prometheus...")
             is_breached = detector.check_slo_burn_rate()
             
@@ -227,18 +236,45 @@ async def active_metrics_polling_loop():
                     if culprit_service == "unknown-service":
                         culprit_service = "checkout"  # Fallback mặc định
                         
-                    logger.info(f"Triggering CMDR Pipeline for {incident_id} (Culprit: {culprit_service}, Trace ID: {trace_id})")
-                    
-                    # Chạy luồng chẩn đoán và sửa lỗi bất đồng bộ
-                    loop = asyncio.get_running_loop()
-                    loop.run_in_executor(
-                        None,
-                        process_incident_background,
-                        incident_id,
-                        culprit_service,
-                        trace_id,
-                        time.time()
-                    )
+                    # SLO State-based Dedup Check (Conflict A fix)
+                    existing_inc = next((inc for inc in incidents_lifecycle.values() if inc.get("culprit_service") == culprit_service and inc.get("status") in ["pending_approval", "open", "proactive_warning"]), None)
+                    if existing_inc:
+                        existing_inc["alert_count"] = existing_inc.get("alert_count", 1) + 1
+                        count = existing_inc["alert_count"]
+                        logger.info(f"[SLO LifecycleDeduP] Service {culprit_service} has open incident {existing_inc['incident_id']}. Incrementing alert_count to {count}.")
+                        if count % 5 == 0:
+                            reminder_num = count // 5
+                            reminder_msg = f"⚠️ [Reminder #{reminder_num}] {existing_inc['incident_id']} (Service {culprit_service} pending approval for {count} polling cycles)"
+                            notifier.send_custom_message(reminder_msg)
+                    else:
+                        logger.info(f"Triggering CMDR Pipeline for {incident_id} (Culprit: {culprit_service}, Trace ID: {trace_id})")
+                        incidents_lifecycle[incident_id] = {
+                            "incident_id": incident_id,
+                            "status": "pending_approval",
+                            "culprit_service": culprit_service,
+                            "opened_at": time.time(),
+                            "last_alerted_at": time.time(),
+                            "alert_count": 1,
+                            "diagnosis": {}
+                        }
+                        active_incidents[incident_id] = {
+                            "incident_id": incident_id,
+                            "culprit_service": culprit_service,
+                            "status": "pending_approval",
+                            "created_at": time.time()
+                        }
+                        consecutive_healthy_count[culprit_service] = 0  # Conflict D fix
+                        
+                        # Chạy luồng chẩn đoán và sửa lỗi bất đồng bộ
+                        loop = asyncio.get_running_loop()
+                        loop.run_in_executor(
+                            None,
+                            process_incident_background,
+                            incident_id,
+                            culprit_service,
+                            trace_id,
+                            time.time()
+                        )
             else:
                 # Lớp 2: Quét máy học (Isolation Forest) cho từng dịch vụ chủ động
                 logger.info("SLO is stable. Running ML Isolation Forest proactive scans on core services...")
@@ -875,17 +911,23 @@ def process_proactive_anomaly_background(incident_id: str, culprit_service: str,
         notifier.send_incident_notification(incident_id, diagnosis)
         return
         
-    # Quality Gate Validation: Suppress unfilled placeholders or low-confidence empty evidence packs
+    # Quality Gate Validation: Suppress unfilled placeholders or low-confidence empty evidence packs (Conflict B Fix)
     analysis_text = diagnosis.get("analysis", "")
     if "[Template]" in analysis_text or "lỗi '[Template]'" in analysis_text or "[X]" in analysis_text:
         logger.warning(f"[QualityGate] LLM returned unfilled template for {culprit_service}. Suppressing Slack notification.")
         active_incidents.pop(incident_id, None)
+        if incident_id in incidents_lifecycle:
+            incidents_lifecycle[incident_id]["status"] = "suppressed"
+        last_proactive_alert_time[culprit_service] = 0
         return
         
     log_templates = evidence.get("log_templates", [])
     if not log_templates and diagnosis.get("confidence_score", 0.0) < 0.5:
         logger.warning(f"[QualityGate] Empty evidence pack with low confidence ({diagnosis.get('confidence_score', 0.0)}) for {culprit_service}. Suppressing Slack notification.")
         active_incidents.pop(incident_id, None)
+        if incident_id in incidents_lifecycle:
+            incidents_lifecycle[incident_id]["status"] = "suppressed"
+        last_proactive_alert_time[culprit_service] = 0
         return
 
     # Ép buộc rủi ro là MEDIUM để tuyệt đối không tự động chạy
@@ -903,6 +945,8 @@ def process_incident_promotion_background(incident_id: str):
         return
         
     inc_data["status"] = "active"
+    if incident_id in incidents_lifecycle:
+        incidents_lifecycle[incident_id]["status"] = "pending_approval"  # Conflict C Fix
     evidence = inc_data["evidence"]
     culprit_service = inc_data["culprit_service"]
     
