@@ -866,6 +866,20 @@ components:
         maxSurge: 1
     # Mandate 13 elastic (batch 2): opt-in NodePool flash-sale-spot + hard spread
     # ca hostname va zone (minDomains:2) - pattern da fix o batch 1 (PR #319).
+    #
+    # Tolerate them techx.io/arch=arm64 nhung CO Y KHONG dat nodeSelector techx.io/arch:
+    # pod xep duoc len CA node amd64 lan arm64. Khac product-catalog o
+    # values-mandate13.yaml - cai do ghim cung vao arm64 de lay evidence Graviton.
+    #
+    # Vi sao can: nodepool ARM (PR #588) them taint techx.io/arch=arm64 len 2 trong 4
+    # node elastic. Khong tolerate thi chi con 2 node xep duoc, ma ca hai da co pod san.
+    # Voi maxSurge:1 + maxUnavailable:0 + topologySpread maxSkew:1, pod surge khong con
+    # o hop le nao -> rolling deploy treo Pending. nodeTaintsPolicy khong set (mac dinh
+    # Ignore) nen node ARM VAN bi tinh la domain khi tinh skew du pod khong len duoc.
+    #
+    # An toan vi image product-reviews la multi-arch that: CI build linux/amd64 +
+    # linux/arm64. Da kiem chung ca digest dang live (sha256:35f413f4...) lan digest
+    # candidate (sha256:be5cd78a...) - ca hai deu la OCI image index co du hai platform.
     schedulingRules:
       nodeSelector:
         techx.io/workload: elastic
@@ -873,6 +887,10 @@ components:
         - key: techx.io/workload
           operator: Equal
           value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
           effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1
@@ -891,8 +909,8 @@ components:
               opentelemetry.io/name: product-reviews
     replicas: 2        # đứng sau tính năng AI tóm tắt review
     imageOverride: # CDO02 fix database.py + product_reviews_server.py - xem comment imageOverride đầu components:
-      digest: sha256:35f413f43f8840039383f4fe64440e7f06415c6e5fb70591480451ee84d54067
-      tag: 177d7d1-30382089768-product-reviews
+      digest: sha256:be5cd78ae229ad036f5695c21c1575b2049931133fe19d25180393caaf6db5bc
+      tag: 0bf98e2-30427433465-product-reviews
     resources:
       requests:
         cpu: 150m
