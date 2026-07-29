@@ -32,3 +32,115 @@ components:
           operator: Equal
           value: arm64
           effect: NoSchedule
+  currency:
+    schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+        techx.io/arch: arm64
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule
+  quote:
+    schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+        techx.io/arch: arm64
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule
+  shipping:
+    schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+        techx.io/arch: arm64
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule
+  cart:
+    schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+        techx.io/arch: arm64
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule
+  payment:
+    schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+        techx.io/arch: arm64
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule
+  frontend:
+    schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+        techx.io/arch: arm64
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule
+  frontend-proxy:
+    schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+        techx.io/arch: arm64
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule
+  checkout:
+    schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+        techx.io/arch: arm64
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule

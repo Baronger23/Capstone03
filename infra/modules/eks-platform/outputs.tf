@@ -21,6 +21,10 @@ output "oidc_provider_arn" {
   value = module.eks.oidc_provider_arn
 }
 
+output "eks_kms_key_arn" {
+  value = aws_kms_key.eks.arn
+}
+
 output "cluster_autoscaler_role_arn" {
   value = module.cluster_autoscaler_irsa.iam_role_arn
 }

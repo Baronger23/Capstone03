@@ -4,8 +4,6 @@ metadata:
   name: product-reviews-business-policy
   namespace: techx-tf3
   annotations:
-    mandate-17.techx.io/promotion-blocked: "true"
-    mandate-17.techx.io/promotion-blocker: "deploy and verify the dedicated egress proxy, then pass allowed and denied runtime connectivity tests"
     mandate-17.techx.io/public-egress-control: "direct-public-egress-blocked; uses product-reviews-egress-proxy"
     mandate-17.techx.io/service-clusterip-evidence: "2026-07-29:kube-dns=172.20.0.10,product-catalog=172.20.145.185,flagd=172.20.213.30,otel-gateway=172.20.117.175,product-reviews-egress-proxy=172.20.255.151"
     mandate-17.techx.io/managed-datastore-evidence: "2026-07-29:rds=10.0.47.14:5432,valkey=10.0.26.118:6379;stable-peers=10.0.0.0/20,10.0.16.0/20,10.0.32.0/20"
