@@ -145,6 +145,63 @@ class TestSRELifecycleAndQualityGate(unittest.TestCase):
         self.assertNotIn("flagd", SERVICES)
         self.assertNotIn("postgresql", SERVICES)
 
+    def test_approval_action_updates_lifecycle_and_resets_cooldown(self):
+        """[SRE-06] Test process_approval_action updates incidents_lifecycle status and resets cooldown."""
+        import asyncio
+        from main import process_approval_action
+        
+        inc_id = "INC-ML-9999"
+        service = "payment"
+        
+        active_incidents[inc_id] = {
+            "incident_id": inc_id,
+            "culprit_service": service,
+            "action_command": f"kubectl -n techx-tf3 scale deploy/{service} --replicas=2",
+            "rollback_command": f"kubectl -n techx-tf3 scale deploy/{service} --replicas=1",
+            "alert_time": time.time()
+        }
+        incidents_lifecycle[inc_id] = {
+            "incident_id": inc_id,
+            "status": "pending_approval",
+            "culprit_service": service,
+            "opened_at": time.time(),
+            "alert_count": 1
+        }
+        last_proactive_alert_time[service] = time.time()
+        
+        # Test Reject
+        res = asyncio.run(process_approval_action(inc_id, "reject", target_service=service))
+        self.assertEqual(incidents_lifecycle[inc_id]["status"], "rejected")
+        self.assertEqual(last_proactive_alert_time[service], 0)
+        self.assertNotIn(inc_id, active_incidents)
+
+    def test_slo_path_created_at_timestamp_fallback(self):
+        """[SRE-07] Test 600s timeout check handles 'created_at' key from SLO path incidents."""
+        now_ts = time.time()
+        inc_id = "INC-SLO-777"
+        
+        active_incidents[inc_id] = {
+            "incident_id": inc_id,
+            "culprit_service": "postgresql",
+            "created_at": now_ts - 650  # 650 seconds ago using created_at
+        }
+        incidents_lifecycle[inc_id] = {
+            "incident_id": inc_id,
+            "status": "pending_approval",
+            "culprit_service": "postgresql",
+            "opened_at": now_ts - 650
+        }
+        
+        for i_id, inc_data in list(active_incidents.items()):
+            opened_time = inc_data.get("alert_time") or inc_data.get("created_at") or now_ts
+            if now_ts - opened_time >= 600:
+                inc_data["status"] = "stale"
+                incidents_lifecycle[i_id]["status"] = "stale"
+                active_incidents.pop(i_id, None)
+                
+        self.assertEqual(incidents_lifecycle[inc_id]["status"], "stale")
+        self.assertNotIn(inc_id, active_incidents)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -284,16 +284,30 @@ async def active_metrics_polling_loop():
                                     inc_data["status"] = "resolved"
                                     if inc_id in incidents_lifecycle:
                                         incidents_lifecycle[inc_id]["status"] = "resolved"
+                                    last_proactive_alert_time[service] = 0
                                     logger.info(f"[AutoResolve] Service {service} healthy for 2 consecutive cycles (60s). Resolved incident {inc_id}.")
                                     active_incidents.pop(inc_id, None)
 
-                # Pre-check active_incidents for 600s timeout: stale vs. expired
+                # Pre-check active_incidents for 600s timeout: stale vs. expired (Conflict 2 & 4 fix)
                 now_ts = time.time()
                 for inc_id, inc_data in list(active_incidents.items()):
-                    alert_time = inc_data.get("alert_time", now_ts)
-                    if now_ts - alert_time >= 600:
+                    opened_time = inc_data.get("alert_time") or inc_data.get("created_at") or now_ts
+                    if now_ts - opened_time >= 600:
                         svc = inc_data.get("culprit_service")
-                        if svc in anomalous_services:
+                        is_still_anomalous = (svc in anomalous_services)
+                        if not is_still_anomalous and svc:
+                            try:
+                                df_f = detector.extract_features_realtime(svc)
+                                if not df_f.empty and len(df_f) >= 1:
+                                    feature_cols = ["rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "client_error_rate", "kafka_lag", "error_ratio", "client_error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth", "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"]
+                                    f_list = df_f[feature_cols].iloc[-1].tolist()
+                                    is_still_anomalous = detector.check_infra_anomaly(svc, f_list)
+                                else:
+                                    is_still_anomalous = detector.check_infra_anomaly(svc, [])
+                            except Exception:
+                                is_still_anomalous = False
+
+                        if is_still_anomalous:
                             inc_data["status"] = "stale"
                             if inc_id in incidents_lifecycle:
                                 incidents_lifecycle[inc_id]["status"] = "stale"
@@ -1108,20 +1122,30 @@ async def process_approval_action(incident_id: str, value: str, target_service: 
                 logger.warning(f"Remediation verification failed. Triggering rollback for {incident_id}...")
                 rollback_success = handler.trigger_rollback(rollback_command)
                 active_incidents.pop(incident_id, None)
+                if incident_id in incidents_lifecycle:
+                    incidents_lifecycle[incident_id]["status"] = "failed"
                 if not rollback_success:
                     # 4. Rollback thất bại -> Escalate báo động SRE
                     handler.escalate(incident_id, culprit_service, proposed_action)
                     return {"text": f"🚨 KHẨN CẤP: Lệnh sửa lỗi đã chạy nhưng hệ thống không phục hồi, và quá trình Rollback cũng thất bại! Đã báo động cho đội SRE on-call."}
                 return {"text": "⚠️ Cảnh báo: Lệnh sửa lỗi chạy thất bại. Hệ thống đã được tự động Rollback về trạng thái cũ an toàn."}
             active_incidents.pop(incident_id, None)
+            if incident_id in incidents_lifecycle:
+                incidents_lifecycle[incident_id]["status"] = "resolved"
+            last_proactive_alert_time[culprit_service] = 0
             return {"text": "✅ Thành công: Lệnh khắc phục đã được duyệt và thực thi thành công. Hệ thống đã phục hồi hoàn toàn."}
         else:
             active_incidents.pop(incident_id, None)
+            if incident_id in incidents_lifecycle:
+                incidents_lifecycle[incident_id]["status"] = "failed"
             return {"text": "❌ Lỗi: Không thể thực thi lệnh K8s API. Vui lòng kiểm tra logs hệ thống."}
             
     elif value == "reject":
         logger.info(f"Incident {incident_id} remediation rejected by operator.")
         active_incidents.pop(incident_id, None)
+        if incident_id in incidents_lifecycle:
+            incidents_lifecycle[incident_id]["status"] = "rejected"
+        last_proactive_alert_time[culprit_service] = 0
         return {"text": "❌ Hành động khắc phục đã bị từ chối. Hệ thống chuyển sang chế độ Manual Mode."}
         
     return {"status": "ok"}
