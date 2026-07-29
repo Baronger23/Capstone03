@@ -1,0 +1,38 @@
+# ArgoCD Application cho Job schema migration một lần của product-reviews Sprint 3.
+# App-of-apps (techx-corp-bootstrap watch gitops/apps) tự nhặt file này — không cần
+# thao tác tay nào để đăng ký.
+#
+# Vì sao là Application riêng chứ không phải mấy cách kia:
+#   - gitops/jobs/product-reviews-schema-migration.yaml (bản cũ) nằm NGOÀI ArgoCD và
+#     phải `kubectl apply` tay. Change này yêu cầu không apply tay.
+#   - PreSync hook trên Application techx-corp sẽ chạy lại mỗi lần sync CẢ chart, tức
+#     là migration chạy lại ở mọi lần sync không liên quan.
+#   - Bỏ vào gitops/infrastructure/ thì selfHeal:true sẽ đánh nhau với một Job đã
+#     Complete (PodTemplate của Job là immutable).
+#
+# selfHeal TẮT có chủ đích, prune BẬT — xem comment ở syncPolicy.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: product-reviews-schema-migration
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel.git'
+    targetRevision: main
+    path: gitops/jobs/product-reviews-sprint3
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: techx-tf3
+  syncPolicy:
+    automated:
+      # prune: true. Ban đầu để false vì sợ "xoá rồi tạo lại -> migration chạy lặp",
+      # nhưng lo ngại đó thực ra là về ttlSecondsAfterFinished chứ không phải prune:
+      # Job còn trong git thì prune KHÔNG đụng tới nó, chỉ khi file rời khỏi git mới dọn
+      # — đúng thứ ta cần. Để false thì Job cũ đã Failed nằm lại vĩnh viễn và giữ
+      # Application ở Degraded, che mất sự cố thật sau này (đã xảy ra với …-sprint3).
+      prune: true
+      # selfHeal: PodTemplate của Job là immutable. selfHeal sẽ liên tục thử patch một
+      # resource không thể patch và giữ Application ở trạng thái OutOfSync vĩnh viễn.
+      selfHeal: false
