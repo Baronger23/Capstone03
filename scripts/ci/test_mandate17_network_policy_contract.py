@@ -863,10 +863,12 @@ def test_aiops_active_policies_force_public_https_through_fqdn_proxy():
         "10.0.32.0/20",
     }
     assert ports_for_egress_destination(engine, "aiops-egress-proxy") == {3128}
+    assert ipblocks_for_egress_port(engine, 3128) == {"172.20.255.150/32"}
 
     assert ipblocks_for_egress_port(trainer, 53) == {"172.20.0.10/32"}
     assert ipblocks_for_egress_port(trainer, 9090) == {"172.20.123.8/32"}
     assert ports_for_egress_destination(trainer, "aiops-egress-proxy") == {3128}
+    assert ipblocks_for_egress_port(trainer, 3128) == {"172.20.255.150/32"}
 
     proxy_annotations = proxy["metadata"]["annotations"]
     assert proxy_annotations["mandate-17.techx.io/public-egress-control"] == (

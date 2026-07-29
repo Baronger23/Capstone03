@@ -273,6 +273,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
   type: ClusterIP
+  clusterIP: 172.20.255.150
   selector:
     app.kubernetes.io/name: aiops-egress-proxy
   ports:

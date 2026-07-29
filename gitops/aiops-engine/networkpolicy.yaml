@@ -65,7 +65,7 @@ metadata:
   namespace: techx-tf3
   annotations:
     argocd.argoproj.io/sync-wave: "2"
-    mandate-17.techx.io/service-clusterip-evidence: "2026-07-29:kube-dns=172.20.0.10,prometheus=172.20.123.8,jaeger=172.20.93.48,opensearch=172.20.106.195,kubernetes.default.svc=172.20.0.1"
+    mandate-17.techx.io/service-clusterip-evidence: "2026-07-29:kube-dns=172.20.0.10,prometheus=172.20.123.8,jaeger=172.20.93.48,opensearch=172.20.106.195,kubernetes.default.svc=172.20.0.1,aiops-egress-proxy=172.20.255.150"
     mandate-17.techx.io/kubernetes-api-dependency: "verified:remediation_handler executes kubectl dry-run/live remediation"
     mandate-17.techx.io/kubernetes-api-endpoint-evidence: "2026-07-29:10.0.10.183,10.0.42.215"
     mandate-17.techx.io/public-egress-control: "direct-public-egress-blocked; uses aiops-egress-proxy"
@@ -136,6 +136,8 @@ spec:
             matchLabels:
               app.kubernetes.io/name: aiops-egress-proxy
               app.kubernetes.io/component: aiops-egress-proxy
+        - ipBlock:
+            cidr: 172.20.255.150/32
       ports:
         - protocol: TCP
           port: 3128
@@ -147,7 +149,7 @@ metadata:
   namespace: techx-tf3
   annotations:
     argocd.argoproj.io/sync-wave: "2"
-    mandate-17.techx.io/service-clusterip-evidence: "2026-07-29:kube-dns=172.20.0.10,prometheus=172.20.123.8"
+    mandate-17.techx.io/service-clusterip-evidence: "2026-07-29:kube-dns=172.20.0.10,prometheus=172.20.123.8,aiops-egress-proxy=172.20.255.150"
     mandate-17.techx.io/public-egress-control: "direct-public-egress-blocked; uses aiops-egress-proxy"
 spec:
   podSelector:
@@ -187,6 +189,8 @@ spec:
             matchLabels:
               app.kubernetes.io/name: aiops-egress-proxy
               app.kubernetes.io/component: aiops-egress-proxy
+        - ipBlock:
+            cidr: 172.20.255.150/32
       ports:
         - protocol: TCP
           port: 3128
