@@ -49,3 +49,7 @@ def test_shipping_uses_arm_elastic_scheduling_contract():
 
 def test_cart_uses_arm_elastic_scheduling_contract():
     assert scheduling_rules("cart") == scheduling_rules("product-reviews")
+
+
+def test_payment_uses_arm_elastic_scheduling_contract():
+    assert scheduling_rules("payment") == scheduling_rules("product-reviews")
