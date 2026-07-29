@@ -5,6 +5,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 ARM_VALUES = REPO / "phase3 - information/deploy/values-mandate13.yaml"
+PROD_VALUES = REPO / "phase3 - information/deploy/values-prod.yaml"
 OTEL_GATEWAY_TEMPLATE = (
     REPO / "phase3 - information/techx-corp-chart/templates/otel-gateway.yaml"
 )
@@ -79,3 +80,14 @@ def test_otel_gateway_uses_arm_elastic_scheduling_contract():
           operator: Equal
           value: arm64
           effect: NoSchedule""" in template
+
+
+def test_otel_node_agent_tolerates_arm_nodes():
+    values = yaml.safe_load(PROD_VALUES.read_text(encoding="utf-8"))
+
+    assert {
+        "key": "techx.io/arch",
+        "operator": "Equal",
+        "value": "arm64",
+        "effect": "NoSchedule",
+    } in values["otel-node-agent"]["tolerations"]
