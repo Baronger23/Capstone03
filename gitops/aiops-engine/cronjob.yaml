@@ -4,7 +4,8 @@
 # allowlist external image. activeDeadlineSeconds tăng lên 3h vì hai lần chạy gần
 # nhất bị kill ở mốc 1h trước khi hoàn tất training.
 #
-# AWS_ACCESS_KEY_ID/SECRET cũng là static key — gỡ ở Phase 2 cùng lúc với Deployment.
+# Credential AWS: qua IRSA (ServiceAccount aiops-trainer -> role
+# techx-corp-tf3-aiops-trainer, chỉ S3 model). Static key đã gỡ khỏi env.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -51,16 +52,9 @@ spec:
               value: tf3-aiops-models-197826770971
             - name: AWS_REGION
               value: ap-southeast-1
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: aiops-engine-secrets
-                  key: aws-access-key-id
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: aiops-engine-secrets
-                  key: aws-secret-access-key
+            # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY đã GỠ — xem lý do ở
+            # deployment.yaml. Credential đến từ ServiceAccount aiops-trainer ->
+            # role techx-corp-tf3-aiops-trainer (chỉ S3 model, không Bedrock).
             resources:
               requests:
                 cpu: 500m
