@@ -19,7 +19,34 @@ Cột "chốt" theo cột "Khuyến nghị CDO" của chính tài liệu đó.
 | AIO-04 | Bảng rỗng lúc go-live có chấp nhận được không? | **Có, chấp nhận cold start.** Bảng rỗng → mọi request rơi Tier-3, đúng bằng hành vi production hiện tại, nên không có regression. Tự ấm dần khi các câu hỏi summary được duyệt. Không pre-warm. | Hành vi mặc định của `resolve_fallback_summary()` |
 | AIO-05 | Kết quả nào được phép persist? | **Chỉ canonical summary đã duyệt.** Yêu cầu `judge_status ∈ {approved, deterministic}` **và** `is_summary_request` **và** không phải fallback/unverified/out-of-scope/no-info. | `_should_persist` |
 | AIO-06 | `rating_distribution` có contract gì? | **Giữ cột, LUÔN NULL ở Release A.** Không caller nào ghi. Giữ cột để khỏi phải migrate lần nữa khi AIO chốt format; format là quyết định mở. | `migration.sql` Step 5, ghi rõ trong comment |
-| AIO-07 | Retention/refresh của summary? | **Theo version, không theo thời gian.** Row cũ không bao giờ được phục vụ (AIO-03) và bị ghi đè ở lần summary duyệt kế tiếp. Không TTL, không xoá → **không cấp `DELETE`** cho `otelu`. | `migration.sql` Step 6 |
+| AIO-07 | Retention/refresh của summary? | **Theo version, không theo thời gian.** Row cũ không bao giờ được phục vụ (AIO-03) và bị ghi đè ở lần summary duyệt kế tiếp. Không TTL, không xoá. ⚠️ Xem đính chính bên dưới về `DELETE`. | `migration.sql` Step 6 |
+
+> ### ⚠️ Đính chính AIO-07 — "không cấp DELETE" KHÔNG được thực thi
+>
+> Bản ghi đầu tiên của tài liệu này khẳng định `otelu` không có quyền `DELETE` trên
+> `reviews.product_summaries`. **Sai.** Job migration lần đầu (`…-sprint3`) đã phơi ra sự thật:
+>
+> ```
+> [OK ] table owner: ('otelu',)
+> [BAD] otelu grants: ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+> ```
+>
+> Migration chạy bằng chính DSN của app (`current_user=otelu`), nên bảng nó tạo **thuộc sở hữu của
+> `otelu`** — và owner trong PostgreSQL mặc nhiên có toàn quyền. `GRANT SELECT, INSERT, UPDATE` ở
+> Step 6 vô hại nhưng **không thu hẹp được gì**.
+>
+> Đây không phải vấn đề mới sinh: `reviews.fidelity_audit` trên `main` cũng do `otelu` tạo và có
+> `GRANT SELECT, INSERT, UPDATE ... TO otelu` y hệt — cũng là no-op từ trước tới nay.
+>
+> **Trạng thái thật:** runtime chỉ *dùng* `SELECT` + `INSERT ... ON CONFLICT DO UPDATE` (kiểm được
+> bằng code + test), nhưng ở tầng quyền DB thì nó có thể làm nhiều hơn thế.
+>
+> **Muốn least privilege thật** thì bảng phải do một role admin sở hữu rồi mới `GRANT` cho `otelu` —
+> cần credential riêng cho migration, ngoài phạm vi change này. **Ghi nhận OPEN**, áp dụng cho cả
+> `product_summaries` lẫn `fidelity_audit`.
+>
+> Job verify đã sửa cho đúng: kiểm `{SELECT, INSERT, UPDATE} ⊆ privileges` (điều kiện thật sự cần),
+> và chỉ kiểm "không có DELETE" khi bảng **không** do `otelu` sở hữu.
 
 ## 6.2 Contract của S6 isolation
 
