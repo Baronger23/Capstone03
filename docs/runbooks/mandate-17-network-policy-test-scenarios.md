@@ -77,9 +77,13 @@ A bare Pod is not valid AWS VPC CNI enforcement evidence.
 | 31-recommendation | recommendation | product-catalog | 8080 | ALLOW | Catalog lookup |
 | 31-recommendation | checkout | recommendation | 8080 | DENY | Unapproved access |
 | 32-product-reviews | frontend | product-reviews | 3551 | ALLOW | Reviews |
+| 32-product-reviews | shopping-copilot | product-reviews | 3551 | ALLOW | Copilot review lookup |
 | 32-product-reviews | product-reviews | product-catalog | 8080 | ALLOW | Catalog lookup |
+| 32-product-reviews | product-reviews | RDS PostgreSQL | 5432 | ALLOW | Review datastore |
+| 32-product-reviews | product-reviews | ElastiCache Valkey | 6379 | ALLOW | AI cache, trace, and fallback state |
 | 32-product-reviews | checkout | product-reviews | 3551 | DENY | Unapproved access |
-| 32-product-reviews | product-reviews | Bedrock | 443 | ALLOW | Approved HTTPS exception |
+| 32-product-reviews | product-reviews | Bedrock | 443 | ALLOW | Allowed through the dedicated FQDN proxy |
+| 32-product-reviews | product-reviews | example.com | 443 | DENY | Proxy must return an explicit CONNECT 403 |
 
 ## Checkout and payment scenario
 

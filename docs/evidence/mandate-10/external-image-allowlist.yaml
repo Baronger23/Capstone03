@@ -30,7 +30,7 @@ images:
     reviewCadence: quarterly
     lastReviewed: 2026-07-28
   - image: envoyproxy/envoy:v1.34.10@sha256:3343a698c1bdfdbb174f1bd907dea789d728692f4f99a943e3e6f0bc5ef6513f
-    component: aiops-egress-proxy
+    component: aiops-egress-proxy, product-reviews-egress-proxy
     owner: TF3 Platform
     source: reviewed-registry-resolution
     reviewCadence: monthly
