@@ -6,6 +6,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 SPOT = REPO / "gitops/karpenter/spot-nodepool.yaml"
 FALLBACK = REPO / "gitops/karpenter/ondemand-fallback-nodepool.yaml"
+TEST_WORKFLOW = REPO / ".github/workflows/test-image-bump.yml"
 
 
 def documents(path: Path) -> list[dict]:
@@ -33,15 +34,42 @@ def requirements(nodepool: dict) -> dict[str, dict]:
 def test_arm_spot_uses_c_m_with_bounded_four_node_capacity():
     nodepool = resource(SPOT, "NodePool", "flash-sale-spot-arm64")
     requirement = requirements(nodepool)
+    taint = taints(nodepool)
 
     assert nodepool["spec"]["weight"] == 100
+    assert nodepool["spec"]["template"]["metadata"]["labels"] == {
+        "techx.io/capacity": "spot",
+        "techx.io/workload": "elastic",
+        "techx.io/arch": "arm64",
+    }
+    assert taint["techx.io/workload"] == {
+        "key": "techx.io/workload",
+        "value": "elastic",
+        "effect": "NoSchedule",
+    }
+    assert taint["techx.io/arch"] == {
+        "key": "techx.io/arch",
+        "value": "arm64",
+        "effect": "NoSchedule",
+    }
     assert requirement["kubernetes.io/arch"]["values"] == ["arm64"]
+    assert requirement["kubernetes.io/os"]["values"] == ["linux"]
     assert requirement["karpenter.sh/capacity-type"]["values"] == ["spot"]
     assert requirement["karpenter.k8s.aws/instance-category"]["values"] == [
         "c",
         "m",
     ]
+    assert requirement["karpenter.k8s.aws/instance-generation"] == {
+        "key": "karpenter.k8s.aws/instance-generation",
+        "operator": "Gt",
+        "values": ["2"],
+    }
     assert requirement["karpenter.k8s.aws/instance-cpu"]["values"] == ["2", "4"]
+    assert requirement["karpenter.k8s.aws/instance-memory"] == {
+        "key": "karpenter.k8s.aws/instance-memory",
+        "operator": "Gt",
+        "values": ["3072"],
+    }
     assert nodepool["spec"]["limits"] == {
         "cpu": "16",
         "memory": "64Gi",
@@ -55,7 +83,17 @@ def test_existing_amd_spot_cap_stays_at_two_nodes():
 
     assert requirement["kubernetes.io/arch"]["values"] == ["amd64"]
     assert requirement["karpenter.sh/capacity-type"]["values"] == ["spot"]
-    assert nodepool["spec"]["limits"]["nodes"] == 2
+    assert requirement["karpenter.k8s.aws/instance-category"]["values"] == [
+        "c",
+        "m",
+        "r",
+        "t",
+    ]
+    assert nodepool["spec"]["limits"] == {
+        "cpu": "12",
+        "memory": "48Gi",
+        "nodes": 2,
+    }
 
 
 def taints(nodepool: dict) -> dict[str, dict]:
@@ -89,12 +127,23 @@ def test_arm_ondemand_fallback_matches_arm_scheduling_contract():
         "effect": "NoSchedule",
     }
     assert requirement["kubernetes.io/arch"]["values"] == ["arm64"]
+    assert requirement["kubernetes.io/os"]["values"] == ["linux"]
     assert requirement["karpenter.sh/capacity-type"]["values"] == ["on-demand"]
     assert requirement["karpenter.k8s.aws/instance-category"]["values"] == [
         "c",
         "m",
     ]
+    assert requirement["karpenter.k8s.aws/instance-generation"] == {
+        "key": "karpenter.k8s.aws/instance-generation",
+        "operator": "Gt",
+        "values": ["2"],
+    }
     assert requirement["karpenter.k8s.aws/instance-cpu"]["values"] == ["2", "4"]
+    assert requirement["karpenter.k8s.aws/instance-memory"] == {
+        "key": "karpenter.k8s.aws/instance-memory",
+        "operator": "Gt",
+        "values": ["3072"],
+    }
     assert nodepool["spec"]["template"]["spec"]["nodeClassRef"]["name"] == (
         "elastic-ondemand-fallback-arm64"
     )
@@ -131,4 +180,21 @@ def test_existing_amd_fallback_cap_stays_at_two_nodes():
 
     assert requirement["kubernetes.io/arch"]["values"] == ["amd64"]
     assert requirement["karpenter.sh/capacity-type"]["values"] == ["on-demand"]
-    assert nodepool["spec"]["limits"]["nodes"] == 2
+    assert requirement["karpenter.k8s.aws/instance-category"]["values"] == [
+        "c",
+        "m",
+        "r",
+        "t",
+    ]
+    assert nodepool["spec"]["limits"] == {
+        "cpu": "4",
+        "memory": "16Gi",
+        "nodes": 2,
+    }
+
+
+def test_nodepool_manifest_changes_trigger_contract_suite():
+    workflow = yaml.safe_load(TEST_WORKFLOW.read_text(encoding="utf-8"))
+    paths = workflow["on"]["pull_request"]["paths"]
+
+    assert "gitops/karpenter/**" in paths

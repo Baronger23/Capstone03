@@ -14,7 +14,8 @@ Chuẩn hóa capacity ARM để các service multi-arch có thể được chuy�
 Graviton mà vẫn giữ:
 
 - ARM Spot là lựa chọn chính để tối ưu chi phí;
-- ARM On-Demand là cold fallback khi Spot không cấp được capacity;
+- ARM On-Demand là pool fallback có preference thấp hơn Spot; weight giảm xác
+  suất chọn fallback nhưng không phải cơ chế failover tuyệt đối;
 - giới hạn node rõ ràng để không scale ngoài kiểm soát;
 - rollback độc lập với từng đợt chuyển service;
 - SLO hiện tại: browse/cart `>= 99.5%`, checkout `>= 99%`, storefront p95
@@ -37,8 +38,9 @@ Snapshot live read-only ngày 2026-07-29, Argo CD revision
   On-Demand fallback.
 
 Karpenter provision theo pod `Unschedulable`, resource requests và scheduling
-constraints. `spec.limits` là trần, không phải desired count; tăng cap không tự
-tạo node.
+constraints. `spec.limits` là giới hạn vận hành, không phải desired count; tăng
+cap không tự tạo node. Việc kiểm tra limits có eventual consistency nên rapid
+scale-out vẫn cần theo dõi NodeClaim thay vì coi cap là hard billing boundary.
 
 Tài liệu tham chiếu:
 
@@ -160,7 +162,9 @@ EC2NodeClass:
   `techx.io/arch: arm64`;
 - dùng NodeClass riêng để EC2 cost attribution không bị gắn nhầm là Spot.
 
-Fallback không có min/desired node. Trạng thái bình thường phải là 0 node.
+Fallback không có min/desired node. Operational target sau khi tải ổn định và
+qua cửa sổ consolidation là 0 node, nhưng đây không phải invariant được
+Karpenter hoặc kube-scheduler đảm bảo.
 
 ### Workload contract cho các PR sau
 
@@ -181,9 +185,11 @@ tolerations:
     effect: NoSchedule
 ```
 
-Không hard-pin service vào Spot hay On-Demand. Weight của hai ARM NodePool quyết
-định preference; scheduler/Karpenter được phép dùng fallback khi Spot không đáp
-ứng.
+Không hard-pin service vào Spot hay On-Demand. Weight chỉ bias lựa chọn NodePool
+khi Karpenter provision capacity mới; kube-scheduler không đọc weight và có thể
+đặt pod lên fallback node đang tồn tại. Vì vậy fallback node count phải được
+theo dõi như một operational target, không được dùng weight để claim Spot-first
+tuyệt đối.
 
 ## Thứ tự delivery
 
@@ -214,9 +220,10 @@ capacity với lỗi runtime architecture.
 - Argo applications liên quan `Synced/Healthy` tại đúng revision merge;
 - `flash-sale-spot-arm64` Ready với cap 4;
 - `elastic-ondemand-fallback-arm64` Ready;
-- ARM fallback có 0 node khi không có pod ARM Pending;
-- hai node ARM Spot hiện tại vẫn Ready hoặc được thay tuần tự an toàn nếu
-  Karpenter đánh dấu Drift;
+- sau ít nhất một cửa sổ consolidation với tải ổn định, ARM fallback đạt target
+  0 node; nếu không, phải ghi nhận nguyên nhân và chưa chuyển critical service;
+- hai node ARM Spot `c6g.large` hiện tại vẫn Ready; chúng còn thỏa requirement
+  `c/m`, nên thay đổi này không được kỳ vọng tạo Drift;
 - `product-catalog` vẫn 2/2 Ready;
 - không có critical pod Pending, OOMKilled hoặc restart bất thường;
 - SLO/customer path không xấu đi.
@@ -225,12 +232,14 @@ capacity với lỗi runtime architecture.
 
 | Rủi ro | Kiểm soát |
 |---|---|
-| Thay requirements làm NodeClaim hiện tại bị Drift | Hai node đang là `c6g.large`, vẫn thỏa `c/m`; theo dõi Drift và chỉ chấp nhận thay tuần tự |
-| ARM Spot thiếu capacity | Cold fallback ARM On-Demand weight thấp hơn |
-| Fallback tồn tại sau khi hết tải | Consolidation `WhenEmptyOrUnderutilized` sau `10m` |
+| Unexpected Drift hoặc NodeClaim churn | Hai node `c6g.large` vẫn thỏa `c/m`; monitor và coi Drift/churn do PR là no-go để điều tra |
+| ARM Spot thiếu capacity | ARM On-Demand có weight thấp hơn và capacity cap riêng |
+| Fallback được chọn dù Spot còn khả dụng | Weight là preference, không guarantee; theo dõi NodeClaim/capacity type và chặn critical migration nếu fallback không về target |
+| Fallback tồn tại sau khi hết tải | Consolidation `WhenEmptyOrUnderutilized` sau `10m`; xác minh live thay vì suy ra từ YAML |
 | Hard topology spread tạo thêm node | Giữ cap rõ ràng; đánh giá per-service trong PR migration |
 | Pool quá hẹp làm giảm Spot diversity | Cho cả `c/m`, nhiều generation, 2/4 CPU và nhiều AZ |
-| Chi phí vượt kiểm soát | ARM Spot cap 4, ARM fallback cap 2; fallback steady-state 0 |
+| Chi phí vượt kiểm soát | ARM Spot cap 4, ARM fallback cap 2; fallback 0 là target cần đo |
+| Rapid provisioning tạm vượt limits | Theo dõi NodeClaim/capacity type và AWS budget; không coi `spec.limits` là hard billing boundary |
 
 ## Rollback
 
@@ -250,7 +259,8 @@ Không rollback bằng patch/delete trực tiếp trên production.
 - chỉ hai file manifest Karpenter và test liên quan bị thay đổi ngoài design
   spec;
 - ARM Spot có cap 4 và chỉ dùng `c/m`;
-- ARM On-Demand fallback có cap 2, weight thấp và scale được về 0;
+- ARM On-Demand fallback có cap 2, weight thấp và có evidence live cho target
+  scale-down về 0 trước khi migrate critical service;
 - AMD capacity giữ nguyên;
 - không service nào bị chuyển architecture trong PR;
 - live verification sau merge không có regression.

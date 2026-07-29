@@ -4,7 +4,7 @@
 
 **Goal:** Tăng ARM Spot lên tối đa 4 node `c/m` và bổ sung ARM On-Demand cold fallback tối đa 2 node mà chưa chuyển thêm service sang ARM.
 
-**Architecture:** Giữ hai NodePool ARM độc lập nhưng dùng cùng scheduling contract `techx.io/workload=elastic` và `techx.io/arch=arm64`. Spot có weight `100`; On-Demand fallback có weight `10`, NodeClass/tag riêng và không có desired/min node nên steady state là 0.
+**Architecture:** Giữ hai NodePool ARM độc lập nhưng dùng cùng scheduling contract `techx.io/workload=elastic` và `techx.io/arch=arm64`. Spot có weight `100`; On-Demand fallback có weight `10`, NodeClass/tag riêng và không có desired/min node. Weight chỉ bias Karpenter khi provision, không ràng buộc kube-scheduler; fallback 0 node là operational target phải xác minh live.
 
 **Tech Stack:** Karpenter `karpenter.sh/v1`, AWS provider `karpenter.k8s.aws/v1`, YAML, PyYAML, pytest, Argo CD directory source.
 
@@ -16,6 +16,10 @@
 - Không thay đổi `flagd`, OpenFeature, `/flagservice` hoặc `envoy.filters.http.fault`.
 - ARM Spot: `arm64`, Spot, weight `100`, category `c/m`, CPU `2/4`, generation `>2`, memory `>3072Mi`, cap `4 nodes / 16 CPU / 64Gi`.
 - ARM On-Demand fallback: `arm64`, On-Demand, weight `10`, category `c/m`, CPU `2/4`, generation `>2`, memory `>3072Mi`, cap `2 nodes / 8 CPU / 32Gi`.
+- Sau một cửa sổ consolidation với tải ổn định, ARM fallback target là 0 node;
+  đây không phải invariant được weight đảm bảo.
+- `spec.limits` không phải desired count hoặc hard billing boundary; monitor
+  NodeClaim vì rapid provisioning có thể tạm vượt limits do eventual consistency.
 - Giữ AMI ARM AL2023 đã pin: `ami-038711df7b713297d`.
 - Production mutation chỉ qua merge PR và Argo CD; các bước trước merge chỉ được read-only hoặc server dry-run.
 - Thiết kế nguồn: `docs/superpowers/specs/2026-07-29-arm-nodepool-foundation-design.md`.
@@ -27,7 +31,10 @@
 - Create `scripts/ci/test_arm_nodepool_contract.py`: contract test cho ARM Spot, ARM fallback và scope guard AMD.
 - Modify `gitops/karpenter/spot-nodepool.yaml`: thu hẹp ARM Spot về `c/m`, nâng cap lên 4 node.
 - Modify `gitops/karpenter/ondemand-fallback-nodepool.yaml`: thêm ARM On-Demand NodePool và EC2NodeClass riêng.
-- Existing `.github/workflows/build-push-ecr.yml` and `.github/workflows/test-image-bump.yml`: không sửa; cả hai đã collect/run toàn bộ `scripts/ci`.
+- Modify `.github/workflows/test-image-bump.yml`: trigger contract suite cho mọi
+  thay đổi `gitops/karpenter/**`.
+- Existing `.github/workflows/build-push-ecr.yml`: không sửa; workflow đã
+  collect/run toàn bộ `scripts/ci`.
 
 ### Task 1: ARM Spot contract và cap
 
@@ -407,7 +414,86 @@ git add scripts/ci/test_arm_nodepool_contract.py \
 git commit -m "feat: add ARM on-demand fallback"
 ```
 
-### Task 3: Full verification và PR readiness
+### Task 3: Review remediation — durable CI trigger
+
+**Files:**
+
+- Modify: `scripts/ci/test_arm_nodepool_contract.py`
+- Modify: `.github/workflows/test-image-bump.yml:4-10`
+
+**Interfaces:**
+
+- Consumes: NodePool contract suite từ Task 1–2.
+- Produces: mọi PR chỉ sửa `gitops/karpenter/**` cũng chạy contract suite.
+
+- [ ] **Step 1: Viết failing test cho workflow trigger**
+
+Thêm constant và test:
+
+```python
+TEST_WORKFLOW = REPO / ".github/workflows/test-image-bump.yml"
+
+
+def test_nodepool_manifest_changes_trigger_contract_suite():
+    workflow = yaml.safe_load(TEST_WORKFLOW.read_text(encoding="utf-8"))
+    paths = workflow["on"]["pull_request"]["paths"]
+
+    assert "gitops/karpenter/**" in paths
+```
+
+- [ ] **Step 2: Chạy targeted test và xác nhận RED**
+
+Run:
+
+```bash
+python -m pytest -q scripts/ci/test_arm_nodepool_contract.py
+```
+
+Expected: `1 failed, 5 passed`; failure cho biết
+`gitops/karpenter/**` chưa nằm trong workflow paths.
+
+- [ ] **Step 3: Nối manifest path vào workflow**
+
+Trong `.github/workflows/test-image-bump.yml` thêm:
+
+```yaml
+      - "gitops/karpenter/**"
+```
+
+đứng cạnh `scripts/ci/**`, không đổi job permissions hoặc steps.
+
+- [ ] **Step 4: Chạy targeted test và xác nhận GREEN**
+
+Run:
+
+```bash
+python -m pytest -q scripts/ci/test_arm_nodepool_contract.py
+```
+
+Expected: `6 passed`.
+
+- [ ] **Step 5: Sửa claim weight/fallback trong spec và plan**
+
+Ghi rõ:
+
+- weight chỉ bias Karpenter khi provision NodeClaim mới;
+- kube-scheduler có thể dùng fallback node đang tồn tại;
+- fallback 0 node là operational target cần live verification, không phải
+  invariant;
+- nếu fallback không về target sau một cửa sổ consolidation thì chưa migrate
+  critical service.
+
+- [ ] **Step 6: Commit reviewer remediation**
+
+```bash
+git add .github/workflows/test-image-bump.yml \
+  scripts/ci/test_arm_nodepool_contract.py \
+  docs/superpowers/specs/2026-07-29-arm-nodepool-foundation-design.md \
+  docs/superpowers/plans/2026-07-29-arm-nodepool-foundation.md
+git commit -m "test: run nodepool contracts on manifest changes"
+```
+
+### Task 4: Full verification và PR readiness
 
 **Files:**
 
@@ -415,7 +501,7 @@ git commit -m "feat: add ARM on-demand fallback"
 
 **Interfaces:**
 
-- Consumes: hai commit implementation từ Task 1–2.
+- Consumes: ba commit implementation/review remediation từ Task 1–3.
 - Produces: evidence local/server dry-run để mở PR; không mutation production.
 
 - [ ] **Step 1: Chạy targeted contract**
@@ -426,7 +512,7 @@ Run:
 python -m pytest -q scripts/ci/test_arm_nodepool_contract.py
 ```
 
-Expected: `5 passed`.
+Expected: `6 passed`.
 
 - [ ] **Step 2: Chạy CI Python suite giống workflow**
 
@@ -437,7 +523,8 @@ python -m pytest --collect-only -q scripts/ci
 python -m pytest -q scripts/ci
 ```
 
-Expected: collection và toàn bộ suite pass; không error/warning mới do thay đổi này.
+Expected: `320 tests collected`, sau đó `318 passed, 2 skipped`; không
+error/warning mới do thay đổi này.
 
 - [ ] **Step 3: Kiểm tra identity và tunnel trước server dry-run**
 
@@ -484,6 +571,7 @@ git status --short --branch
 Expected changed files:
 
 ```text
+.github/workflows/test-image-bump.yml
 docs/superpowers/plans/2026-07-29-arm-nodepool-foundation.md
 docs/superpowers/specs/2026-07-29-arm-nodepool-foundation-design.md
 gitops/karpenter/ondemand-fallback-nodepool.yaml
@@ -501,8 +589,9 @@ Xác nhận trong PR description:
 
 - thay đổi chỉ là capacity maximum, không phải desired count;
 - chưa migrate service;
-- ARM fallback steady-state phải là 0;
-- risk: ARM Spot NodePool requirement change có thể tạo Drift;
+- ARM fallback 0 node là operational target, không phải guarantee của weight;
+- current `c6g.large` vẫn thỏa `c/m`, nên PR không được kỳ vọng tạo Drift;
+- `spec.limits` giảm blast radius nhưng không phải hard billing boundary;
 - rollback bằng revert PR qua GitOps;
 - post-merge gates: Argo `Synced/Healthy`, cả hai ARM NodePool Ready,
   `product-catalog` 2/2, không Pending/churn bất thường.
