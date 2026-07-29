@@ -88,3 +88,17 @@ components:
           operator: Equal
           value: arm64
           effect: NoSchedule
+  payment:
+    schedulingRules:
+      nodeSelector:
+        techx.io/workload: elastic
+        techx.io/arch: arm64
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule
