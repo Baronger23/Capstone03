@@ -57,3 +57,7 @@ def test_payment_uses_arm_elastic_scheduling_contract():
 
 def test_frontend_uses_arm_elastic_scheduling_contract():
     assert scheduling_rules("frontend") == scheduling_rules("product-reviews")
+
+
+def test_frontend_proxy_uses_arm_elastic_scheduling_contract():
+    assert scheduling_rules("frontend-proxy") == scheduling_rules("product-reviews")
