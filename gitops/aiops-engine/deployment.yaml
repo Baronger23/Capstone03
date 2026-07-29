@@ -1,9 +1,10 @@
 # Deployment aiops-engine (AIO02). Adopt vào ArgoCD 2026-07-28 — nội dung khớp
 # nguyên trạng live state để sync đầu tiên không recreate pod.
 #
-# CHƯA sửa ở Phase 1, có chủ đích:
-#   - AWS_ACCESS_KEY_ID/SECRET vẫn lấy từ secret (static key của aio2-admin-team).
-#     Gỡ ở Phase 2 SAU khi IRSA role tf3-aiops-engine-irsa dựng xong trong Terraform.
+# Credential AWS: qua IRSA (ServiceAccount aiops-engine -> role
+# techx-corp-tf3-aiops-engine). Static key của aio2-admin-team đã gỡ khỏi env.
+#
+# CHƯA sửa, có chủ đích:
 #   - imagePullPolicy vẫn Always để giữ nguyên runtime behavior đã adopt.
 #   - annotation kubectl.kubernetes.io/restartedAt nằm trong pod template: xoá nó
 #     sẽ đổi pod-template-hash và làm pod restart. Giữ nguyên.
@@ -49,8 +50,8 @@ spec:
       containers:
       - name: engine
         # First-party signed/SBOM-attested image from build-push-ecr run
-        # 30384952378, source 94bad5a0cc8b4e69e585c2010de3367d08657241.
-        image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:94bad5a-30384952378-aiops-engine@sha256:7eb0b5120232a10266be897de53279dc6d5041f812829fd7a9e732ebd0726954
+        # 30391640750, source 0cd7b98d3342c3af87bace47f584b9ebc6931eea.
+        image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:6f5d440-30415515350-aiops-engine@sha256:91fa5e1e28e0cf4e0ac0df1769370f66a143ab0f7129e7fff13f68ead93d9f22
         imagePullPolicy: Always
         ports:
         - name: http-metrics
@@ -71,18 +72,12 @@ spec:
               name: aiops-engine-secrets
               key: slack-webhook-url
               optional: true
-        - name: AWS_ACCESS_KEY_ID
-          valueFrom:
-            secretKeyRef:
-              name: aiops-engine-secrets
-              key: aws-access-key-id
-              optional: true
-        - name: AWS_SECRET_ACCESS_KEY
-          valueFrom:
-            secretKeyRef:
-              name: aiops-engine-secrets
-              key: aws-secret-access-key
-              optional: true
+        # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY đã GỠ có chủ đích.
+        # Chúng lấy static key của IAM user aio2-admin-team (AdministratorAccess) từ
+        # Secret, và env var đè lên IRSA trong chuỗi credential provider của SDK — nên
+        # chừng nào còn 2 dòng đó thì IRSA có cũng vô nghĩa.
+        # Credential giờ đến từ ServiceAccount aiops-engine -> role
+        # techx-corp-tf3-aiops-engine (infra/modules/eks-platform/aiops-engine-irsa.tf).
         - name: AWS_DEFAULT_REGION
           value: ap-southeast-1
         - name: BEDROCK_AWS_REGION
