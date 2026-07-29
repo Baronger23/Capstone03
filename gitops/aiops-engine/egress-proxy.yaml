@@ -29,6 +29,8 @@ data:
                   typed_config:
                     "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                     stat_prefix: aiops_egress_proxy
+                    upgrade_configs:
+                      - upgrade_type: CONNECT
                     route_config:
                       name: aiops_egress_proxy_route
                       virtual_hosts:
