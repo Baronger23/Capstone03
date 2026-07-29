@@ -45,15 +45,19 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          # !!! PHẢI THAY TRƯỚC KHI MERGE !!!
-          # Digest candidate của product-reviews lấy từ bot image-bump PR (PR-D) sinh ra
-          # sau khi PR-B merge. Digest đó chứa migration.sql có Step 5/6 — digest đang
-          # live trên production KHÔNG có, chạy nó sẽ không tạo được product_summaries.
+          # Digest candidate từ bot image-bump PR #593 (tag 0bf98e2-30427433465-product-reviews),
+          # build từ commit merge của PR #590. Đây là digest ĐẦU TIÊN chứa migration.sql có
+          # Step 5/6; digest đang live trên production (sha256:35f413f4…) KHÔNG có, chạy nó
+          # sẽ không tạo được reviews.product_summaries.
+          #
+          # Đã kiểm chứng: manifest là OCI image index có cả linux/amd64 và linux/arm64;
+          # Trivy pre+post-push HIGH/CRITICAL sạch; Cosign verify "Verified OK"
+          # (CI run 30427433465).
           #
           # Digest-pinned theo PM-101 supply-chain gate, không bao giờ dùng floating tag.
           # Job này chỉ ĐỌC migration.sql ra khỏi image; nó không đặt image lên Deployment,
-          # nên chạy Job KHÔNG deploy code mới.
-          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp@sha256:REPLACE_WITH_CANDIDATE_DIGEST_FROM_IMAGE_BUMP_PR
+          # nên chạy Job KHÔNG deploy code mới. PR #593 vẫn phải CHƯA merge khi Job chạy.
+          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp@sha256:be5cd78ae229ad036f5695c21c1575b2049931133fe19d25180393caaf6db5bc
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
