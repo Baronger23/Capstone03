@@ -609,9 +609,18 @@ def test_product_reviews_uses_a_dedicated_least_privilege_fqdn_proxy():
     assert overrides["HTTPS_PROXY"]["value"] == proxy_url
     assert overrides["https_proxy"]["value"] == proxy_url
     assert overrides["NO_PROXY"]["value"] == overrides["no_proxy"]["value"]
-    assert ".svc.cluster.local" in overrides["NO_PROXY"]["value"]
+    no_proxy = set(overrides["NO_PROXY"]["value"].split(","))
+    assert {"product-catalog", "flagd", "otel-gateway"} <= no_proxy
+    assert ".svc.cluster.local" in no_proxy
     assert "techx-tf3-postgres" in overrides["NO_PROXY"]["value"]
     assert "techx-tf3-valkey" in overrides["NO_PROXY"]["value"]
+    no_grpc_proxy = set(overrides["no_grpc_proxy"]["value"].split(","))
+    assert {"product-catalog", "flagd", "otel-gateway"} <= no_grpc_proxy
+    assert {
+        "product-catalog.techx-tf3.svc.cluster.local",
+        "flagd.techx-tf3.svc.cluster.local",
+        "otel-gateway.techx-tf3.svc.cluster.local",
+    } <= no_grpc_proxy
 
     assert "kind: PodDisruptionBudget" in template
     assert "minAvailable: 1" in template
