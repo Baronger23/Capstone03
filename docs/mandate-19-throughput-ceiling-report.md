@@ -140,8 +140,9 @@ Các thay đổi code/config cho phần nâng trần gồm:
 Load shedding dùng `local_ratelimit` của Envoy:
 
 - `filter_enabled: 100`
-- `filter_enforced: 0` ở giai đoạn shadow
-- chuyển enforce theo từng stage riêng sau khi shadow metrics xác nhận đúng
+- `filter_enforced: 100` cho browse sau khi đã hoàn tất shadow/route gates
+- global fallback vẫn `LOCAL_RATE_LIMIT_ENFORCED_PERCENT=0` để protected routes
+  không bị shed bởi bucket dùng chung
 
 ### 4.3. Nguyên tắc rollout an toàn
 
@@ -212,13 +213,138 @@ After run chỉ hợp lệ nếu giữ đúng cùng hạ tầng và cùng profil
 
 ### 6.2. Kịch bản breakpoint after
 
-Chạy tăng tải theo stage giống protocol before:
+Chạy tăng tải theo stage giống protocol before. Không thay đổi node pool,
+image digest, workload mix hoặc thời lượng stage giữa before và after.
 
-1. Warm-up ở tải thấp để xác nhận hệ ổn định.
-2. Tăng từng stage với cùng transaction mix.
-3. Giữ mỗi stage đủ lâu để lấy exact-window metrics.
-4. Ghi highest passing stage và failing stage.
-5. Khi breakpoint xuất hiện, dừng tăng tải, hạ tải và quan sát recovery.
+#### 6.2.1. Chuẩn bị cửa sổ test và snapshot
+
+```bash
+export NS=techx-tf3
+export RUN_ID=mandate19-after-$(date -u +%Y%m%dT%H%M%SZ)
+export OUT="docs/evidence/mandate-19/$RUN_ID"
+mkdir -p "$OUT"
+
+kubectl -n "$NS" get nodes -o wide | tee "$OUT/nodes-before.txt"
+kubectl -n "$NS" get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+  | sort | sha256sum | tee "$OUT/node-set-before.sha256"
+kubectl -n "$NS" get hpa -o yaml | tee "$OUT/hpa-before.yaml"
+kubectl -n "$NS" get deploy frontend frontend-proxy -o yaml \
+  | tee "$OUT/frontend-deploy-before.yaml"
+kubectl -n "$NS" top nodes | tee "$OUT/node-usage-before.txt"
+kubectl -n "$NS" top pods | tee "$OUT/pod-usage-before.txt"
+```
+
+Ghi lại Git SHA, image digest, số node Ready, allocatable CPU và replica hiện
+tại. Nếu node-set thay đổi trong lúc benchmark thì đánh dấu run không hợp lệ.
+
+#### 6.2.2. Xác nhận route và enforcement trước khi bắn tải
+
+Lấy endpoint public của storefront vào biến `BASE_URL`. Không dùng endpoint
+admin Envoy cho traffic người dùng.
+
+```bash
+export BASE_URL="https://<storefront-public-host>"
+
+for path in /api/checkout /api/cart /api/products/OLJCESPC7Z / /api/products; do
+  echo "=== $path ==="
+  curl -sS -D - -o /dev/null "$BASE_URL$path" \
+    | grep -Ei 'HTTP/|x-techx-load-shed|x-envoy-ratelimited'
+done
+
+kubectl -n "$NS" get deploy frontend-proxy \
+  -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+  | grep -E 'BROWSE_RATE_LIMIT_(ENABLED|ENFORCED)_PERCENT'
+```
+
+Kỳ vọng sau khi rollout config mới: `ENABLED=100`, `ENFORCED=100`; protected
+routes không trả 429 ở tải bình thường.
+
+#### 6.2.3. Tăng tải breakpoint theo từng stage
+
+Dùng đúng Locust file và transaction mix đã dùng cho before. Chạy warm-up
+30 giây trước mỗi stage, sau đó giữ stage tối thiểu 5 phút. Ví dụ với
+Locust CLI:
+
+```bash
+export LOCUSTFILE="locustfile.py"
+export HOST="$BASE_URL"
+
+# warm-up
+locust -f "$LOCUSTFILE" --headless --host "$HOST" \
+  -u 20 -r 5 -t 30s --csv="$OUT/warmup"
+
+# breakpoint stages; chỉ chuyển stage khi stage trước đạt gate
+for users in 50 100 150 200 250 300 328 350 375 410; do
+  locust -f "$LOCUSTFILE" --headless --host "$HOST" \
+    -u "$users" -r 10 -t 5m --csv="$OUT/users-$users" \
+    --html="$OUT/users-$users.html"
+done
+```
+
+Nếu load generator dùng URL khác hoặc task file khác, thay `LOCUSTFILE` và
+`HOST`, nhưng không thay đổi các stage/transaction mix khi so sánh. Stage đạt
+SLO phải có checkout success >=99%, checkout p99 trong SLO, 5xx/timeout không
+tăng bất thường, không OOM/restart/pending. Stage đầu tiên vi phạm một gate là
+failing stage; stage đạt cuối cùng là highest passing stage.
+
+Trong từng stage, chạy song song các snapshot sau:
+
+```bash
+kubectl -n "$NS" get hpa | tee "$OUT/hpa-$users.txt"
+kubectl top nodes | tee "$OUT/node-usage-$users.txt"
+kubectl -n "$NS" top pods | tee "$OUT/pod-usage-$users.txt"
+kubectl -n "$NS" get pods -o wide | tee "$OUT/pods-$users.txt"
+```
+
+Lấy RPS, p95/p99, lỗi theo endpoint từ Locust CSV/HTML và dashboard
+Prometheus cùng đúng 5 phút của stage. Tính:
+
+```text
+requests_per_node = served_rps / count(Ready nodes)
+```
+
+#### 6.2.4. Demo graceful degradation khi vượt trần
+
+Sau khi xác định highest passing stage, giữ tải cao hơn stage đó ít nhất
+5 phút (ví dụ 410 users). Đồng thời gửi request lặp để chứng minh route:
+
+```bash
+for i in $(seq 1 100); do
+  curl -sS -D - -o /dev/null "$BASE_URL/" \
+    | grep -Ei 'HTTP/|x-techx-load-shed|x-envoy-ratelimited'
+done | tee "$OUT/browse-429-sample.txt"
+
+for path in /api/checkout /api/cart /api/products/OLJCESPC7Z; do
+  for i in $(seq 1 50); do
+    curl -sS -D - -o /dev/null "$BASE_URL$path"
+  done | grep -Ei 'HTTP/|x-techx-load-shed|x-envoy-ratelimited' \
+    | tee "$OUT/protected-${path//\//_}-sample.txt"
+done
+```
+
+Kỳ vọng: browse (`/`, `/api/products`) có `HTTP/1.1 429`,
+`x-techx-load-shed: browse`, `x-envoy-ratelimited: true`; checkout, cart và
+product detail không có 429, checkout success vẫn >=99%, hệ thống không
+CrashLoop/OOM/Pending bất thường.
+
+#### 6.2.5. Envoy counters và recovery
+
+```bash
+PROXY_POD=$(kubectl -n "$NS" get pod \
+  -l app.kubernetes.io/component=frontend-proxy \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl -n "$NS" exec "$PROXY_POD" -c frontend-proxy -- \
+  wget -qO- localhost:10000/stats \
+  | grep -E 'browse_rate_limiter|local_rate_limiter' \
+  | tee "$OUT/envoy-counters.txt"
+
+kubectl -n "$NS" get pods -o wide | tee "$OUT/pods-after-load.txt"
+kubectl -n "$NS" get events --sort-by=.lastTimestamp | tail -n 80 \
+  | tee "$OUT/events-after-load.txt"
+```
+
+Hạ tải về 0 trong 5 phút, xác nhận p99/error/replica trở về baseline và
+không có restart mới. Chỉ sau bước recovery mới kết luận run hợp lệ.
 
 ### 6.3. Kịch bản graceful degradation
 
