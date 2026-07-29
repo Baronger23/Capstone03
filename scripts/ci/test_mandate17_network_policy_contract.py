@@ -106,9 +106,9 @@ EXPECTED_EGRESS_COMPONENTS = {
 }
 
 # 06-cloudflared.yaml left this set once its egress was narrowed from 0.0.0.0/0 to the
-# published Cloudflare ranges, so it is now promotable like any other policy.
+# published Cloudflare ranges. 07-aiops-engine.yaml left this set once public HTTPS
+# was forced through the reviewed Envoy forward proxy instead of direct pod egress.
 PUBLIC_EGRESS_FILES = {
-    "07-aiops-engine.yaml",
     "32-product-reviews.yaml",
 }
 
@@ -137,6 +137,16 @@ def load_active_policy(filename, name):
         ):
             return document
     raise AssertionError(f"{name} was not found in active {filename}")
+
+
+def load_policy_from_file(path, name):
+    for document in load_documents(path):
+        if (
+            document.get("kind") == "NetworkPolicy"
+            and document.get("metadata", {}).get("name") == name
+        ):
+            return document
+    raise AssertionError(f"{name} was not found in {path}")
 
 
 def ingress_ports_from_source(policy, source):
@@ -780,15 +790,27 @@ def test_public_egress_is_blocked_from_promotion_and_never_active():
         assert annotations.get("mandate-17.techx.io/promotion-blocked") == "true"
         assert annotations.get("mandate-17.techx.io/promotion-blocker")
 
-    for path in INFRA.glob("*.yaml"):
+    allowed_active_public = {
+        (
+            REPO / "gitops/aiops-engine/networkpolicy.yaml",
+            "aiops-egress-proxy-policy",
+        )
+    }
+
+    for path in list(INFRA.glob("*.yaml")) + [
+        REPO / "gitops/aiops-engine/networkpolicy.yaml"
+    ]:
         for document in load_documents(path):
             if document.get("kind") == "NetworkPolicy":
+                identity = (path, document.get("metadata", {}).get("name"))
+                if identity in allowed_active_public:
+                    continue
                 assert not contains_public_cidr(document), (
                     f"active policy {path.name} must not allow 0.0.0.0/0"
                 )
 
 
-def test_ad_is_the_clusterip_canary_and_aiops_api_use_is_unverified():
+def test_ad_is_the_clusterip_canary_and_aiops_api_use_is_verified():
     ad = load_policy("14-ad.yaml")
     ad_annotations = ad["metadata"]["annotations"]
     assert ad_annotations["mandate-17.techx.io/rollout-role"] == "first-canary"
@@ -803,9 +825,56 @@ def test_ad_is_the_clusterip_canary_and_aiops_api_use_is_unverified():
     assert ipblocks_for_egress_port(ad, 8013) == {"172.20.213.30/32"}
     assert ipblocks_for_egress_port(ad, 4318) == {"172.20.117.175/32"}
     aiops_annotations = load_policy("07-aiops-engine.yaml")["metadata"]["annotations"]
-    assert aiops_annotations["mandate-17.techx.io/kubernetes-api-dependency"] == (
-        "unverified"
+    assert aiops_annotations["mandate-17.techx.io/kubernetes-api-dependency"].startswith(
+        "verified:"
     )
+
+
+def test_aiops_active_policies_force_public_https_through_fqdn_proxy():
+    policies = REPO / "gitops/aiops-engine/networkpolicy.yaml"
+    proxy = load_policy_from_file(policies, "aiops-egress-proxy-policy")
+    engine = load_policy_from_file(policies, "aiops-engine-platform-policy")
+    trainer = load_policy_from_file(policies, "aiops-trainer-platform-policy")
+
+    assert proxy["spec"]["podSelector"]["matchLabels"] == {
+        "app.kubernetes.io/name": "aiops-egress-proxy"
+    }
+    assert engine["spec"]["podSelector"]["matchLabels"] == {
+        "app.kubernetes.io/name": "aiops-engine"
+    }
+    assert trainer["spec"]["podSelector"]["matchLabels"] == {
+        "app": "aiops-engine",
+        "component": "trainer",
+    }
+
+    assert contains_public_cidr(proxy)
+    assert not contains_public_cidr(engine)
+    assert not contains_public_cidr(trainer)
+    assert ipblocks_for_egress_port(proxy, 443) == {"0.0.0.0/0"}
+
+    assert ipblocks_for_egress_port(engine, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(engine, 9090) == {"172.20.123.8/32"}
+    assert ipblocks_for_egress_port(engine, 16686) == {"172.20.93.48/32"}
+    assert ipblocks_for_egress_port(engine, 9200) == {"172.20.106.195/32"}
+    assert ipblocks_for_egress_port(engine, 443) == {
+        "172.20.0.1/32",
+        "10.0.0.0/20",
+        "10.0.16.0/20",
+        "10.0.32.0/20",
+    }
+    assert ports_for_egress_destination(engine, "aiops-egress-proxy") == {3128}
+
+    assert ipblocks_for_egress_port(trainer, 53) == {"172.20.0.10/32"}
+    assert ipblocks_for_egress_port(trainer, 9090) == {"172.20.123.8/32"}
+    assert ports_for_egress_destination(trainer, "aiops-egress-proxy") == {3128}
+
+    proxy_annotations = proxy["metadata"]["annotations"]
+    assert proxy_annotations["mandate-17.techx.io/public-egress-control"] == (
+        "envoy-forward-proxy-fqdn-rbac"
+    )
+    assert "bedrock-runtime.us-east-1.amazonaws.com:443" in proxy_annotations[
+        "mandate-17.techx.io/allowed-external-authorities"
+    ]
 
 
 def test_default_deny_is_empty_and_marked_last():
