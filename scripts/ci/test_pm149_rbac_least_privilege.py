@@ -373,6 +373,37 @@ def test_pm149_diff_does_not_touch_flagd_or_unrelated_infrastructure():
     }
     if changed & pm176_paths:
         pm149_content.discard("phase3 - information/techx-corp-chart/values.yaml")
+    # Mandate 17 adds a dedicated Product Reviews egress proxy through the
+    # shared chart values and schema. Treat those two shared files as PM-149
+    # content only when the PR also changes something outside the reviewed
+    # proxy scope. The subset check keeps this exception fail-closed.
+    product_reviews_proxy_paths = {
+        "docs/evidence/mandate-10/external-image-allowlist.yaml",
+        "docs/runbooks/mandate-17-network-policy-test-scenarios.md",
+        "gitops/infrastructure/network-policy-staged/32-product-reviews.yaml",
+        "gitops/infrastructure/network-policy-staged/README.md",
+        "phase3 - information/deploy/values-aio-llm.yaml",
+        "phase3 - information/techx-corp-chart/values.schema.json",
+        "phase3 - information/techx-corp-chart/values.yaml",
+        "phase3 - information/techx-corp-chart/templates/product-reviews-egress-proxy.yaml",
+        "scripts/ci/test_mandate17_network_policy_contract.py",
+        "scripts/ci/test_pm149_rbac_least_privilege.py",
+        "scripts/network-policy/mandate-17-connectivity-test.sh",
+    }
+    product_reviews_proxy_markers = {
+        "gitops/infrastructure/network-policy-staged/32-product-reviews.yaml",
+        "phase3 - information/techx-corp-chart/templates/product-reviews-egress-proxy.yaml",
+    }
+    if (
+        changed <= product_reviews_proxy_paths
+        and changed & product_reviews_proxy_markers
+    ):
+        pm149_content.difference_update(
+            {
+                "phase3 - information/techx-corp-chart/values.yaml",
+                "phase3 - information/techx-corp-chart/values.schema.json",
+            }
+        )
     # T10 intentionally reuses the component-scoped ServiceAccount contract
     # introduced by PM-149. Do not classify those shared chart edits as a new
     # PM-149 content PR; T10 has its own focused regression contract.
