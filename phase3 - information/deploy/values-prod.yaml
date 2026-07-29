@@ -866,6 +866,9 @@ components:
         maxSurge: 1
     # Mandate 13 elastic (batch 2): opt-in NodePool flash-sale-spot + hard spread
     # ca hostname va zone (minDomains:2) - pattern da fix o batch 1 (PR #319).
+    # Scheduling ARM cua product-reviews do values-mandate13.yaml quyet dinh (file #4,
+    # load SAU file nay nen no thang, va tolerations la list -> bi THAY THE hoan toan).
+    # Dung them toleration techx.io/arch o day: no se khong bao gio toi duoc output.
     schedulingRules:
       nodeSelector:
         techx.io/workload: elastic
@@ -891,8 +894,8 @@ components:
               opentelemetry.io/name: product-reviews
     replicas: 2        # đứng sau tính năng AI tóm tắt review
     imageOverride: # CDO02 fix database.py + product_reviews_server.py - xem comment imageOverride đầu components:
-      digest: sha256:35f413f43f8840039383f4fe64440e7f06415c6e5fb70591480451ee84d54067
-      tag: 177d7d1-30382089768-product-reviews
+      digest: sha256:be5cd78ae229ad036f5695c21c1575b2049931133fe19d25180393caaf6db5bc
+      tag: 0bf98e2-30427433465-product-reviews
     resources:
       requests:
         cpu: 150m
@@ -1442,12 +1445,10 @@ components:
       failureThreshold: 3
     replicas: 2        # cổng vào DUY NHẤT (Envoy) — SPOF của toàn hệ thống
     imageOverride: # mandate-01: gỡ route Envoy - xem comment imageOverride đầu components:
-      digest: sha256:3067e404dceb58eb4eb4c50fe13c7206866867c7cf83987196c116e1390ef269
-      tag: ae6ac7f-30341306942-frontend-proxy
-    # Mandate #19 staged promotion knobs. Keep shadow (enforced=0) for the first
-    # rollout, then change only BROWSE_RATE_LIMIT_ENFORCED_PERCENT in reviewed
-    # stages 5 -> 25 -> 50 -> 100 after every gate passes. The global fallback
-    # remains shadow because protected routes use its non-binding 10k/s bucket.
+      digest: sha256:395ec88a66bc66bdf5ba9b6f2fc44cc0eb6a27b82ffe5bdfa7f7539648ac221a
+      tag: 6564f7f-30428844691-frontend-proxy
+    # Mandate #19: browse shedding is enforced after staged route-validation
+    # gates. Protected routes remain non-binding via the global fallback bucket.
     envOverrides:
       - name: FRONTEND_HOST
         value: frontend-headless
@@ -1460,7 +1461,7 @@ components:
       - name: BROWSE_RATE_LIMIT_ENABLED_PERCENT
         value: "100"
       - name: BROWSE_RATE_LIMIT_ENFORCED_PERCENT
-        value: "0"
+        value: "100"
       - name: LOCAL_RATE_LIMIT_ENABLED_PERCENT
         value: "100"
       - name: LOCAL_RATE_LIMIT_ENFORCED_PERCENT

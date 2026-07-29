@@ -1,0 +1,89 @@
+# 06 — Log migration Job
+
+## Lần 1: product-reviews-schema-migration-sprint3 — MIGRATION OK, VERIFY FAIL
+
+Migration thành công (7/7 statement, bảng tạo đúng schema). Job exit 1 vì một
+assertion SAI của chính nó — xem đính chính AIO-07 ở 02-aio-contract-decisions.md.
+
+```
+Found 3 pods, using pod/product-reviews-schema-migration-sprint3-lsc2c
+current_user=otelu product_summaries BEFORE=None
+[1/7] ALTER TABLE reviews.productreviews ADD COLUMN IF NOT EXISTS is_safe BOOLEAN DEFAULT TRUE
+[2/7] CREATE INDEX CONCURRENTLY IF NOT EXISTS productreviews_prod_safe_idx ON reviews.productrev
+[3/7] CREATE TABLE IF NOT EXISTS reviews.fidelity_audit ( id SERIAL PRIMARY KEY, product_id VARC
+[4/7] GRANT SELECT, INSERT, UPDATE ON reviews.fidelity_audit TO otelu
+[5/7] GRANT USAGE, SELECT ON SEQUENCE reviews.fidelity_audit_id_seq TO otelu
+[6/7] CREATE TABLE IF NOT EXISTS reviews.product_summaries ( product_id VARCHAR(50) PRIMARY KEY,
+[7/7] GRANT SELECT, INSERT, UPDATE ON reviews.product_summaries TO otelu
+SCHEMA MIGRATION OK
+
+== verify: schema cũ ==
+  [OK ] productreviews.is_safe: [('is_safe', 'boolean', 'true')]
+  [OK ] prod_safe_idx valid: [('reviews.productreviews_prod_safe_idx', True)]
+  [OK ] fidelity_audit exists: ('reviews.fidelity_audit',)
+
+== verify: product_summaries ==
+  columns: [('product_id', 'character varying', 50, 'NO', None), ('summary_text', 'text', None, 'NO', None), ('rating_distribution', 'text', None, 'YES', None), ('review_version', 'character varying', 100, 'YES', None), ('updated_at', 'timestamp with time zone', None, 'YES', 'CURRENT_TIMESTAMP')]
+  [OK ] column set: got=['product_id', 'rating_distribution', 'review_version', 'summary_text', 'updated_at'] want=['product_id', 'rating_distribution', 'review_version', 'summary_text', 'updated_at']
+  [OK ] column product_id: got=('character varying', 50, 'NO') want=('character varying', 50, 'NO')
+  [OK ] column summary_text: got=('text', None, 'NO') want=('text', None, 'NO')
+  [OK ] column rating_distribution: got=('text', None, 'YES') want=('text', None, 'YES')
+  [OK ] column review_version: got=('character varying', 100, 'YES') want=('character varying', 100, 'YES')
+  [OK ] column updated_at: got=('timestamp with time zone', None, 'YES') want=('timestamp with time zone', None, 'YES')
+  [OK ] updated_at has default: CURRENT_TIMESTAMP
+  [OK ] primary key: ['product_id']
+  [OK ] table owner: ('otelu',)
+  [BAD] otelu grants: ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+  [BAD] no DELETE grant: ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+
+== verify: functional probe (rollback) ==
+  probe current_user=otelu
+  [OK ] probe upsert+read: ('__tf3_sprint3_schema_probe__', 'probe-v1', 'probe-v1')
+  [OK ] probe rolled back cleanly: 0
+
+SCHEMA VERIFICATION FAILED: ['otelu grants', 'no DELETE grant']
+```
+
+## Lần 2: product-reviews-schema-migration-sprint3-r2 — PASS
+
+succeeded=1. Chạy lại sau khi sửa assertion grant (PR #598).
+Lưu ý dòng đầu: product_summaries BEFORE=reviews.product_summaries — bảng ĐÃ tồn tại
+từ lần 1, xác nhận migration lần 1 thành công và mọi statement là idempotent.
+
+```
+current_user=otelu product_summaries BEFORE=reviews.product_summaries
+[1/7] ALTER TABLE reviews.productreviews ADD COLUMN IF NOT EXISTS is_safe BOOLEAN DEFAULT TRUE
+[2/7] CREATE INDEX CONCURRENTLY IF NOT EXISTS productreviews_prod_safe_idx ON reviews.productrev
+[3/7] CREATE TABLE IF NOT EXISTS reviews.fidelity_audit ( id SERIAL PRIMARY KEY, product_id VARC
+[4/7] GRANT SELECT, INSERT, UPDATE ON reviews.fidelity_audit TO otelu
+[5/7] GRANT USAGE, SELECT ON SEQUENCE reviews.fidelity_audit_id_seq TO otelu
+[6/7] CREATE TABLE IF NOT EXISTS reviews.product_summaries ( product_id VARCHAR(50) PRIMARY KEY,
+[7/7] GRANT SELECT, INSERT, UPDATE ON reviews.product_summaries TO otelu
+SCHEMA MIGRATION OK
+
+== verify: schema cũ ==
+  [OK ] productreviews.is_safe: [('is_safe', 'boolean', 'true')]
+  [OK ] prod_safe_idx valid: [('reviews.productreviews_prod_safe_idx', True)]
+  [OK ] fidelity_audit exists: ('reviews.fidelity_audit',)
+
+== verify: product_summaries ==
+  columns: [('product_id', 'character varying', 50, 'NO', None), ('summary_text', 'text', None, 'NO', None), ('rating_distribution', 'text', None, 'YES', None), ('review_version', 'character varying', 100, 'YES', None), ('updated_at', 'timestamp with time zone', None, 'YES', 'CURRENT_TIMESTAMP')]
+  [OK ] column set: got=['product_id', 'rating_distribution', 'review_version', 'summary_text', 'updated_at'] want=['product_id', 'rating_distribution', 'review_version', 'summary_text', 'updated_at']
+  [OK ] column product_id: got=('character varying', 50, 'NO') want=('character varying', 50, 'NO')
+  [OK ] column summary_text: got=('text', None, 'NO') want=('text', None, 'NO')
+  [OK ] column rating_distribution: got=('text', None, 'YES') want=('text', None, 'YES')
+  [OK ] column review_version: got=('character varying', 100, 'YES') want=('character varying', 100, 'YES')
+  [OK ] column updated_at: got=('timestamp with time zone', None, 'YES') want=('timestamp with time zone', None, 'YES')
+  [OK ] updated_at has default: CURRENT_TIMESTAMP
+  [OK ] primary key: ['product_id']
+  [OK ] table owner: ('otelu',)
+  [OK ] required grants present: ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+  [NOTE] otelu SỞ HỮU bảng -> quyền owner là ngầm định, không thu hẹp được bằng GRANT. privileges=['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+
+== verify: functional probe (rollback) ==
+  probe current_user=otelu
+  [OK ] probe upsert+read: ('__tf3_sprint3_schema_probe__', 'probe-v1', 'probe-v1')
+  [OK ] probe rolled back cleanly: 0
+
+SCHEMA VERIFICATION OK
+```
