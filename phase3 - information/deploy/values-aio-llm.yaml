@@ -33,9 +33,14 @@ components:
       - name: https_proxy
         value: http://product-reviews-egress-proxy.techx-tf3.svc.cluster.local:3128
       - name: NO_PROXY
-        value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,product-catalog.techx-tf3.svc.cluster.local,flagd.techx-tf3.svc.cluster.local,otel-gateway.techx-tf3.svc.cluster.local,techx-tf3-postgres.czwcs2ocww3q.ap-southeast-1.rds.amazonaws.com,master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com
+        value: localhost,127.0.0.1,product-catalog,flagd,otel-gateway,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,product-catalog.techx-tf3.svc.cluster.local,flagd.techx-tf3.svc.cluster.local,otel-gateway.techx-tf3.svc.cluster.local,techx-tf3-postgres.czwcs2ocww3q.ap-southeast-1.rds.amazonaws.com,master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com
       - name: no_proxy
-        value: localhost,127.0.0.1,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,product-catalog.techx-tf3.svc.cluster.local,flagd.techx-tf3.svc.cluster.local,otel-gateway.techx-tf3.svc.cluster.local,techx-tf3-postgres.czwcs2ocww3q.ap-southeast-1.rds.amazonaws.com,master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com
+        value: localhost,127.0.0.1,product-catalog,flagd,otel-gateway,.svc,.svc.cluster.local,.techx-tf3.svc.cluster.local,product-catalog.techx-tf3.svc.cluster.local,flagd.techx-tf3.svc.cluster.local,otel-gateway.techx-tf3.svc.cluster.local,techx-tf3-postgres.czwcs2ocww3q.ap-southeast-1.rds.amazonaws.com,master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com
+      # gRPC C-core uses this variable before the generic no_proxy list.
+      # Include both short Kubernetes names and FQDNs so internal RPCs never
+      # reach the external-only Envoy RBAC filter.
+      - name: no_grpc_proxy
+        value: localhost,127.0.0.1,product-catalog,product-catalog.techx-tf3.svc.cluster.local,flagd,flagd.techx-tf3.svc.cluster.local,otel-gateway,otel-gateway.techx-tf3.svc.cluster.local
 
       # Mandate #8 buoc 2 (cutover Postgres -> RDS, runbook §5 buoc 4): DB_CONNECTION_STRING -> RDS
       # qua secret techx-tf3-postgres-conn (format libpq keyword, sslmode=require). product-reviews CHI DOC.
