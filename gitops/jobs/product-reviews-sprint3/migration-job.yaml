@@ -1,0 +1,254 @@
+# Schema migration một lần cho product-reviews Sprint 3 (Release A — Tier-2 fallback).
+#
+# KHÁC với gitops/jobs/product-reviews-schema-migration.yaml (bản cũ, apply tay):
+# Job này do ArgoCD apply, qua Application riêng ở gitops/apps/product-reviews-migration-app.yaml.
+# Không có `kubectl apply` thủ công trong đường đi này.
+#
+# Tên có hậu tố -sprint3 vì PodTemplate của Job là IMMUTABLE: trùng tên với Job cũ
+# (kể cả Job đã terminal) sẽ làm apply fail. Mỗi change dùng một tên riêng.
+#
+# KHÔNG đặt ttlSecondsAfterFinished. Application này bật automated sync; nếu TTL xoá
+# Job thì Argo thấy thiếu resource và tạo lại -> migration chạy lặp vô hạn. Job ở lại
+# làm evidence; dọn bằng change riêng sau khi nghiệm thu.
+#
+# Chỉ chạy bước SCHEMA (migration.sql). Batch scan backfill `is_safe` cố ý KHÔNG chạy
+# ở đây — nó UPDATE trên bảng dùng chung với product-catalog/accounting, và không chặn
+# go-live vì cột mới default TRUE.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: product-reviews-schema-migration-sprint3
+  namespace: techx-tf3
+  labels:
+    app.kubernetes.io/name: product-reviews-schema-migration
+    app.kubernetes.io/part-of: techx-corp
+    techx.io/change: product-reviews-sprint3
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: product-reviews-schema-migration
+        techx.io/change: product-reviews-sprint3
+    spec:
+      restartPolicy: Never
+      # Cùng placement với product-reviews để ra RDS qua đúng node security group.
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          # !!! PHẢI THAY TRƯỚC KHI MERGE !!!
+          # Digest candidate của product-reviews lấy từ bot image-bump PR (PR-D) sinh ra
+          # sau khi PR-B merge. Digest đó chứa migration.sql có Step 5/6 — digest đang
+          # live trên production KHÔNG có, chạy nó sẽ không tạo được product_summaries.
+          #
+          # Digest-pinned theo PM-101 supply-chain gate, không bao giờ dùng floating tag.
+          # Job này chỉ ĐỌC migration.sql ra khỏi image; nó không đặt image lên Deployment,
+          # nên chạy Job KHÔNG deploy code mới.
+          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp@sha256:REPLACE_WITH_CANDIDATE_DIGEST_FROM_IMAGE_BUMP_PR
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+          env:
+            - name: DB_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: techx-tf3-postgres-conn
+                  key: libpq
+          # Chạy migration.sql với autocommit — CREATE INDEX CONCURRENTLY bắt buộc phải vậy.
+          # Chạy inline thay vì gọi db_migration_worker.py để CHỈ bước schema chạy; worker
+          # sẽ khởi động luôn cả batch scan.
+          #
+          # Statement được tách và gửi TỪNG CÂU MỘT. Chỉ autocommit là chưa đủ: nhiều câu
+          # trong một execute() bị PostgreSQL coi là một transaction ngầm, và CREATE INDEX
+          # CONCURRENTLY bị từ chối trong transaction block. Dòng comment `--` bị lược bỏ
+          # trước khi tách vì migration.sql có dấu `;` nằm trong comment.
+          #
+          # Mọi statement đều IF NOT EXISTS / idempotent nên chạy lại sau lỗi giữa chừng là an toàn.
+          command:
+            - /venv/bin/python
+            - -c
+            - |
+              import os, sys, psycopg2
+              dsn = os.environ["DB_CONNECTION_STRING"]
+              raw = open("/app/migration.sql", encoding="utf-8").read()
+              body = "\n".join(
+                  line for line in raw.splitlines() if not line.strip().startswith("--")
+              )
+              statements = [s.strip() for s in body.split(";") if s.strip()]
+
+              conn = psycopg2.connect(dsn)
+              conn.autocommit = True
+              failures = []
+
+              def check(label, ok, detail):
+                  print(f"  [{'OK ' if ok else 'BAD'}] {label}: {detail}", flush=True)
+                  if not ok:
+                      failures.append(label)
+
+              try:
+                  with conn.cursor() as cur:
+                      cur.execute("SELECT current_user, to_regclass('reviews.product_summaries')")
+                      user_before, tbl_before = cur.fetchone()
+                      print(f"current_user={user_before} product_summaries BEFORE={tbl_before}", flush=True)
+
+                  for i, stmt in enumerate(statements, 1):
+                      head = " ".join(stmt.split())[:90]
+                      print(f"[{i}/{len(statements)}] {head}", flush=True)
+                      with conn.cursor() as cur:
+                          cur.execute(stmt)
+                  print("SCHEMA MIGRATION OK", flush=True)
+
+                  # ---- Verify cũ (giữ nguyên): is_safe / index / fidelity_audit ----
+                  print("\n== verify: schema cũ ==", flush=True)
+                  with conn.cursor() as cur:
+                      cur.execute("""
+                          SELECT column_name, data_type, column_default
+                          FROM information_schema.columns
+                          WHERE table_schema='reviews' AND table_name='productreviews'
+                            AND column_name='is_safe'
+                      """)
+                      rows = cur.fetchall()
+                      check("productreviews.is_safe", len(rows) == 1, rows)
+
+                      cur.execute("""
+                          SELECT indexrelid::regclass::text, indisvalid
+                          FROM pg_index
+                          WHERE indexrelid = 'reviews.productreviews_prod_safe_idx'::regclass
+                      """)
+                      rows = cur.fetchall()
+                      # indisvalid=False nghĩa là CREATE INDEX CONCURRENTLY hỏng giữa chừng
+                      # và để lại index INVALID — planner sẽ bỏ qua nó.
+                      check("prod_safe_idx valid", bool(rows) and rows[0][1] is True, rows)
+
+                      cur.execute("SELECT to_regclass('reviews.fidelity_audit')")
+                      row = cur.fetchone()
+                      check("fidelity_audit exists", row[0] is not None, row)
+
+                  # ---- Verify mới (CDO-05): product_summaries ----
+                  # CREATE TABLE IF NOT EXISTS vẫn "thành công" khi bảng cũ sai schema,
+                  # nên to_regclass một mình KHÔNG đủ để kết luận.
+                  print("\n== verify: product_summaries ==", flush=True)
+                  expected_cols = {
+                      "product_id":          ("character varying", 50,   "NO"),
+                      "summary_text":        ("text",              None, "NO"),
+                      "rating_distribution": ("text",              None, "YES"),
+                      "review_version":      ("character varying", 100,  "YES"),
+                      "updated_at":          ("timestamp with time zone", None, "YES"),
+                  }
+                  with conn.cursor() as cur:
+                      cur.execute("""
+                          SELECT column_name, data_type, character_maximum_length,
+                                 is_nullable, column_default
+                          FROM information_schema.columns
+                          WHERE table_schema='reviews' AND table_name='product_summaries'
+                          ORDER BY ordinal_position
+                      """)
+                      cols = cur.fetchall()
+                      actual = {c[0]: (c[1], c[2], c[3]) for c in cols}
+                      print(f"  columns: {cols}", flush=True)
+                      check("column set", set(actual) == set(expected_cols),
+                            f"got={sorted(actual)} want={sorted(expected_cols)}")
+                      for name, want in expected_cols.items():
+                          if name in actual:
+                              check(f"column {name}", actual[name] == want,
+                                    f"got={actual[name]} want={want}")
+                      updated_at_default = next(
+                          (c[4] for c in cols if c[0] == "updated_at"), None
+                      )
+                      check("updated_at has default", bool(updated_at_default), updated_at_default)
+
+                      cur.execute("""
+                          SELECT a.attname
+                          FROM pg_index i
+                          JOIN pg_attribute a ON a.attrelid = i.indrelid
+                                             AND a.attnum = ANY(i.indkey)
+                          WHERE i.indrelid = 'reviews.product_summaries'::regclass
+                            AND i.indisprimary
+                      """)
+                      pk = [r[0] for r in cur.fetchall()]
+                      check("primary key", pk == ["product_id"], pk)
+
+                      cur.execute("""
+                          SELECT tableowner FROM pg_tables
+                          WHERE schemaname='reviews' AND tablename='product_summaries'
+                      """)
+                      owner = cur.fetchone()
+                      check("table owner", owner is not None, owner)
+
+                      cur.execute("""
+                          SELECT privilege_type
+                          FROM information_schema.role_table_grants
+                          WHERE grantee='otelu' AND table_schema='reviews'
+                            AND table_name='product_summaries'
+                          ORDER BY privilege_type
+                      """)
+                      privs = sorted({r[0] for r in cur.fetchall()})
+                      # DELETE cố ý KHÔNG được cấp (AIO-07): runtime chỉ read + upsert.
+                      check("otelu grants", privs == ["INSERT", "SELECT", "UPDATE"], privs)
+                      check("no DELETE grant", "DELETE" not in privs, privs)
+
+                  # ---- Functional probe: upsert thật rồi ROLLBACK ----
+                  # Connection riêng, autocommit=False, để BEGIN/ROLLBACK có hiệu lực.
+                  print("\n== verify: functional probe (rollback) ==", flush=True)
+                  probe = psycopg2.connect(dsn)
+                  try:
+                      with probe.cursor() as cur:
+                          cur.execute("SELECT current_user")
+                          print(f"  probe current_user={cur.fetchone()[0]}", flush=True)
+                          cur.execute("""
+                              INSERT INTO reviews.product_summaries
+                                  (product_id, summary_text, review_version)
+                              VALUES ('__tf3_sprint3_schema_probe__', 'probe-v1', 'probe-v1')
+                              ON CONFLICT (product_id) DO UPDATE
+                              SET summary_text = EXCLUDED.summary_text,
+                                  review_version = EXCLUDED.review_version
+                          """)
+                          cur.execute("""
+                              SELECT product_id, summary_text, review_version
+                              FROM reviews.product_summaries
+                              WHERE product_id='__tf3_sprint3_schema_probe__'
+                          """)
+                          row = cur.fetchone()
+                          check("probe upsert+read", row is not None and row[1] == 'probe-v1', row)
+                      probe.rollback()
+                      with probe.cursor() as cur:
+                          cur.execute("""
+                              SELECT count(*) FROM reviews.product_summaries
+                              WHERE product_id='__tf3_sprint3_schema_probe__'
+                          """)
+                          left = cur.fetchone()[0]
+                          check("probe rolled back cleanly", left == 0, left)
+                  finally:
+                      probe.close()
+
+                  if failures:
+                      print(f"\nSCHEMA VERIFICATION FAILED: {failures}", file=sys.stderr, flush=True)
+                      sys.exit(1)
+                  print("\nSCHEMA VERIFICATION OK", flush=True)
+              except Exception as exc:
+                  print("SCHEMA MIGRATION FAILED:", exc, file=sys.stderr, flush=True)
+                  raise
+              finally:
+                  conn.close()
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
