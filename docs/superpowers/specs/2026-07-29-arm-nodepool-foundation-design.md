@@ -256,8 +256,8 @@ Không rollback bằng patch/delete trực tiếp trên production.
 ## Tiêu chí hoàn thành
 
 - manifest và contract test pass;
-- chỉ hai file manifest Karpenter và test liên quan bị thay đổi ngoài design
-  spec;
+- chỉ hai manifest Karpenter, contract test, workflow trigger và tài liệu liên
+  quan nằm trong diff;
 - ARM Spot có cap 4 và chỉ dùng `c/m`;
 - ARM On-Demand fallback có cap 2, weight thấp và có evidence live cho target
   scale-down về 0 trước khi migrate critical service;

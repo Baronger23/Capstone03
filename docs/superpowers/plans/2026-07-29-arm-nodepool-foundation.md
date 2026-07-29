@@ -523,7 +523,7 @@ python -m pytest --collect-only -q scripts/ci
 python -m pytest -q scripts/ci
 ```
 
-Expected: `320 tests collected`, sau đó `318 passed, 2 skipped`; không
+Expected: `321 tests collected`, sau đó `319 passed, 2 skipped`; không
 error/warning mới do thay đổi này.
 
 - [ ] **Step 3: Kiểm tra identity và tunnel trước server dry-run**
