@@ -44,9 +44,7 @@ class AlertCorrelator:
             import boto3
             from config import S3_BUCKET_NAME
 
-            # Dưới IRSA không có biến AWS_ACCESS_KEY_ID — phải để boto3 tự phân giải,
-            # nếu không topology graph không bao giờ tải được từ S3.
-            if boto3.Session().get_credentials() is None:
+            if not os.getenv("AWS_ACCESS_KEY_ID"):
                 return None
 
             s3 = boto3.client("s3")
