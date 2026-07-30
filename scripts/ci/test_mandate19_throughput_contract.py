@@ -241,8 +241,13 @@ def test_rate_limit_promotion_knobs_are_explicit_and_build_validated():
     prod = VALUES.read_text(encoding="utf-8")
     proxy = prod[prod.index("  frontend-proxy:") :]
     expected_prod_values = {
-        "BROWSE_RATE_LIMIT_MAX_TOKENS": "100",
-        "BROWSE_RATE_LIMIT_TOKENS_PER_FILL": "50",
+        # Hiệu chỉnh 30/07: bucket là PER-REPLICA nên budget tổng = giá trị này x số
+        # replica proxy. PR #649 nới proxy 8 -> 12 đã nâng budget 400 -> 600 và làm
+        # MẤT khả năng shed ở 2400 user (baseline 3.641 x 429 -> tuned 0 x 429, thay
+        # bằng 1.713 x HTTP 500). 33 x 12 = 396 ~ 50 x 8 = 400: quay về đúng điểm bảo
+        # vệ đã kiểm chứng bằng thực nghiệm.
+        "BROWSE_RATE_LIMIT_MAX_TOKENS": "66",
+        "BROWSE_RATE_LIMIT_TOKENS_PER_FILL": "33",
         "BROWSE_RATE_LIMIT_FILL_INTERVAL": "1s",
         "BROWSE_RATE_LIMIT_ENABLED_PERCENT": "100",
         "BROWSE_RATE_LIMIT_ENFORCED_PERCENT": "100",
