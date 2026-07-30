@@ -14,11 +14,16 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: frontend-proxy-hpa
   namespace: techx-tf3
+  annotations:
+    # Mandate-19 capacity step (30/07/2026): proxy đạt 70%/65% ở 7/8 replica tại
+    # stage vỡ 1400 user — sát trần. Nới 8 -> 12 để proxy không thành nút thắt
+    # kế tiếp sau khi frontend được nới. Đo: docs/evidence/mandate-19/real-2026-07-30/
+    mandate-19.techx.io/capacity-step: "2026-07-30"
 spec:
   scaleTargetRef:
     { apiVersion: apps/v1, kind: Deployment, name: frontend-proxy }
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 12
   metrics:
     - type: Resource
       resource:
@@ -47,10 +52,21 @@ metadata:
     # 410-user failing stage. The higher target packs more work on each existing
     # node. This staged PR changes only the CPU request/target; raise maxReplicas
     # in a separately measured capacity step after the 65% target is validated.
+    #
+    # Mandate-19 capacity step — ĐÂY là bước đo đã hứa ở trên (30/07/2026).
+    # Đo exact-window trên node-set cố định 9 node (hash 54755c311f1a64b9),
+    # generator ngoài cluster (scripts/mandate-19/):
+    #   1000 user (trần): frontend 112%/65% ở 8/8 replica  — ĐỤNG TRẦN maxReplicas
+    #   1400 user (vỡ):   frontend 128%/65% ở 8/8 replica  — vẫn đụng trần
+    # Trong khi đó CPU node cao nhất chỉ 60% và 2 node gần rỗng (1%, 7%).
+    # Nghĩa là trần thông lượng bị chặn bởi maxReplicas, KHÔNG bởi capacity node.
+    # Nới 8 -> 16 để HPA dùng được phần CPU node đang bỏ không. Không thêm node.
+    mandate-19.techx.io/capacity-step: "2026-07-30"
+    mandate-19.techx.io/evidence: "docs/evidence/mandate-19/real-2026-07-30/"
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: frontend }
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 16
   metrics:
     - type: Resource
       resource:
@@ -74,11 +90,16 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: product-catalog-hpa
   namespace: techx-tf3
+  annotations:
+    # Mandate-19 capacity step (30/07/2026): product-catalog đạt đúng 65%/65% ở
+    # 6/8 tại stage vỡ, và là downstream của product-detail — đường đã sinh 565 lỗi
+    # 500 ở 1800 user. Nới 8 -> 12 để nó không chặn sau khi frontend được nới.
+    mandate-19.techx.io/capacity-step: "2026-07-30"
 spec:
   scaleTargetRef:
     { apiVersion: apps/v1, kind: Deployment, name: product-catalog }
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 12
   metrics:
     - type: Resource
       resource:
@@ -132,10 +153,19 @@ metadata:
 spec:
   # checkout now migrates through checkout-rollout. Target the Rollout scale
   # subresource so HPA retains REL-01's minReplicas=2 during each canary step.
+  #
+  # Mandate-19 capacity step (30/07/2026): checkout là nguồn của lỗi người dùng
+  # thấy nhiều nhất khi vượt trần. Đo trên node-set cố định 9 node:
+  #   1000 user: checkout 64%/65% ở 5/8   -> checkout client-side 99,89% OK
+  #   1400 user: checkout 89%/65% ở 8/8   -> 3.912/5.526 checkout trả 504 (29,2% OK)
+  #   1800 user: 8/8                      -> 6.465/6.961 trả 504 (7,1% OK)
+  # 504 sinh ra khi latency checkout vượt route timeout mặc định 15s của Envoy
+  # (checkout p95/p99 đo được ghim đúng 15000ms = bucket histogram cao nhất).
+  # Nới 8 -> 14 để checkout còn scale được trước khi đụng timeout. Không thêm node.
   scaleTargetRef:
     { apiVersion: argoproj.io/v1alpha1, kind: Rollout, name: checkout-rollout }
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 14
   metrics:
     - type: Resource
       resource:
