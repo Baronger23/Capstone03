@@ -905,7 +905,16 @@ def test_public_egress_is_blocked_from_promotion_and_never_active():
         (
             REPO / "gitops/aiops-engine/networkpolicy.yaml",
             "aiops-egress-proxy-policy",
-        )
+        ),
+        # shopping-copilot's egress proxy, same role as the aiops one: it is the single
+        # chokepoint that replaces public egress from the workload. The proxy's Envoy RBAC
+        # only permits CONNECT to an explicit authority allowlist
+        # (gitops/shopping-copilot/egress-proxy.yaml), and the copilot pod's own policy has
+        # no public rule - it can only reach the proxy on 3128.
+        (
+            INFRA / "network-policy-shopping-copilot-egress-proxy.yaml",
+            "shopping-copilot-egress-proxy-policy",
+        ),
     }
 
     for path in list(INFRA.glob("*.yaml")) + [
