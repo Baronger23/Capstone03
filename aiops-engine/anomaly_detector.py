@@ -468,7 +468,8 @@ class AnomalyDetector:
                 
         # Fallback Z-Score nếu không có model
         try:
-            cpu_z = self.check_infra_z_score(f'sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m]))')
+            prom_query = f'(sum(rate(container_cpu_usage_seconds_total{{container_name="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{pod=~"{service}-.*"}}[5m])))'
+            cpu_z = self.check_infra_z_score(prom_query)
             return abs(cpu_z) >= 3.0
         except Exception as e:
             logger.error(f"Failed to run Z-Score fallback for {service}: {e}")
