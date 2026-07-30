@@ -1,11 +1,12 @@
 ﻿{
     "run":  "run-2",
     "stage":  "failing-410-users",
-    "startedAt":  "2026-07-26T09:25:00Z",
-    "endedAt":  "2026-07-26T09:31:00Z",
+    "startedAt":  null,
+    "endedAt":  null,
     "users":  410,
-    "targetRps":  220,
-    "observedServedRps":  168.9,
+    "targetRps":  null,
+    "observedCurrentRps":  73.9,
+    "observedCurrentFailurePercent":  1,
     "status":  "fail",
-    "notes":  "Failing run used to reproduce the breakpoint and capture saturation evidence."
+    "notes":  "Transcribed from test_slo/Locust_tran.jpg. This is a point-in-time transition screenshot, not proof of a sustained five-minute rate."
 }
