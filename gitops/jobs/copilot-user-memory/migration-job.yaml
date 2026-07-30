@@ -1,0 +1,354 @@
+# Schema migration mot lan cho Long-term User Memory cua shopping-copilot (DB request AIE2, 28/07).
+#
+# Tao `copilot.user_memory` trong RDS `techx-tf3-postgres`, DB `otel`.
+#
+# Vi sao la Job qua ArgoCD chu khong phai `psql` tay: quy uoc repo bat moi thay doi schema
+# phai di qua GitOps de co dau vet + chay lai duoc. Mau lay tu
+# gitops/jobs/product-reviews-sprint3/migration-job.yaml.
+#
+# Ten Job co hau to `-r1` vi PodTemplate cua Job la IMMUTABLE: muon chay lai (vi du sua SQL)
+# phai dat ten moi (`-r2`, ...), khong sua tai cho.
+#
+# KHONG dat ttlSecondsAfterFinished: Application nay bat automated sync, TTL xoa Job thi Argo
+# thay thieu resource va tao lai -> migration chay lap vo han. Job o lai lam evidence.
+#
+# 3 diem lech CO CHU DICH so voi ban SQL trong request cua AIE2:
+#   1. `CREATE TRIGGER` -> `CREATE OR REPLACE TRIGGER`. Ban goc KHONG idempotent; voi
+#      backoffLimit: 2, lan retry thu 2 se chet vi "trigger already exists". RDS dang chay
+#      PostgreSQL 17.9 (verify 30/07 qua `aws rds describe-db-instances`) nen cu phap
+#      CREATE OR REPLACE TRIGGER (PG14+) dung duoc.
+#   2. GRANT giu nguyen cho khop request nhung DAY LA NO-OP: `otelu` chinh la RDS master user
+#      (MasterUsername=otelu), va schema/bang do chinh no tao nen no la OWNER -> von da full
+#      quyen. Khong duoc bao cao day la "da least-privilege". Muon co lap that phai tao role
+#      rieng + doi owner, la viec lon hon, phai ban truoc.
+#   3. Bo `GRANT ... ON ALL SEQUENCES`: bang khong co cot serial/identity nen schema `copilot`
+#      khong sinh sequence nao. Cau lenh vo hai nhung vo nghia, bo cho khoi hieu nham la co.
+#
+# SQL duoc khai bao thanh DANH SACH statement trong Python, KHONG tach chuoi theo dau `;`
+# nhu job product-reviews: than ham plpgsql duoc dollar-quote ($$ ... $$) va co dau `;` ben
+# trong, tach theo `;` se cat nat ham.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: copilot-user-memory-schema-migration-r1
+  namespace: techx-tf3
+  labels:
+    app.kubernetes.io/name: copilot-user-memory-schema-migration
+    app.kubernetes.io/part-of: techx-corp
+    techx.io/change: copilot-user-memory
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: copilot-user-memory-schema-migration
+        techx.io/change: copilot-user-memory
+    spec:
+      restartPolicy: Never
+      # Cung placement voi shopping-copilot/product-reviews de ra RDS qua dung node security
+      # group (SG datastore allow NODE security group, khong phai cluster SG).
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          # Dung lai digest techx-corp dang live cua product-reviews (Sprint 3 Release A):
+          # da qua Trivy pre+post-push HIGH/CRITICAL sach + Cosign verify "Verified OK"
+          # (CI run 30427433465), va co san /venv/bin/python + psycopg2.
+          # Job CHI dung interpreter trong image; toan bo SQL nam inline duoi day, khong doc
+          # file nao tu image -> chay Job KHONG deploy code moi cua bat ky service nao.
+          # Digest-pinned theo PM-101 supply-chain gate, khong bao gio dung floating tag.
+          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp@sha256:be5cd78ae229ad036f5695c21c1575b2049931133fe19d25180393caaf6db5bc
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+          env:
+            - name: DB_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: techx-tf3-postgres-conn
+                  key: libpq
+          command:
+            - /venv/bin/python
+            - -c
+            - |
+              import os, sys, psycopg2
+
+              dsn = os.environ["DB_CONNECTION_STRING"]
+
+              # Moi statement gui RIENG mot lan execute(). Nhieu cau trong mot execute() bi
+              # PostgreSQL coi la mot transaction ngam, va tat ca deu idempotent nen chay lai
+              # sau khi hong giua chung la an toan.
+              STATEMENTS = [
+                  ("schema", "CREATE SCHEMA IF NOT EXISTS copilot"),
+                  ("table", """
+                      CREATE TABLE IF NOT EXISTS copilot.user_memory (
+                          user_id               VARCHAR(128) NOT NULL,
+                          preferences           JSONB        NOT NULL DEFAULT '[]',
+                          facts                 JSONB        NOT NULL DEFAULT '[]',
+                          purchase_history      JSONB        NOT NULL DEFAULT '[]',
+                          conversation_patterns JSONB        NOT NULL DEFAULT '[]',
+                          created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                          updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                          CONSTRAINT pk_user_memory PRIMARY KEY (user_id)
+                      )
+                  """),
+                  # Bang tao moi va rong -> CREATE INDEX thuong (khong CONCURRENTLY) khong
+                  # khoa gi dang ke; CONCURRENTLY chi can khi bang da co traffic.
+                  ("idx_updated_at", """
+                      CREATE INDEX IF NOT EXISTS idx_user_memory_updated_at
+                          ON copilot.user_memory (updated_at DESC)
+                  """),
+                  ("idx_preferences_gin", """
+                      CREATE INDEX IF NOT EXISTS idx_user_memory_preferences
+                          ON copilot.user_memory USING GIN (preferences)
+                  """),
+                  ("function", """
+                      CREATE OR REPLACE FUNCTION copilot.set_updated_at()
+                      RETURNS TRIGGER AS $function$
+                      BEGIN
+                          NEW.updated_at = NOW();
+                          RETURN NEW;
+                      END;
+                      $function$ LANGUAGE plpgsql
+                  """),
+                  # OR REPLACE (PG14+) de retry cua Job khong chet vi "trigger already exists".
+                  ("trigger", """
+                      CREATE OR REPLACE TRIGGER trg_user_memory_updated_at
+                          BEFORE UPDATE ON copilot.user_memory
+                          FOR EACH ROW EXECUTE FUNCTION copilot.set_updated_at()
+                  """),
+                  # No-op khi otelu la owner (xem header). Giu de khop request cua AIE2 va de
+                  # van dung neu sau nay doi owner sang role admin rieng.
+                  ("grant_schema", "GRANT USAGE ON SCHEMA copilot TO otelu"),
+                  ("grant_table", """
+                      GRANT SELECT, INSERT, UPDATE, DELETE
+                          ON copilot.user_memory TO otelu
+                  """),
+              ]
+
+              conn = psycopg2.connect(dsn)
+              conn.autocommit = True
+              failures = []
+
+              def check(label, ok, detail):
+                  print(f"  [{'OK ' if ok else 'BAD'}] {label}: {detail}", flush=True)
+                  if not ok:
+                      failures.append(label)
+
+              try:
+                  with conn.cursor() as cur:
+                      cur.execute(
+                          "SELECT current_user, version(),"
+                          " to_regclass('copilot.user_memory')"
+                      )
+                      user_before, pgver, tbl_before = cur.fetchone()
+                  print(f"current_user={user_before}", flush=True)
+                  print(f"server={pgver}", flush=True)
+                  print(f"copilot.user_memory BEFORE={tbl_before}", flush=True)
+
+                  for i, (label, stmt) in enumerate(STATEMENTS, 1):
+                      print(f"[{i}/{len(STATEMENTS)}] {label}", flush=True)
+                      with conn.cursor() as cur:
+                          cur.execute(stmt)
+                  print("SCHEMA MIGRATION OK", flush=True)
+
+                  # ---- Verify: cot ----
+                  # CREATE TABLE IF NOT EXISTS van "thanh cong" khi bang cu sai schema, nen
+                  # to_regclass mot minh KHONG du de ket luan.
+                  print("\n== verify: columns ==", flush=True)
+                  expected_cols = {
+                      "user_id":               ("character varying", 128,  "NO"),
+                      "preferences":           ("jsonb",             None, "NO"),
+                      "facts":                 ("jsonb",             None, "NO"),
+                      "purchase_history":      ("jsonb",             None, "NO"),
+                      "conversation_patterns": ("jsonb",             None, "NO"),
+                      "created_at":            ("timestamp with time zone", None, "NO"),
+                      "updated_at":            ("timestamp with time zone", None, "NO"),
+                  }
+                  with conn.cursor() as cur:
+                      cur.execute("""
+                          SELECT column_name, data_type, character_maximum_length,
+                                 is_nullable, column_default
+                          FROM information_schema.columns
+                          WHERE table_schema='copilot' AND table_name='user_memory'
+                          ORDER BY ordinal_position
+                      """)
+                      cols = cur.fetchall()
+                      actual = {c[0]: (c[1], c[2], c[3]) for c in cols}
+                      print(f"  columns: {cols}", flush=True)
+                      check("column set", set(actual) == set(expected_cols),
+                            f"got={sorted(actual)} want={sorted(expected_cols)}")
+                      for name, want in expected_cols.items():
+                          if name in actual:
+                              check(f"column {name}", actual[name] == want,
+                                    f"got={actual[name]} want={want}")
+                      defaults = {c[0]: c[4] for c in cols}
+                      for name in ("preferences", "facts", "purchase_history",
+                                   "conversation_patterns", "created_at", "updated_at"):
+                          check(f"default {name}", bool(defaults.get(name)),
+                                defaults.get(name))
+
+                      # ---- Verify: primary key ----
+                      cur.execute("""
+                          SELECT a.attname
+                          FROM pg_index i
+                          JOIN pg_attribute a ON a.attrelid = i.indrelid
+                                             AND a.attnum = ANY(i.indkey)
+                          WHERE i.indrelid = 'copilot.user_memory'::regclass
+                            AND i.indisprimary
+                      """)
+                      pk = [r[0] for r in cur.fetchall()]
+                      check("primary key", pk == ["user_id"], pk)
+
+                      # ---- Verify: index ----
+                      # indisvalid=False = index hong giua chung, planner se bo qua no.
+                      print("\n== verify: indexes ==", flush=True)
+                      cur.execute("""
+                          SELECT c.relname, i.indisvalid, am.amname
+                          FROM pg_index i
+                          JOIN pg_class c  ON c.oid = i.indexrelid
+                          JOIN pg_am   am  ON am.oid = c.relam
+                          WHERE i.indrelid = 'copilot.user_memory'::regclass
+                          ORDER BY c.relname
+                      """)
+                      idx = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+                      print(f"  indexes: {idx}", flush=True)
+                      check("idx_user_memory_updated_at",
+                            idx.get("idx_user_memory_updated_at", (None, None))[0] is True,
+                            idx.get("idx_user_memory_updated_at"))
+                      check("idx_user_memory_preferences is GIN",
+                            idx.get("idx_user_memory_preferences") == (True, "gin"),
+                            idx.get("idx_user_memory_preferences"))
+
+                      # ---- Verify: trigger ----
+                      print("\n== verify: trigger ==", flush=True)
+                      cur.execute("""
+                          SELECT t.tgname, p.proname, t.tgenabled
+                          FROM pg_trigger t
+                          JOIN pg_proc p ON p.oid = t.tgfoid
+                          WHERE t.tgrelid = 'copilot.user_memory'::regclass
+                            AND NOT t.tgisinternal
+                      """)
+                      trg = cur.fetchall()
+                      check("trigger present",
+                            trg == [("trg_user_memory_updated_at", "set_updated_at", "O")],
+                            trg)
+
+                      # ---- Verify: grants ----
+                      print("\n== verify: grants ==", flush=True)
+                      cur.execute("""
+                          SELECT tableowner FROM pg_tables
+                          WHERE schemaname='copilot' AND tablename='user_memory'
+                      """)
+                      owner = cur.fetchone()
+                      owner_name = owner[0] if owner else None
+                      check("table owner resolvable", owner_name is not None, owner_name)
+
+                      cur.execute("""
+                          SELECT privilege_type
+                          FROM information_schema.role_table_grants
+                          WHERE grantee='otelu' AND table_schema='copilot'
+                            AND table_name='user_memory'
+                          ORDER BY privilege_type
+                      """)
+                      privs = sorted({r[0] for r in cur.fetchall()})
+                      # App can du 4 quyen nay: load memory (SELECT), upsert (INSERT+UPDATE),
+                      # GDPR right-to-delete + batch cleanup (DELETE).
+                      required = {"SELECT", "INSERT", "UPDATE", "DELETE"}
+                      check("required grants present", required <= set(privs), privs)
+                      if owner_name == "otelu":
+                          print("  [NOTE] otelu SO HUU bang (va la RDS master user) -> quyen "
+                                "owner la ngam dinh, GRANT o tren KHONG thu hep duoc gi. "
+                                f"privileges={privs}", flush=True)
+
+                  # ---- Functional probe: upsert + trigger, roi ROLLBACK ----
+                  # Connection rieng, autocommit=False, de BEGIN/ROLLBACK co hieu luc ->
+                  # khong de lai rac trong bang.
+                  print("\n== verify: functional probe (rollback) ==", flush=True)
+                  probe = psycopg2.connect(dsn)
+                  probe_id = "__tf3_copilot_memory_probe__"
+                  try:
+                      with probe.cursor() as cur:
+                          cur.execute("""
+                              INSERT INTO copilot.user_memory
+                                  (user_id, preferences, facts, created_at, updated_at)
+                              VALUES (%s, %s::jsonb, %s::jsonb,
+                                      TIMESTAMPTZ '2000-01-01', TIMESTAMPTZ '2000-01-01')
+                              ON CONFLICT (user_id) DO UPDATE
+                              SET preferences = EXCLUDED.preferences
+                          """, (probe_id,
+                                '[{"category":"budget","value":"under 100 USD"}]',
+                                '[{"key":"preferred_language","value":"Vietnamese"}]'))
+
+                          # JSONB doc lai duoc + GIN index dung duoc voi toan tu chua (@>).
+                          cur.execute("""
+                              SELECT preferences @> '[{"category":"budget"}]'::jsonb,
+                                     updated_at
+                              FROM copilot.user_memory WHERE user_id = %s
+                          """, (probe_id,))
+                          contains, ts_before = cur.fetchone()
+                          check("probe jsonb containment", contains is True, contains)
+
+                          # Trigger phai day updated_at len NOW() khi UPDATE. created_at
+                          # (2000-01-01) phai GIU NGUYEN - trigger chi dung cham updated_at.
+                          cur.execute("""
+                              UPDATE copilot.user_memory
+                              SET facts = '[]'::jsonb WHERE user_id = %s
+                          """, (probe_id,))
+                          cur.execute("""
+                              SELECT created_at, updated_at
+                              FROM copilot.user_memory WHERE user_id = %s
+                          """, (probe_id,))
+                          created_after, ts_after = cur.fetchone()
+                          check("trigger bumps updated_at", ts_after > ts_before,
+                                f"{ts_before} -> {ts_after}")
+                          check("trigger leaves created_at alone",
+                                created_after == ts_before, created_after)
+
+                          # GDPR right-to-delete di qua chinh connection cua app.
+                          cur.execute(
+                              "DELETE FROM copilot.user_memory WHERE user_id = %s",
+                              (probe_id,))
+                          check("probe delete", cur.rowcount == 1, cur.rowcount)
+
+                      probe.rollback()
+                      with probe.cursor() as cur:
+                          cur.execute(
+                              "SELECT count(*) FROM copilot.user_memory WHERE user_id = %s",
+                              (probe_id,))
+                          left = cur.fetchone()[0]
+                          check("probe rolled back cleanly", left == 0, left)
+                  finally:
+                      probe.close()
+
+                  if failures:
+                      print(f"\nSCHEMA VERIFICATION FAILED: {failures}",
+                            file=sys.stderr, flush=True)
+                      sys.exit(1)
+                  print("\nSCHEMA VERIFICATION OK", flush=True)
+              except Exception as exc:
+                  print("SCHEMA MIGRATION FAILED:", exc, file=sys.stderr, flush=True)
+                  raise
+              finally:
+                  conn.close()
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
