@@ -21,6 +21,15 @@ const STORAGE_SESSION = 'copilot_session_id';
 const randomId = () =>
   'xxxxxxxx'.replace(/x/g, () => Math.floor(Math.random() * 16).toString(16)) + '-' + Date.now().toString(16);
 
+const normalizeText = (value: unknown, fallback: string) => {
+  if (typeof value === 'string') {
+    const text = value.trim();
+    return text || fallback;
+  }
+  if (value == null) return fallback;
+  return String(value);
+};
+
 const CopilotWidget = () => {
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
@@ -102,13 +111,13 @@ const CopilotWidget = () => {
           let payload: Record<string, unknown>;
           try { payload = JSON.parse(data); } catch { continue; }
           if (evt === 'trace') {
-            const label = String(payload.detail || payload.step || '').trim();
+            const label = normalizeText(payload.detail || payload.step, '').trim();
             if (label) { trace.push(label); setLiveSteps([...trace]); }
           } else if (evt === 'final') {
             if (payload.session_id) sessionId.current = String(payload.session_id);
             setMessages(m => [...m, {
               role: 'assistant',
-              content: String(payload.reply || 'Xin lỗi, tôi chưa có câu trả lời.'),
+              content: normalizeText(payload.reply, 'Xin lỗi, tôi chưa có câu trả lời.'),
               token: (payload.token as string) || null,
               trace: trace.slice(),
             }]);
@@ -132,8 +141,11 @@ const CopilotWidget = () => {
           if (r.session_id) sessionId.current = r.session_id;
           setMessages(m => [...m, {
             role: 'assistant',
-            content: r.reply || 'Xin lỗi, tôi chưa có câu trả lời.',
+            content: normalizeText(r.reply, 'Xin lỗi, tôi chưa có câu trả lời.'),
             token: r.token || null,
+            trace: Array.isArray(r.steps)
+              ? r.steps.map((step: unknown) => normalizeText((step as { detail?: unknown })?.detail, '')).filter(Boolean)
+              : undefined,
           }]);
         } catch {
           setMessages(m => [...m, { role: 'assistant', content: 'Dịch vụ tạm thời không khả dụng, thử lại sau nhé.' }]);
@@ -149,7 +161,7 @@ const CopilotWidget = () => {
     setLoading(true);
     try {
       const r = await post('confirm', { session_id: sessionId.current, token, confirmed: true });
-      setMessages(m => [...m, { role: 'assistant', content: r.reply || 'Đã xử lý.' }]);
+      setMessages(m => [...m, { role: 'assistant', content: normalizeText(r.reply, 'Đã xử lý.') }]);
     } catch {
       setMessages(m => [...m, { role: 'assistant', content: 'Không xác nhận được, thử lại sau.' }]);
     } finally {
