@@ -54,6 +54,22 @@ data:
   CURRENCY_ADDR: "currency.techx-tf3.svc.cluster.local:8080"
   SHIPPING_ADDR: "http://shipping.techx-tf3.svc.cluster.local:8080"
 
+  # ── Mandate-23 GenAI semantic cache (AIE2 copilot update) ────────
+  # Tier-2 lookup embeds the query with amazon.titan-embed-text-v2:0; the IRSA role allows
+  # that model (shopping-copilot-bedrock.tf). Left ON - it cuts repeat Bedrock calls, which
+  # is what bounds LLM spend on a public endpoint.
+  TITAN_SEMANTIC_CACHE: "true"
+
+  # ── Session store strictness ─────────────────────────────────────
+  # Set explicitly rather than relying on the code default. "true" = if Valkey is
+  # unreachable the app RAISES instead of falling back to a per-pod JSON file. That is the
+  # right call here (a file fallback would silently split sessions across the 2 replicas and
+  # lose long-term memory), but it does turn a Valkey blip into failed chat requests rather
+  # than degraded ones. Flip to "false" during a Valkey incident to trade correctness for
+  # availability. Note: BEDROCK_FALLBACK_MODEL_ID is deliberately NOT set - a fallback model
+  # would also need adding to the IRSA policy first.
+  STRICT_VALKEY: "true"
+
   # ── App ──────────────────────────────────────────────────────────
   # SSO hostname + the public storefront (embedded widget calls /api/copilot/* same-origin
   # via Envoy, so CORS is not strictly required, but list the storefront for any direct call).
