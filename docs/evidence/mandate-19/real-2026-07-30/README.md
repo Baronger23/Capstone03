@@ -1,9 +1,40 @@
-# Mandate #19 — evidence đo thật, 30/07/2026 (arm `baseline`)
+# Mandate #19 — evidence đo thật, 30/07/2026
 
 Bộ này **thay thế** `docs/evidence/mandate-19/pm-152/` và `docs/evidence/mandate-19/after/`
 làm nguồn số liệu cho Mandate #19. Lý do loại hai bộ cũ ở mục 5.
 
 Tái lập: [`scripts/mandate-19/`](../../../../scripts/mandate-19/) — `README.md` ở đó có lệnh.
+
+## 0. Bản đồ thư mục
+
+| Đường dẫn | Nội dung |
+|---|---|
+| `baseline/` + `baseline-client-truth.json` | arm **baseline** — cấu hình production trước mọi tuning của mandate này |
+| `tuned/` + `tuned-client-truth.json` | arm **tuned** — sau PR #649 (chỉ nới `maxReplicas`). **Không nâng được trần** |
+| `tuned2/` + `tuned2-client-truth.json` | arm **tuned2** — sau PR #656 (nới nút thắt `email`). Checkout @1400 lên **98,18%** |
+| `shed-demo/` | demo YC#4: probe qua CloudFront + counter Envoy + **video** + ảnh mốc |
+
+Mỗi `u<N>/` có: `sli.json` (cổng SLO), `infra.txt` (node-set hash + HPA + top nodes),
+`window.txt` (cửa sổ đo chính xác), `locust_stats.csv`, `locust_failures.csv`, `locust_agg.json`.
+
+> ### ⚠️ Đọc con số RPS ở đâu
+> **`*-client-truth.json`** là nguồn đúng cho throughput, không phải `sli.json`.
+> `frontend_total_rate` trong `sli.json` đi qua span pipeline, mà `otel-gateway` **mất span
+> dưới tải** (`dropped_items=8645/8365/10100` trong log 07:18–07:19). Mất mát đồng đều nên
+> **tỉ lệ** trong `sli.json` vẫn dùng được; **con số tuyệt đối** thì không.
+> Xem đầu file [`scripts/mandate-19/client_truth.py`](../../../../scripts/mandate-19/client_truth.py).
+
+## 0b. Kết quả ba arm (client-side, cổng SLO của `SLO.md`)
+
+| Users | baseline | tuned (#649) | tuned2 (#656) |
+|---:|---|---|---|
+| 800 | PASS | PASS | PASS |
+| **1000** | **PASS ← trần** | **PASS ← trần** | **PASS ← trần** |
+| 1400 | FAIL — checkout **29,21%** | FAIL — checkout **36,62%** | FAIL — browse 96,47%, checkout **98,18%** |
+
+Nới `maxReplicas` một mình (**tuned**) không đổi trần. Nới nút thắt `email` (**tuned2**) cứu
+được checkout nhưng ràng buộc dịch sang browse — nguyên nhân là kết nối gRPC bị ghim vào một
+pod (ADR 0011 §3.2), PR #660 xử.
 
 ## 1. Điều kiện đo
 
