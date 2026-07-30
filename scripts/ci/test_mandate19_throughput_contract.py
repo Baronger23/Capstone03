@@ -38,6 +38,19 @@ def _block(text: str, start: str, end: str) -> str:
     return text[text.index(start) : text.index(end, text.index(start))]
 
 
+def _res(block: str, kind: str, key: str = "cpu"):
+    """Đọc resources.<kind>.<key> bỏ qua dòng comment xen giữa.
+
+    values-prod.yaml có comment giải thích NGAY GIỮA `requests:` và `cpu:`, nên
+    regex hai dòng liền kề sẽ trượt.
+    """
+    m = re.search(rf"{kind}:\n((?:\s*#.*\n|\s*\w+:\s*\S+\n)+)", block)
+    if not m:
+        return None
+    m2 = re.search(rf"^\s*{key}:\s*(\S+)\s*$", m.group(1), re.M)
+    return m2.group(1) if m2 else None
+
+
 def test_frontend_hpa_packs_existing_nodes_and_has_replica_headroom():
     text = HPA.read_text(encoding="utf-8")
     block = _block(text, "name: frontend-hpa", "name: product-catalog-hpa")
@@ -255,3 +268,72 @@ def test_overload_profile_separates_shedable_and_protected_streams():
     assert '"/api/products"' in text
     assert '"/api/checkout"' in text
     assert "protected checkout was load-shed" in text
+
+
+def test_email_is_treated_as_the_throughput_bottleneck():
+    """email quyết định trần checkout — khoá cả HPA lẫn CPU của nó.
+
+    Đo 30/07 (docs/evidence/mandate-19/real-2026-07-30/), stage 1400 user:
+      span CLIENT `POST` checkout -> email  p95 = 15000 ms (= route timeout Envoy)
+      span SERVER email                     p95 =   391 ms
+    Chênh 14,6s là hàng đợi, không phải xử lý. checkout gọi email ĐỒNG BỘ
+    (src/checkout/main.go:473) nên hàng đợi đó ăn trọn budget request -> 504:
+    3.432/5.431 đơn hỏng, 82% toàn bộ lỗi client của stage.
+
+    Trước bản vá: 1 replica, Ruby/Sinatra+Puma (GIL) với limit CPU 100m = 0,1 core.
+    Hạ bất kỳ giá trị nào dưới đây là dựng lại nút thắt.
+    """
+    hpa = HPA.read_text(encoding="utf-8")
+    block = hpa[hpa.index("name: email-hpa"):]
+    assert "minReplicas: 2" in block
+    assert "maxReplicas: 8" in block
+
+    values = VALUES.read_text(encoding="utf-8")
+    email = _block(values, "\n  email:", "\n  fraud-detection:")
+    assert "replicasManagedExternally: true" in email
+    assert _res(email, "requests") == "75m", "request phải sát usage (đo 100m)"
+    assert _res(email, "limits") == "600m", "limit 100m CHÍNH LÀ trần cũ"
+
+
+def test_grpc_deadlines_are_not_hair_triggers_under_load():
+    """Deadline 500ms là nguồn của toàn bộ lỗi browse ở stage vỡ.
+
+    Log frontend @1400 user: "4 DEADLINE_EXCEEDED: Deadline exceeded after 0.500s".
+    product-catalog p95 server-side chỉ 6,9ms, nhưng đuôi dưới tải vượt 500ms và
+    KHÔNG có retry -> lỗi cứng: 311 x HTTP 500 (/api/products/[id]) + 431 x HTTP 503
+    (/api/product-reviews/[id]) = 742 lỗi, đúng phần kéo browse xuống 99,06%.
+
+    Giữ deadline (REL-17-02 chặn treo vô hạn — gRPC-js không có deadline mặc định)
+    nhưng nới ngưỡng. Trần 3000ms vì cổng SLO browse p95 < 1000ms.
+    """
+    values = VALUES.read_text(encoding="utf-8")
+    frontend = _block(values, "\n  frontend:", "\n  product-catalog:")
+    for var in ("PRODUCT_CATALOG_DEADLINE_MS", "PRODUCT_REVIEWS_DEADLINE_MS"):
+        m = re.search(rf'name: {var}\n\s+value: "(\d+)"', frontend)
+        assert m, f"{var} phải được đặt tường minh"
+        assert 900 <= int(m.group(1)) <= 3000, f"{var}={m.group(1)} ngoài khoảng an toàn"
+
+
+def test_cpu_requests_track_measured_usage_not_guesses():
+    """"Resource request sát usage" theo cả HAI chiều, đo ở stage 1400 user.
+
+    Thiếu (throttle) -> nới:  accounting 86,1% throttle (consumer MSK duy nhất ghi
+    đơn vào RDS; throttle = đơn đã đặt nằm chờ trong topic), recommendation 18,1%
+    (nằm trong mẫu số SLI browse).
+    Thừa (giữ chỗ) -> trả:   ad giữ 100m nhưng chỉ dùng 17-21m, throttle 0%. Request
+    là thứ scheduler chia node, nên phần thừa là phần email/accounting không xin được
+    trên chính node đó.
+    """
+    values = VALUES.read_text(encoding="utf-8")
+
+    accounting = _block(values, "\n  accounting:", "\n  email:")
+    assert _res(accounting, "requests") == "150m"
+    assert _res(accounting, "limits") == "600m"
+
+    ad = _block(values, "\n  ad:", "\n  frontend:")
+    assert int(_res(ad, "requests").rstrip("m")) <= 30, "ad phải thôi giữ chỗ 100m"
+    assert _res(ad, "limits") == "500m", "vẫn cho ad burst, chỉ thôi giữ chỗ"
+
+    reco = _block(values, "\n  recommendation:", "\n  accounting:")
+    assert _res(reco, "requests") == "150m"
+    assert _res(reco, "limits") == "700m"

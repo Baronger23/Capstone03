@@ -293,3 +293,55 @@ spec:
       selectPolicy: Max
     scaleDown:
       stabilizationWindowSeconds: 120
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: email-hpa
+  namespace: techx-tf3
+  annotations:
+    # Mandate-19: email LÀ nút thắt thông lượng của toàn hệ. Bằng chứng đo 30/07
+    # (docs/evidence/mandate-19/real-2026-07-30/, stage 1400 user):
+    #   span CLIENT `POST` của checkout -> email  p95 = 15000 ms
+    #   span SERVER của email                     p95 =   391 ms
+    # 14,6 giây chênh lệch KHÔNG phải thời gian xử lý — là thời gian XẾP HÀNG trước
+    # khi Puma nhận request. Đúng loại bão hoà directive #19 nêu tên: "không phải
+    # chậm - mà cạn: connection/queue depth".
+    #
+    # Vì sao nó kéo sập checkout: checkout gọi sendOrderConfirmation ĐỒNG BỘ
+    # (src/checkout/main.go:473) và không đặt deadline riêng, nên hàng đợi của email
+    # ăn trọn budget 15s của route Envoy -> 504. Ở stage 1400 user: 3.432/5.431 đơn
+    # trả 504, chiếm 82% toàn bộ lỗi client của stage.
+    #
+    # Vì sao 1 replica không đủ: email là Ruby/Sinatra trên Puma — MRI có GIL nên
+    # concurrency thật ~1 core, mà limit CPU chỉ 100m = 0,1 core. 14,7 rps x 391 ms
+    # = ~5,8 request đồng thời, vượt sức 1 pod.
+    #
+    # email KHÔNG bị ghim vào tầng elastic (không có trong values-mandate13.yaml) —
+    # nó nằm trên node managed t3.large đang rảnh (~20-30% CPU thật). Nên scale out
+    # ở đây dùng chỗ trống của node ĐANG CÓ, không thêm node.
+    mandate-19.techx.io/bottleneck: "queue-depth"
+    mandate-19.techx.io/evidence: "docs/evidence/mandate-19/real-2026-07-30/"
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: email }
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        { name: cpu, target: { type: Utilization, averageUtilization: 60 } }
+  behavior:
+    scaleUp:
+      # Hàng đợi email dựng lên trong vài giây khi checkout tăng tốc; phản ứng phải
+      # nhanh hơn các service browse (bước 4 pod/phút thay vì 2).
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+        - type: Pods
+          value: 4
+          periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 180
