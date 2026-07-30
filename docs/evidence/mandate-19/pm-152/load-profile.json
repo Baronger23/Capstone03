@@ -7,21 +7,22 @@
                    },
     "stages":  [
                    {
-                       "name":  "highest-passing-328-users",
-                       "users":  328,
-                       "durationMinutes":  5,
+                       "name":  "highest-passing-400-users",
+                       "users":  400,
+                       "durationMinutes":  null,
                        "expected":  "pass",
-                       "servedRps":  174.75
+                       "currentRps":  76.2
                    },
                    {
                        "name":  "failing-410-users",
                        "users":  410,
-                       "durationMinutes":  5,
+                       "durationMinutes":  null,
                        "expected":  "fail",
-                       "servedRps":  168.9
+                       "currentRps":  73.9,
+                       "currentFailurePercent":  1
                    }
                ],
     "locustVersion":  "1.7.0",
     "profileSha":  "pm-152-canonical-profile-v1",
-    "notes":  "The same traffic mix and stage duration were used for the highest-passing and failing runs."
+    "notes":  "Stage and current-RPS values are transcribed from screenshots. Duration and sustained served RPS cannot be established without raw CSV/exact-window data."
 }

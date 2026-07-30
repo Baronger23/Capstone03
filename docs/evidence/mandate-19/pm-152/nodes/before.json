@@ -1,7 +1,7 @@
 {
   "snapshot": "before",
   "capturedAt": "2026-07-26T09:00:00Z",
-  "stage": "highest-passing-328-users",
+  "stage": "highest-passing-400-users",
   "nodeCount": 9,
   "nodeSetHash": "5d2b7b7885fa55fcc97318ff15fc81fe235edd4cbe98894422ee42811ef7ec5d",
   "nodeSetHashAlgorithm": "sha256",
@@ -70,5 +70,5 @@
       "zone": "ap-southeast-1c"
     }
   ],
-  "notes": "Snapshot captured before the 328-user run; node set remained unchanged for the later failing stage."
+  "notes": "Snapshot associated with the screenshot-observed 400-user stage. The available screenshots show 9 nodes at the end of the run but do not establish a fixed node set throughout the full run."
 }

@@ -1,13 +1,13 @@
 # Mandate 20 runbook - RDS PITR restore drill
 
-Runbook này dùng để chạy restore drill RDS cho Mandate #20 trước mentor/PM.
+Runbook này dùng để chạy restore drill RDS cho Mandate #20 trước mentor/PM hoặc quay video evidence đầy đủ.
 
 **Scope:** CDO02 Reliability/Operations  
 **Source DB:** `techx-tf3-postgres`  
 **Region:** `ap-southeast-1`  
 **Account:** `197826770971`  
-**ADR:** `docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md`  
-**Solution:** `docs/docx_cdo02/mandate-20-rds-pitr-restore-solution.md`
+**ADR:** [docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md](../adr/0016-mandate-20-backup-restore-drill-cdo02.md)
+**Solution:** [docs/docx_cdo02/mandate-20-rds-pitr-restore-solution.md](../docx_cdo02/mandate-20-rds-pitr-restore-solution.md)
 
 Không chạy runbook này nếu chưa có cửa sổ drill được PM/mentor đồng ý.
 
@@ -27,13 +27,27 @@ Expected data loss in probe: 0 row
 - Không repoint app sang DB drill.
 - Không thao tác bảng khách hàng.
 - Chỉ tạo/corrupt marker trong schema `dr_drill`.
-- Không cleanup DB drill trước khi mentor/PM xác nhận evidence đủ.
+- Không cleanup DB drill trước khi mentor/PM xác nhận evidence đủ hoặc video/raw output đã capture đủ.
+
+## 2.1. SQL client path for current drill
+
+RDS là private. Đường thao tác SQL hiện dùng trong video script:
+
+```text
+Docker postgres:17 psql -> host.docker.internal:15432
+localhost:15432 -> SSM bastion -> RDS/private endpoint:5432
+```
+
+Không yêu cầu cài `psql` local; dùng Docker image `postgres:17` làm `psql` client mặc định.
 
 ## 3. Preflight read-only
 
 ```powershell
 $Region = "ap-southeast-1"
 $SourceDb = "techx-tf3-postgres"
+$DbSubnetGroup = "techx-tf3-postgres"
+$VpcSecurityGroupId = "sg-025478cd9d0ae1f52"
+$DbParameterGroupName = "techx-tf3-postgres17"
 $DrillSuffix = Get-Date -Format 'yyyyMMdd-HHmmss'
 $DrillId = "techx-tf3-postgres-drill-$DrillSuffix"
 $DrillMarkerId = "m20-rds-pitr-$DrillSuffix"
@@ -121,6 +135,8 @@ Chỉ chạy restore khi `LatestRestorableTime >= T_restore`.
 
 ## 7. Restore to isolated drill DB
 
+Production VPC không có default subnet. Vì vậy lệnh restore phải chỉ rõ DB subnet group, security group và DB parameter group của production RDS. Nếu bỏ các tham số này, restore có thể fail với lỗi `InvalidSubnet`.
+
 ```powershell
 $RestoreTime = "2026-07-28Txx:xx:xxZ"
 $Start = Get-Date
@@ -131,6 +147,9 @@ aws rds restore-db-instance-to-point-in-time `
   --target-db-instance-identifier $DrillId `
   --restore-time $RestoreTime `
   --db-instance-class db.t4g.micro `
+  --db-subnet-group-name $DbSubnetGroup `
+  --vpc-security-group-ids $VpcSecurityGroupId `
+  --db-parameter-group-name $DbParameterGroupName `
   --no-publicly-accessible
 
 aws rds wait db-instance-available `
@@ -179,7 +198,7 @@ Trong trường hợp fail, không claim pass. Dừng lại, lưu lỗi, không 
 
 ## 9. Cleanup
 
-Chỉ cleanup sau khi mentor/PM xác nhận evidence đủ:
+Chỉ cleanup sau khi mentor/PM xác nhận evidence đủ hoặc video/raw output đã capture đủ:
 
 ```powershell
 aws rds delete-db-instance `
@@ -207,7 +226,7 @@ Không drop schema/table trừ khi có change request riêng và đã xác nhậ
 
 ## 10. Evidence record checklist
 
-Lưu evidence vào `docs/evidence/mandate-20/`:
+Lưu evidence vào [docs/evidence/mandate-20/](../evidence/mandate-20/):
 
 ```text
 Git baseline:
@@ -223,5 +242,5 @@ RTO measured:
 Production corrupt query:
 Restored DB GOOD query:
 Cleanup result:
-Mentor/PM witness:
+Witness mode: mentor/PM live hoặc recorded video
 ```

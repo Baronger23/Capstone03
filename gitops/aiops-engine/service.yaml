@@ -6,10 +6,13 @@ metadata:
   namespace: techx-tf3
   labels:
     app.kubernetes.io/name: aiops-engine
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   type: ClusterIP
   selector:
     app: aiops-engine
+    app.kubernetes.io/name: aiops-engine
   ports:
   - name: http
     port: 80

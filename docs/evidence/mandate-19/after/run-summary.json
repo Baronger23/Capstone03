@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 2,
+  "status": "CAPTURED_INCOMPLETE",
+  "canonicalRun": true,
+  "source": {
+    "report": "docs/mandate-19-throughput-ceiling-report.md",
+    "locustHtml": "docs/evidence/mandate-19/after/locust-after-2026-07-29.html",
+    "screenshots": "tests/kyverno/mandate-19/test_slo_after/",
+    "locustHtmlAvailable": true,
+    "stageScreenshotsAvailable": true,
+    "rawLocustCsvAvailable": false,
+    "prometheusExactWindowExportsAvailable": false
+  },
+  "runWindow": {
+    "startUtc": "2026-07-29T04:37:25Z",
+    "endUtc": "2026-07-29T15:08:11Z",
+    "durationSeconds": 37846,
+    "host": "http://frontend-proxy:8080"
+  },
+  "infrastructure": {
+    "nodeCount": 7,
+    "nodeCountStatus": "OPERATOR_CONFIRMED",
+    "screenshotVerifiedWindow": "10-400 users",
+    "screenshotEvidence": "node-350-user.jpg shows Mean: 7 and Max: 7 in the visible Last-1-hour window.",
+    "laterStageQualification": "Stages after 400 users rely on the operator record; no complete node timeline or before/after node-set hash is attached.",
+    "nodeSetHashBefore": null,
+    "nodeSetHashAfter": null
+  },
+  "stageSnapshots": [
+    {
+      "users": 10,
+      "currentRps": 2.0,
+      "currentFailurePercent": 0,
+      "nodeCount": 7,
+      "checkoutP95Milliseconds": 85,
+      "checkoutP99Milliseconds": 170,
+      "result": "PASS_AT_SCREENSHOT"
+    },
+    {
+      "users": 300,
+      "currentRps": 64.0,
+      "currentFailurePercent": 0,
+      "nodeCount": 7,
+      "currentRpsPerNode": 9.14,
+      "checkoutP95Milliseconds": 100,
+      "checkoutP99Milliseconds": 230,
+      "result": "PASS_CANDIDATE"
+    },
+    {
+      "users": 350,
+      "currentRps": 70.5,
+      "currentFailurePercent": 0,
+      "nodeCount": 7,
+      "currentRpsPerNode": 10.07,
+      "checkoutP95Milliseconds": 130,
+      "checkoutP99Milliseconds": 350,
+      "result": "FIRST_OBSERVED_CHECKOUT_P99_BREACH"
+    },
+    {
+      "users": 400,
+      "currentRps": 78.6,
+      "currentFailurePercent": 0,
+      "nodeCount": 7,
+      "currentRpsPerNode": 11.23,
+      "checkoutP95Milliseconds": 180,
+      "checkoutP99Milliseconds": 490,
+      "result": "FAIL_CHECKOUT_LATENCY"
+    },
+    {
+      "users": 410,
+      "currentRps": 86.8,
+      "currentFailurePercent": 0,
+      "nodeCount": 7,
+      "currentRpsPerNode": 12.4,
+      "checkoutP95Milliseconds": 220,
+      "checkoutP99Milliseconds": 580,
+      "result": "FAIL_CHECKOUT_LATENCY_AVAILABILITY_CONTAINED"
+    },
+    {
+      "users": 500,
+      "currentRps": 103.3,
+      "currentFailurePercent": 0,
+      "nodeCount": 7,
+      "currentRpsPerNode": 14.76,
+      "checkoutP95Milliseconds": 320,
+      "checkoutP99Milliseconds": 700,
+      "result": "FAIL_CHECKOUT_LATENCY_AVAILABILITY_CONTAINED"
+    },
+    {
+      "users": 600,
+      "currentRps": 121.4,
+      "currentFailurePercent": 0,
+      "nodeCount": 7,
+      "currentRpsPerNode": 17.34,
+      "checkoutP95Milliseconds": 490,
+      "checkoutP99Milliseconds": 970,
+      "result": "FAIL_CHECKOUT_LATENCY_AVAILABILITY_CONTAINED"
+    },
+    {
+      "users": 700,
+      "currentRps": 147.1,
+      "currentFailurePercent": 0,
+      "nodeCount": 7,
+      "currentRpsPerNode": 21.01,
+      "checkoutP95Milliseconds": 750,
+      "checkoutP99Milliseconds": 1200,
+      "result": "FAIL_SLO_LOAD_SHEDDING_CANDIDATE"
+    },
+    {
+      "users": 800,
+      "currentRps": 148.6,
+      "currentFailurePercent": 0,
+      "nodeCount": 7,
+      "currentRpsPerNode": 21.23,
+      "checkoutP95Milliseconds": 1000,
+      "checkoutP99Milliseconds": 1700,
+      "result": "FAIL_LATENCY_PREFERENTIAL_CONTAINMENT_OBSERVED"
+    },
+    {
+      "users": 900,
+      "currentRps": 151.5,
+      "currentFailurePercent": 1,
+      "nodeCount": 7,
+      "nodeCountQualification": "Operator-confirmed; no stage-specific node screenshot.",
+      "checkoutP95Milliseconds": 1200,
+      "checkoutP99Milliseconds": 1900,
+      "result": "FAIL_OVERALL_SLO_PREFERENTIAL_DEGRADATION_OBSERVED"
+    }
+  ],
+  "locustHtmlStageHistory": [
+    {"users": 10, "durationSeconds": 32100, "durationApproximate": true, "averageRps": 2.1, "maxRps": 5.7, "averageFailuresPerSecond": 0.0002, "maxFailuresPerSecond": 0.3, "aggregateP95Milliseconds": 49.7},
+    {"users": 300, "durationSeconds": 203, "averageRps": 63.25, "maxRps": 86.4, "averageFailuresPerSecond": 0, "maxFailuresPerSecond": 0, "aggregateP95Milliseconds": 234.8},
+    {"users": 350, "durationSeconds": 175, "averageRps": 71.2, "maxRps": 79.2, "averageFailuresPerSecond": 0, "maxFailuresPerSecond": 0, "aggregateP95Milliseconds": 193.4},
+    {"users": 400, "durationSeconds": 179, "averageRps": 81.97, "maxRps": 89.3, "averageFailuresPerSecond": 0.0111, "maxFailuresPerSecond": 0.1, "aggregateP95Milliseconds": 288.9},
+    {"users": 410, "durationSeconds": 245, "averageRps": 82.89, "maxRps": 95.5, "averageFailuresPerSecond": 0.0163, "maxFailuresPerSecond": 0.2, "aggregateP95Milliseconds": 337.6},
+    {"users": 500, "durationSeconds": 167, "averageRps": 100.32, "maxRps": 112.5, "averageFailuresPerSecond": 0.0312, "maxFailuresPerSecond": 0.3, "aggregateP95Milliseconds": 616.2},
+    {"users": 600, "durationSeconds": 164, "averageRps": 118.39, "maxRps": 128.9, "averageFailuresPerSecond": 0.2061, "maxFailuresPerSecond": 1.0, "aggregateP95Milliseconds": 863.3},
+    {"users": 700, "durationSeconds": 151, "averageRps": 129.22, "maxRps": 158.3, "averageFailuresPerSecond": 1.5833, "maxFailuresPerSecond": 7.0, "aggregateP95Milliseconds": 1235},
+    {"users": 800, "durationSeconds": 158, "averageRps": 137.9, "maxRps": 162.4, "averageFailuresPerSecond": 6.5065, "maxFailuresPerSecond": 18.4, "aggregateP95Milliseconds": 1638.1},
+    {"users": 900, "durationSeconds": 59, "averageRps": 136.25, "maxRps": 164.4, "averageFailuresPerSecond": 13.125, "maxFailuresPerSecond": 29.5, "aggregateP95Milliseconds": 2733.3}
+  ],
+  "beforeAfterComparison": {
+    "highestOfferedUsers": {
+      "beforeObserved": 400,
+      "afterObserved": 900
+    },
+    "peakServedRpsHoldingSlo": {
+      "before": null,
+      "beforeStatus": "NOT_ESTABLISHED",
+      "after": null,
+      "afterStatus": "NOT_ESTABLISHED"
+    },
+    "highestCurrentRpsObserved": {
+      "before": 76.2,
+      "beforeUsers": 400,
+      "after": 151.5,
+      "afterUsers": 900,
+      "qualification": "Both values are point-in-time Locust readings, not sustained SLO-holding ceilings."
+    },
+    "afterHighestPassingCandidateUsers": 300,
+    "afterFirstFailingCandidateUsers": 350
+  },
+  "runTotals": {
+    "requests": 454136,
+    "failures": 2625,
+    "failurePercent": 0.578,
+    "aggregateMedianMilliseconds": 15,
+    "aggregateAverageMilliseconds": 133.58,
+    "aggregateP95Milliseconds": 850,
+    "aggregateP99Milliseconds": 1700,
+    "aggregateMaxMilliseconds": 5754
+  },
+  "failureClassification": {
+    "http429": 0,
+    "http500": 2342,
+    "http503": 283,
+    "checkoutHttp500": 69,
+    "checkoutHttp503": 2,
+    "conclusion": "Preferential containment is visible, but the run does not prove intentional Envoy load shedding because no HTTP 429 or required response-header evidence was captured."
+  },
+  "acceptance": {
+    "highestPassingCandidateUsers": 300,
+    "firstFailingCandidateUsers": 350,
+    "sustainedSloHoldingRpsEstablished": false,
+    "fixedNodeCountClaim": "PARTIALLY_VERIFIED",
+    "gracefulDegradationMechanismProven": false,
+    "mandate19Pass": false,
+    "reasons": [
+      "No 300-900 user stage was sustained for the required five minutes.",
+      "Raw Locust CSV and exact-window Prometheus exports are missing.",
+      "A complete seven-node timeline and matching before/after node-set hashes are missing.",
+      "No HTTP 429, x-techx-load-shed, x-envoy-ratelimited or Envoy rate-limit counter evidence was captured.",
+      "Unexpected HTTP 500 and HTTP 503 responses occurred on protected routes."
+    ]
+  }
+}

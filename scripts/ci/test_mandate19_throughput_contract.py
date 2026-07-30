@@ -154,7 +154,7 @@ def test_rate_limit_promotion_knobs_are_explicit_and_build_validated():
         "BROWSE_RATE_LIMIT_TOKENS_PER_FILL": "50",
         "BROWSE_RATE_LIMIT_FILL_INTERVAL": "1s",
         "BROWSE_RATE_LIMIT_ENABLED_PERCENT": "100",
-        "BROWSE_RATE_LIMIT_ENFORCED_PERCENT": "0",
+        "BROWSE_RATE_LIMIT_ENFORCED_PERCENT": "100",
         "LOCAL_RATE_LIMIT_ENABLED_PERCENT": "100",
         "LOCAL_RATE_LIMIT_ENFORCED_PERCENT": "0",
     }

@@ -1,11 +1,12 @@
 ﻿{
     "run":  "run-1",
-    "stage":  "highest-passing-328-users",
-    "startedAt":  "2026-07-26T08:55:00Z",
-    "endedAt":  "2026-07-26T09:00:00Z",
-    "users":  328,
-    "targetRps":  180,
-    "observedServedRps":  174.75,
+    "stage":  "highest-passing-400-users",
+    "startedAt":  null,
+    "endedAt":  null,
+    "users":  400,
+    "targetRps":  null,
+    "observedCurrentRps":  76.2,
+    "observedCurrentFailurePercent":  0,
     "status":  "pass",
-    "notes":  "Sustained 5-minute pass run used for the old ceiling."
+    "notes":  "Transcribed from test_slo/400_user_locust.jpg. This is a point-in-time screenshot, not proof of a sustained five-minute rate."
 }
