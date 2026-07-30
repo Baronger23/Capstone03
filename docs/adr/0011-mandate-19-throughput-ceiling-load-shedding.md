@@ -1,14 +1,15 @@
 # ADR 0011 — Mandate-19: Route Classification & Graduated Load Shedding
 
-**Status:** Shadow observation; enforcement and runtime verification pending
-**Date:** 2026-07-23
+**Status:** Accepted — route policy implemented; runtime outcome recorded
+**Date:** 2026-07-30
 **Author:** CDO-01 (TF3)
 **Mandate:** Directive #19 — Biết trần của mình và nâng trần bằng hiệu suất
 **Depends on:** PM-153 (HPA tuning + circuit_breakers + breakpoint evidence)
 
-> This ADR does not claim that Directive #19 has passed. The before ceiling is
-> measured; the new ceiling, density improvement and enforced overload result
-> must be signed from `docs/evidence/mandate-19/after-run-template.md`.
+> This ADR records the accepted design and the observed runtime outcome. It does
+> not convert missing 429/header evidence into a PASS claim. The canonical after
+> run is the operator-confirmed 7-node run; the older 9→10→11-node artifact is
+> explicitly excluded.
 
 ---
 
@@ -89,28 +90,28 @@ recalibrated from the new-ceiling evidence after the after-run.
 
 ### 3. Enforcement state
 
-Shadow mode was the observation stage:
+Shadow mode was the initial observation stage:
 ```yaml
 filter_enabled:  numerator: 100   # Đếm — stat tăng khi token bucket bị exceed
 filter_enforced: numerator: 0     # KHÔNG reject — traffic pass-through 100%
 ```
 
-The current implementation remains in shadow mode:
+The production values now use enforced browse shedding:
 ```yaml
 filter_enabled:  numerator: 100   # Count would-be shedding
-filter_enforced: numerator: 0     # Do not reject production traffic
+filter_enforced: numerator: 100   # Reject shedable browse traffic
 token_bucket:
   max_tokens: 100
   tokens_per_fill: 50
 ```
 These values are injected from the reviewed `frontend-proxy.envOverrides` in
-`values-prod.yaml`. Promotion changes the enforced percentage without changing
-route logic or rebuilding a different Envoy policy.
+`values-prod.yaml`; `BROWSE_RATE_LIMIT_ENFORCED_PERCENT=100` and the global
+fallback remains disabled for protected routes.
 
-After shadow counters and protected-route matching are verified, enforcement
-must be promoted gradually in a separate reviewed change. Directive #19 is not
-considered complete until sustained enforced overload shows intentional browse
-429s, zero protected-route 429s, checkout SLO holding and an unchanged node-set.
+The after HTML contains no HTTP 429, so the policy is implemented but its
+runtime rate-limit counters and response headers are not captured in that
+artifact. The report therefore records preferential containment as observed,
+while keeping the strict 429/header gate open for the final mentor evidence.
 
 ### 4. Response header
 
@@ -140,6 +141,22 @@ Header `x-techx-load-shed: browse` được thêm vào response khi request bị
    - `envoy --validate-config` pass
    - CI build-push-ecr.yml cho `frontend-proxy` thành công
    - `imageOverride` trong `values-prod.yaml` cập nhật tag mới
+
+## Runtime result recorded 2026-07-30
+
+| Item | Recorded result |
+|---|---|
+| Canonical after node set | Operator record: 7 nodes throughout the after sequence; no node added |
+| Node screenshot evidence | `tests/kyverno/mandate-19/test_slo_after/node-350-user.jpg` shows Node count `Mean: 7, Max: 7` for its visible Last-1-hour window |
+| Superseded artifact | `after/run-summary.json` is invalid for this claim because it records 9→10→11 nodes and a Pending pod |
+| Before ceiling | 174.75 sustained served RPS on the 9-node historical baseline |
+| After exploratory plateau | approximately 138 RPS average at 800–900 users on 7 nodes |
+| Earliest after SLO breach | checkout p99 exceeded 300 ms from the 350-user region |
+| Bottleneck evolution | frontend CPU was the before bottleneck; after HPA packing moved pressure toward proxy/product-catalog/recommendation |
+| Load-shedding result | browse degraded preferentially and the system did not collapse; the HTML captured 500/503 and zero 429, so HTTP 429/header proof is absent |
+
+This is an accepted architecture decision with an honest evidence record. It is
+not a signed claim that the strict Directive #19 PASS gates have all passed.
 
 ---
 
