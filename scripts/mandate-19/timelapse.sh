@@ -34,15 +34,30 @@ for i in $(seq -w 1 "$N"); do
   sleep "$EVERY"
 done
 
-# Ghép GIF. ImageMagick/ffmpeg chạy trong container để không phụ thuộc máy host.
+# Xuất HAI bản. ffmpeg chạy trong container để không phụ thuộc máy host.
+#
+#  - MP4 là bản để mentor xem. Giữ nguyên 1920px nên đọc được số trên panel và
+#    time picker; 1 frame ~ 1,5s để kịp đọc.
+#  - GIF là bản dán vào báo cáo/PR (GitHub không phát MP4 inline). Buộc phải hạ
+#    còn 1100px cho khỏi vài chục MB — ở kích thước đó chữ trong panel nhoè, nên
+#    GIF chỉ dùng để thấy XU HƯỚNG; con số phải đọc từ MP4 hoặc frame PNG gốc.
+echo "ghép MP4..."
+docker run --rm -v "$ABS:/w" -w /w linuxserver/ffmpeg \
+  -y -framerate 2/3 -pattern_type glob -i 'frames/f*.png' \
+  -c:v libx264 -pix_fmt yuv420p -r 24 \
+  -vf "scale=1920:-2:flags=lanczos,pad=ceil(iw/2)*2:ceil(ih/2)*2" \
+  timelapse.mp4 >/dev/null 2>&1
+
 echo "ghép GIF..."
 docker run --rm -v "$ABS:/w" -w /w linuxserver/ffmpeg \
   -y -framerate 2 -pattern_type glob -i 'frames/f*.png' \
   -vf "scale=1100:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse" \
   -loop 0 timelapse.gif >/dev/null 2>&1
 
-if [ -f "$ABS/timelapse.gif" ]; then
-  echo "  -> timelapse.gif ($(stat -c%s "$ABS/timelapse.gif") bytes, $N frame)"
-else
-  echo "  -> ffmpeg thất bại; các frame PNG vẫn còn ở $ABS/frames/" >&2
-fi
+for f in timelapse.mp4 timelapse.gif; do
+  if [ -f "$ABS/$f" ]; then
+    echo "  -> $f ($(stat -c%s "$ABS/$f") bytes, $N frame)"
+  else
+    echo "  -> ffmpeg thất bại với $f; frame PNG gốc vẫn còn ở $ABS/frames/" >&2
+  fi
+done

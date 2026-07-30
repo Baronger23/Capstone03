@@ -1511,13 +1511,36 @@ components:
       tag: 8f38296-30506402359-frontend-proxy
     # Mandate #19: browse shedding is enforced after staged route-validation
     # gates. Protected routes remain non-binding via the global fallback bucket.
+    #
+    # === HIỆU CHỈNH BUDGET (30/07/2026) — sửa regression do chính PR #649 ===
+    # Bucket này là PER-REPLICA (in-process token bucket của Envoy), nên budget
+    # TỔNG = tokens_per_fill x số replica frontend-proxy. PR #649 nới maxReplicas
+    # của proxy 8 -> 12 để nâng trần, và vô tình nâng luôn budget shed 400 -> 600,
+    # tức làm YẾU lớp bảo vệ đúng lúc tải cao nhất. Đo được trực tiếp ở stage
+    # 2400 user (docs/evidence/mandate-19/real-2026-07-30/):
+    #
+    #   arm        proxy max   shedable offered   429      hệ quả
+    #   baseline   8           110,7 rps          3.641    shed đúng, protected 0x429
+    #   tuned      12          112,8 rps              0    KHÔNG shed -> 1.713 x HTTP 500
+    #
+    # Cùng một mức tải, cùng hạ tầng: bản có nhiều replica hơn lại mất khả năng
+    # xuống mềm và chuyển sang trả lỗi 5xx. Đó là chiều ngược với YC#4.
+    #
+    # 50 -> 33 để budget tổng ở mức scale-out tối đa quay về ĐÚNG điểm bảo vệ đã
+    # kiểm chứng bằng thực nghiệm: 12 x 33 = 396 ~ 8 x 50 = 400 của arm baseline.
+    # max_tokens giữ tỉ lệ burst 2x: 100 -> 66.
+    #
+    # ⚠️ Hạn chế đã biết: budget vẫn trôi theo số replica. Cách sửa đúng về kiến
+    # trúc là bucket dùng chung toàn cluster (`local_cluster_rate_limit` của Envoy),
+    # nhưng nó nằm trong envoy.tmpl.yaml — tức trong IMAGE, phải rebuild. Ghi lại ở
+    # ADR 0011 làm việc còn mở, không giấu.
     envOverrides:
       - name: FRONTEND_HOST
         value: frontend-headless
       - name: BROWSE_RATE_LIMIT_MAX_TOKENS
-        value: "100"
+        value: "66"
       - name: BROWSE_RATE_LIMIT_TOKENS_PER_FILL
-        value: "50"
+        value: "33"
       - name: BROWSE_RATE_LIMIT_FILL_INTERVAL
         value: "1s"
       - name: BROWSE_RATE_LIMIT_ENABLED_PERCENT
