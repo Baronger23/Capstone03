@@ -87,13 +87,14 @@ Nguồn số liệu before hiện tại lấy từ:
 
 | Chỉ số | Before |
 |---|---:|
-| Highest passing stage | 328 users |
+| Highest passing stage quan sát được | 400 users |
 | Failing stage | 410 users |
-| Sustained served RPS giữ SLO | 174.75 |
-| Breakpoint served RPS | 168.9 |
+| Current RPS tại ảnh giữ SLO | 76.2 |
+| Current RPS tại ảnh breakpoint | 73.9 |
+| Current failures tại breakpoint | 1% |
 | Bottleneck sớm nhất | frontend CPU saturation and throttling |
 | Co-bottleneck loại trừ được | frontend-proxy chưa overflow; DB pool product-catalog chưa cạn |
-| Failure window | 2026-07-26T09:28:30Z → 2026-07-26T09:29:30Z |
+| Failure window | Chưa xác định được từ screenshot |
 
 ### 3.2. Kết luận before
 
@@ -104,8 +105,8 @@ Before run cho thấy hệ chưa gãy vì frontend-proxy hay DB pool. Nút thắ
 | Chỉ số | Before |
 |---|---|
 | Node count trong run before | 9 |
-| Served RPS | 174.75 |
-| Requests-per-node | 19.42 RPS/node |
+| Current RPS snapshot | 76.2 |
+| Requests-per-node snapshot | 8.47 RPS/node |
 
 Node-set before được chụp ở đầu và cuối run, cùng có `nodeCount: 9` và cùng hash
 `5d2b7b7885fa55fcc97318ff15fc81fe235edd4cbe98894422ee42811ef7ec5d`.
@@ -164,22 +165,31 @@ Phần này để trống có cấu trúc để cập nhật ngay sau khi bạn 
 
 ### 5.1. Kết quả breakpoint after
 
-| Chỉ số | Before | After | Delta |
-|---|---:|---:|---:|
-| Highest passing stage | 328 users | 300 users (provisional) | -28 users |
-| Failing stage | 410 users | 350 users (provisional) | -60 users |
-| Sustained served RPS giữ SLO | 174.75 | 63.25 RPS average tại 300 users | -111.50 RPS |
-| Breakpoint served RPS | 168.9 | 71.20 RPS average tại 350 users | -97.70 RPS |
+| Measure | Before | After |
+|---|---:|---:|
+| Highest offered users | 400 observed | 410 observed |
+| Peak served RPS holding SLO | Not established | Not established |
+| Highest current RPS observed | 76.2 at 400 users | 81.8 at 410 users |
+
+Giá trị before `76.2 RPS` và after `81.8 RPS` đều chỉ là current RPS tại thời
+điểm chụp Locust. Do thiếu raw CSV và exact-window SLO, không được dùng hai số
+này làm sustained ceiling hoặc kết luận throughput đã tăng/giảm.
+
+| Chỉ số định tính | Before | After | Kết luận |
+|---|---|---|---|
 | Primary bottleneck | frontend CPU saturation and throttling | Recommendation CPU 71% / HPA target 65% tại failing candidate 350 users; frontend đã scale 2→3 replica và hạ còn 63%/65% | Frontend bottleneck đã được nới; điểm nóng đầu tiên tại vùng SLO gãy dịch sang recommendation |
 | Co-bottlenecks | proxy không overflow, DB pool chưa cạn | Frontend-proxy 62%/65% tại 350 users, sau đó 71%/65% tại 400 users; product-catalog 51%/65% tại 350 và 57%/65% tại 400; không có bằng chứng Envoy overflow hoặc DB pool cạn | Proxy trở thành saturation candidate kế tiếp tại 400 users; DB pool vẫn được loại trừ |
 
 ### 5.2. Density before/after
 
-| Chỉ số | Before | After | Delta |
-|---|---:|---:|---:|
-| Node count trong từng run | 9 | 7 xuyên suốt run after | 0 trong nội bộ mỗi run |
-| Served RPS giữ SLO | 174.75 | 63.25 RPS tại stage 300 (provisional) | -111.50 RPS |
-| Requests-per-node | 19.42 | 9.04 (provisional) | -53.5% |
+| Measure | Before | After |
+|---|---:|---:|
+| Node count | Not comparable | 9 → 11 in the captured attempt |
+| Served RPS/node | Not comparable | Not valid: node set changed |
+| Peak served RPS holding SLO | Not established | Not established |
+
+Không tính delta hay improvement percentage cho attempt này vì node set thay
+đổi và after chưa có sustained served RPS giữ SLO.
 
 **Diễn giải node đúng:** run after không scale node theo tải. Bộ ảnh after mới
 bao phủ các stage 10, 300, 350 và 400 users; panel `Node count (Karpenter burst)`
@@ -490,8 +500,8 @@ Locust endpoint snapshot:
   Ready và bucket 50 RPS/proxy, aggregate budget tại stage này xấp xỉ 150 RPS;
   vì vậy chưa có 429 là phù hợp. Cần browse-only overload vượt hẳn 150 RPS để
   demo shedding và xác nhận protected-route 429 bằng 0.
-- `86.8 / 7 = 12.40 RPS/node` chỉ là snapshot. Ngoài ra giá trị này thấp hơn
-  before sustained served RPS 174.75, nên tuyệt đối chưa dùng để tuyên bố trần
+- `86.8 / 7 = 12.40 RPS/node` chỉ là snapshot. Before cũng chỉ có snapshot
+  76.2 RPS tại stage 400, nên tuyệt đối chưa dùng hai số này để tuyên bố trần
   after cao hơn. Cần CSV exact-window và xác nhận transaction mix/profile giống
   before trước khi so sánh throughput.
 
@@ -1092,7 +1102,7 @@ locust -f "$LOCUSTFILE" --headless --host "$HOST" \
   -u 20 -r 5 -t 30s --csv="$OUT/warmup"
 
 # breakpoint stages; chỉ chuyển stage khi stage trước đạt gate
-for users in 50 100 150 200 250 300 328 350 375 410; do
+for users in 50 100 150 200 250 300 325 350 400 410; do
   locust -f "$LOCUSTFILE" --headless --host "$HOST" \
     -u "$users" -r 10 -t 5m --csv="$OUT/users-$users" \
     --html="$OUT/users-$users.html"
