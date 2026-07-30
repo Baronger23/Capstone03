@@ -48,6 +48,28 @@ Cách đo mới:
 > **Cách xử:** tỉ lệ (%) vẫn đọc từ Prometheus (mất đều thì tử/mẫu cùng co), còn **con số tuyệt
 > đối (RPS) đọc từ máy bắn tải** — đo tại người dùng, không qua đường ống nào.
 
+### Đối chiếu với ba con số "trần" đang cùng tồn tại trong repo
+
+Trong repo hiện có **ba** con số trần khác nhau. Chúng **không mâu thuẫn** — chúng đo ba thứ
+khác nhau. Ghi rõ ở đây để người review không phải tự suy luận:
+
+| Nguồn | Trần công bố | Đo cái gì | Vì sao khác |
+|---|---|---|---|
+| `docs/evidence/report.md` (PM-152, bản gốc) | 328 user / **174,75 RPS** | — | Chính tác giả đã rút lại: không có CSV exact-window để chứng minh |
+| `docs/evidence/report.md` (PM-152, [PR #634](https://github.com/tuu-ngo/Phase3-TF3-Infra-Sentinel/pull/634)) | 400 user / **76,2 RPS** | **RPS tức thời** đọc từ *một* ảnh chụp Grafana | Là giá trị *snapshot* tại một thời điểm, không phải trung bình duy trì. Tác giả đã tự ghi rõ điều này trong PR |
+| **Báo cáo này** | **1000 user / 202,4 RPS** | **RPS trung bình duy trì suốt 300 giây**, tính từ CSV Locust | Đo tại client, cửa sổ đo cố định, có hash tập node kèm mỗi stage |
+
+Ba điểm cần nắm:
+
+1. **76,2 RPS và 202,4 RPS không so sánh trực tiếp được.** Một cái là kim đồng hồ tại một giây;
+   một cái là quãng đường đi trong 5 phút. Bắn cùng một tải mà đọc bằng hai thước này sẽ ra hai số.
+2. **Cả hai con số PM-152 đều thiếu ràng buộc "không thêm node"** — ảnh evidence của bài đo cũ cho
+   thấy node trôi 9 → 10 → 11 giữa bài. Directive #19 đòi giữ nguyên số node, nên bài đo cũ không
+   dùng làm gốc so sánh được, bất kể con số là bao nhiêu.
+3. **Không phải bài đo cũ sai, mà là nó trả lời câu hỏi khác.** PM-152 hỏi "hệ chịu được bao nhiêu";
+   Mandate #19 hỏi "trần ở đâu, và nâng được bao nhiêu **trên cùng một tập node**". Câu thứ hai bắt
+   buộc phải đo lại từ đầu — đó cũng chính là lý do YC#2 phải lấy trần mới, xem [§5](#vì-sao-cổng-44-vẫn-chưa-qua--giải-thích-đầy-đủ).
+
 ---
 
 ## 2. Trần thật: 1000 user / 202,4 RPS
