@@ -8,9 +8,9 @@ Tài liệu này là bản solution hiện hành cho Mandate #20 sau khi ADR/run
 ADR: docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md
 Runbook: docs/runbooks/mandate-20-rds-pitr-drill.md
 Evidence index: docs/evidence/mandate-20/README.md
-Video script: docs/evidence/mandate-20/video-capture-script-20260729.md
-RDS preflight evidence: docs/evidence/mandate-20/rds-pitr-preflight-20260729.md
-RDS drill evidence: docs/evidence/mandate-20/rds-pitr-drill-20260729-181943.md
+Video script: incident_report/mandate20-video-script-rds-pitr-drill-2026-07-29.md (operator-local, not pushed as PR evidence)
+RDS preflight evidence: docs/evidence/mandate-20/supporting-rds-pitr-preflight-20260729.md
+RDS drill evidence: docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md
 Status: RDS PITR restore correctness passed; Drive video links pending; overall Mandate #20 depends on accepted non-RDS scope/limitations and delete-authority posture
 ```
 
@@ -84,7 +84,7 @@ RTO measured: 23.83 phút
 RTO target: <= 45 phút
 Restored DB marker: GOOD_BEFORE_CORRUPTION
 RDS PITR restore correctness: PASS
-Video evidence: 4 videos captured, Drive links pending
+Video evidence: 4 videos captured, Drive links recorded in final evidence
 ```
 
 Lưu ý khi đọc video:

@@ -20,7 +20,7 @@ Hiện tại CDO02 đã có:
 - Runbook restore drill an toàn, restore ra DB tách biệt.
 - Evidence index cho Mandate 20.
 - Production baseline cho từng tầng dữ liệu/state.
-- RDS PITR drill record thật: `docs/evidence/mandate-20/rds-pitr-drill-20260729-181943.md`.
+- RDS PITR drill record thật: `docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md`.
 
 Hiện tại CDO02 vẫn còn cần chốt:
 
@@ -36,7 +36,7 @@ Kết luận ngắn: RDS drill đã pass; Mandate 20 overall còn phụ thuộc 
 | 1. Không sót store nào trên luồng ra tiền | ADR đã có data-tier commitments và coverage matrix | `Partial` |
 | 2. RPO/RTO rõ ràng, cadence tương xứng | RDS có target và measured result; store khác ghi limitation/strategy | `RDS passed / Non-RDS partial` |
 | 3. Point-in-time restore chứng minh được | RDS PITR drill đã restore về `T_restore` và trả marker GOOD | `Passed for RDS` |
-| 4. Tested restore drill | Evidence record `rds-pitr-drill-20260729-181943.md`, RTO 23.83 phút | `Passed for RDS` |
+| 4. Tested restore drill | Evidence record `mandate-20-final-rds-pitr-evidence-20260729.md`, RTO 23.83 phút | `Passed for RDS` |
 | 5. Backup an toàn, tách quyền xóa | ADR đã nêu delete-authority matrix | `Needs enforcement evidence or accepted risk` |
 
 ## 3. Data-tier baseline cần có trước buổi drill
@@ -108,8 +108,8 @@ RDS tested restore drill đã chạy thật.
 
 Evidence:
 
-- `docs/evidence/mandate-20/rds-pitr-drill-20260729-181943.md`
-- 4 video đã quay, Drive links pending
+- `docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md`
+- 4 video đã quay, Drive links đã ghi trong final evidence
 - RTO `23.83 phút`, trong target `<= 45 phút`
 - Production marker vẫn `CORRUPTED_AFTER_GOOD_TIME`
 - Restored drill DB marker trả `GOOD_BEFORE_CORRUPTION`
@@ -177,10 +177,9 @@ Phải có:
 
 ## 6. Việc CDO02 nên làm tiếp ngay
 
-1. Gắn link Drive cho 4 video vào `rds-pitr-drill-20260729-181943.md`.
-2. Cleanup DB drill tạm sau khi team/mentor xác nhận đã lưu đủ evidence.
-3. Chốt accepted limitation hoặc security verdict cho quyền xóa backup/snapshot.
-4. Chốt wording với mentor/PM: RDS drill passed; non-RDS stores là coverage/limitation, không claim PITR như RDS.
+1. Cleanup DB drill tạm sau khi team/mentor xác nhận đã lưu đủ evidence.
+2. Chốt accepted limitation hoặc security verdict cho quyền xóa backup/snapshot.
+3. Chốt wording với mentor/PM: RDS drill passed; non-RDS stores là coverage/limitation, không claim PITR như RDS.
 
 ## 7. Việc cần Security/delete-authority chốt
 

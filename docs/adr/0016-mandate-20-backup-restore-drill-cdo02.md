@@ -44,7 +44,7 @@ Expected data loss in probe: 0 row
 Kết quả drill đã ghi nhận ngày 2026-07-29:
 
 ```text
-Evidence record: docs/evidence/mandate-20/rds-pitr-drill-20260729-181943.md
+Evidence record: docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md
 Drill marker id: m20-rds-pitr-20260729-181943
 T_good_commit_utc: 2026-07-29T12:02:18.751869Z
 T_restore: 2026-07-29T12:03:00Z
@@ -105,7 +105,7 @@ ADR này ghi cam kết vận hành theo từng tầng dữ liệu để khớp y
 
 | Tầng dữ liệu / state | Vai trò trong hệ thống | RPO target | RTO target | Backup / recovery strategy | Cadence / retention | CDO02 claim | Security / delete-permission verdict |
 |---|---|---|---|---|---|---|---|
-| RDS PostgreSQL `techx-tf3-postgres` | Store chính cho catalog/reviews/accounting/order data | `<= 5 phút` theo PITR window | `<= 45 phút` cho restore drill; measured `23.83 phút` | RDS automated backup + PITR; restore về `T_restore` sang DB drill tách biệt | Automated backup retention 7 ngày; manual snapshot phụ nếu có | **Claim chính của CDO02 đã pass RDS drill**; evidence `rds-pitr-drill-20260729-181943.md` | Cần ghi ai được xóa snapshot/automated backup và KMS posture; nếu admin-wide còn rộng thì ghi accepted risk |
+| RDS PostgreSQL `techx-tf3-postgres` | Store chính cho catalog/reviews/accounting/order data | `<= 5 phút` theo PITR window | `<= 45 phút` cho restore drill; measured `23.83 phút` | RDS automated backup + PITR; restore về `T_restore` sang DB drill tách biệt | Automated backup retention 7 ngày; manual snapshot phụ nếu có | **Claim chính của CDO02 đã pass RDS drill**; evidence `mandate-20-final-rds-pitr-evidence-20260729.md` | Cần ghi ai được xóa snapshot/automated backup và KMS posture; nếu admin-wide còn rộng thì ghi accepted risk |
 | ElastiCache Valkey `techx-tf3-valkey` | Cart/session cache trên luồng browse -> cart -> checkout | Target theo snapshot window; nếu không claim restore cart, ghi accepted cart-state strategy | Target theo restore snapshot hoặc accepted recovery strategy | ElastiCache snapshot/restore hoặc accepted limitation: cart state là soft-state, không dùng làm PITR proof chính | Snapshot retention quan sát: 3 ngày | CDO02 ghi coverage verdict, không thay RDS PITR drill | Nếu claim backup, cần ghi encryption/snapshot delete permission hoặc accepted risk |
 | MSK Kafka `techx-tf3-kafka` | Order event stream cho checkout -> accounting/fraud | Target: `0 acknowledged order lost` trong retention window nếu producer/consumer replay đúng | Target theo consumer replay/reconciliation, cần evidence sau drill/record riêng | MSK retention/replay; không gọi là PITR backup | Topic retention cần được capture trong evidence; prior docs ghi 168h | CDO02 ghi replay/reconciliation strategy, không dùng làm PITR proof chính | Cần ghi KMS/IAM/delete topic/config destructive control nếu claim |
 | DynamoDB `techx-tf3-terraform-lock` | Terraform lock table, không phải dữ liệu khách hàng | Excluded nếu chỉ là lock tái tạo được | Rebuild/recreate lock table nếu mất | Exclusion with reason, không dùng làm data restore proof | Không yêu cầu retention khách hàng nếu exclude | CDO02 claim exclude nếu team xác nhận chỉ là lock | Nếu team muốn protect, cần xác nhận PITR/IAM |
@@ -155,7 +155,7 @@ Kết luận: trước khi có enforcement evidence hoặc accepted-risk note, C
 
 ## Evidence record sau drill
 
-Evidence record chính đã được tạo tại `docs/evidence/mandate-20/rds-pitr-drill-20260729-181943.md`. Record này gồm:
+Evidence record chính đã được tạo tại `docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md`. Record này gồm:
 
 ```text
 AWS caller/account/region: recorded
@@ -170,7 +170,7 @@ Restore start/end: 2026-07-29T12:40:03Z / 2026-07-29T13:03:53Z
 RTO measured: 23.83 phút
 Production corrupt query: CORRUPTED_AFTER_GOOD_TIME
 Restored DB GOOD query: GOOD_BEFORE_CORRUPTION
-Witness mode: recorded video, Drive links pending
+Witness mode: recorded video, Drive links recorded in final evidence
 ```
 
 ## Trạng thái pass/fail hiện tại

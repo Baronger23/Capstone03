@@ -23,8 +23,8 @@ This evidence covers the RDS/PostgreSQL PITR drill for Mandate 20.
 
 It does not by itself claim full backup coverage for Valkey, MSK, DynamoDB, EBS, or IAM delete-authority separation. Those are documented separately as coverage/limitation items in:
 
-- `docs/evidence/mandate-20/production-baseline-2026-07-29.md`
-- `docs/evidence/mandate-20/production-baseline-gap-analysis.md`
+- `docs/evidence/mandate-20/supporting-production-baseline-20260729.md`
+- `docs/evidence/mandate-20/supporting-scope-gap-analysis.md`
 - `docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md`
 
 ## Actors And Environment
