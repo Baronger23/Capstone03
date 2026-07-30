@@ -281,7 +281,7 @@ components:
       # build từ code fallback + postcss fix). Re-apply PR #448 - từng merge rồi bị revert (#450)
       # như biện pháp phòng ngừa trong lúc ổn định PM-129 (bug tooling trace-provenance đa-arch,
       # KHÔNG phải lỗi supply-chain); image đã qua Trivy + Cosign. Đừng revert lại.
-      digest: sha256:ffd81c855df02095a5580389c058a2a3a70be562dc66f447189a9e2430d8f3b4
+      digest: sha256:0e9997d6e40bacdd68a3aac7f7df87a142fbd4e2beb3ef84741297b736fbc042
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -314,7 +314,30 @@ components:
     # nhưng không còn cắt vào đuôi bình thường. An toàn với cổng browse p95 < 1000ms vì
     # p95 đo được chỉ 110ms ở stage này — chỉ phần đuôi bị ảnh hưởng, và đuôi chậm vẫn
     # tốt hơn đuôi lỗi. PRODUCT_AI_DEADLINE_MS (15s, đường Bedrock) giữ nguyên.
+    #
+    # === Mandate-19: chuyển hop gRPC sang headless + round_robin ===
+    # Vì sao (đo 30/07 `kubectl top pod`, product-catalog đang ở 11 replica):
+    #     xxhsp 353m · cw8nx 136m · pzcxg 11m · TÁM pod còn lại 1-2m
+    # ClusterIP trả về 1 VIP, gRPC giữ 1 kết nối TCP dài hạn, kube-proxy ghim kết
+    # nối đó vào 1 pod. Pod do HPA sinh ra SAU khi kết nối đã dựng thì không bao
+    # giờ nhận traffic. Đó là lý do nới maxReplicas ở PR #649 không nâng nổi trần.
+    # Đối chứng: frontend trải đều 123-138m vì hop proxy->frontend đã dùng headless.
+    # Cần CẢ HAI: headless (DNS trả mọi pod IP) + round_robin phía client
+    # (src/frontend/gateways/rpc/grpcChannel.ts). Thiếu một cái là vô tác dụng.
+    # Rollback = trả các giá trị dưới về tên service cũ; Service ClusterIP cũ vẫn còn.
     envOverrides:
+      - name: PRODUCT_CATALOG_ADDR
+        value: product-catalog-headless:8080
+      - name: PRODUCT_REVIEWS_ADDR
+        value: product-reviews-headless:3551
+      - name: RECOMMENDATION_ADDR
+        value: recommendation-headless:8080
+      - name: CART_ADDR
+        value: cart-headless:8080
+      - name: CURRENCY_ADDR
+        value: currency-headless:8080
+      - name: AD_ADDR
+        value: ad-headless:8080
       - name: PRODUCT_CATALOG_DEADLINE_MS
         value: "1200"
       - name: PRODUCT_REVIEWS_DEADLINE_MS
@@ -524,6 +547,15 @@ components:
     # Ready -> canary dung khung, KHONG outage. Consumer (accounting + fraud-detection) doi
     # sang MSK o PR SAU, chi khi kafka cu LAG=0 (Earliest -> an sach backlog tu day).
     envOverrides:
+      # Mandate-19: checkout gọi email qua HTTP với connection pool của Go, mà pool
+      # tới một ClusterIP sẽ ghim vào một pod email. Đó là cơ chế đã tạo hàng đợi
+      # 15s (span client `POST` p95 = 15000ms trong khi span server email chỉ 391ms)
+      # -> 504 trên 3.432/5.431 đơn ở stage 1400 user. Nâng replica email ở PR #656
+      # chỉ có tác dụng nếu traffic TỚI ĐƯỢC các replica đó.
+      # Go phân giải DNS cho mỗi kết nối mới nên trỏ vào headless là đủ — khác gRPC,
+      # không phải sửa code checkout.
+      - name: EMAIL_ADDR
+        value: http://email-headless:8080
       - name: KAFKA_ADDR
         value: b-1.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096,b-2.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096,b-3.techxtf3kafka.4xa0zb.c6.kafka.ap-southeast-1.amazonaws.com:9096
       - name: KAFKA_SECURITY_PROTOCOL
