@@ -392,9 +392,14 @@ def test_headless_services_back_every_load_balanced_address():
             f"{svc['metadata']['name']} phải headless"
         )
 
+    # KHÔNG assert `referenced` khác rỗng. Service headless được merge TRƯỚC, còn
+    # values chuyển *_ADDR sang chúng ở PR sau — vì `techx-infrastructure-app` (tạo
+    # Service) và `techx-corp` (roll pod) là hai ArgoCD Application auto-sync ĐỘC LẬP,
+    # không có bảo đảm thứ tự. Trỏ địa chỉ vào Service chưa tồn tại = frontend không
+    # phân giải nổi backend = browse 500 hàng loạt. Ràng buộc đúng ở đây là một chiều:
+    # đã trỏ vào `-headless` thì Service đó PHẢI có thật.
     values = VALUES.read_text(encoding="utf-8")
     referenced = set(re.findall(r"value:\s*(?:http://)?([a-z-]+-headless):(\d+)", values))
-    assert referenced, "không tìm thấy địa chỉ headless nào trong values-prod.yaml"
     for name, port in sorted(referenced):
         if name == "frontend-headless":
             continue  # do file riêng frontend-headless-service.yaml định nghĩa
