@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import re
 
 import yaml
@@ -27,6 +28,10 @@ PROFILE = (
     ROOT
     / "phase3 - information/techx-corp-platform/src/load-generator/mandate19_locustfile.py"
 )
+DASHBOARD = (
+    ROOT
+    / "phase3 - information/techx-corp-chart/grafana/provisioning/dashboards/slo-dashboard.json"
+)
 
 
 def _block(text: str, start: str, end: str) -> str:
@@ -36,9 +41,82 @@ def _block(text: str, start: str, end: str) -> str:
 def test_frontend_hpa_packs_existing_nodes_and_has_replica_headroom():
     text = HPA.read_text(encoding="utf-8")
     block = _block(text, "name: frontend-hpa", "name: product-catalog-hpa")
-    assert "maxReplicas: 8" in block
+    # maxReplicas 8 -> 16: bước "capacity step" mà annotation cũ đã hẹn, giờ đã có
+    # số đo. Đo exact-window trên node-set cố định 9 node (hash 54755c311f1a64b9),
+    # generator ngoài cluster: frontend đứng ở 8/8 replica với utilization
+    # 112%/65% tại trần 1000 user và 128%/65% tại stage vỡ 1400 user, trong khi
+    # CPU node cao nhất chỉ 60% và hai node gần rỗng. Trần bị chặn bởi maxReplicas
+    # chứ không bởi capacity node, nên nới replica là cách nâng trần mà KHÔNG thêm node.
+    assert "maxReplicas: 16" in block
     assert "averageUtilization: 65" in block
     assert "staged PR" in block and "capacity step" in block
+    # Giữ ràng buộc: bước này chỉ nới replica, không được lặng lẽ đổi target.
+    assert "minReplicas: 2" in block
+
+
+def test_hotpath_replica_caps_match_measured_capacity_step():
+    """Trần replica của hot path phải khớp số đo 30/07, không đặt tuỳ ý.
+
+    Mỗi giá trị dưới đây có căn cứ trong docs/evidence/mandate-19/real-2026-07-30/:
+      frontend        8 -> 16  (112%/65% ở 8/8 tại trần; nút thắt số một)
+      checkout        8 -> 14  (89%/65% ở 8/8; nguồn của 504 mà người dùng thấy)
+      frontend-proxy  8 -> 12  (70%/65% ở 7/8; nút thắt kế tiếp)
+      product-catalog 8 -> 12  (65%/65% ở 6/8; downstream của product-detail)
+    """
+    text = HPA.read_text(encoding="utf-8")
+    expected = {
+        ("name: frontend-hpa", "name: product-catalog-hpa"): "maxReplicas: 16",
+        ("name: product-catalog-hpa", "name: cart-hpa"): "maxReplicas: 12",
+        ("name: checkout-hpa", "name: currency-hpa"): "maxReplicas: 14",
+        ("name: frontend-proxy-hpa", "name: frontend-hpa"): "maxReplicas: 12",
+    }
+    for (start, end), want in expected.items():
+        block = _block(text, start, end)
+        assert want in block, f"{start}: mong đợi {want}"
+
+
+def test_checkout_slo_is_measured_at_the_user_facing_edge():
+    """SLO checkout phải đo ở biên, không ở span nội bộ của service checkout.
+
+    Vì sao: span nội bộ chỉ tồn tại khi request ĐÃ tới được checkout. Request bị
+    timeout ở tầng trên không sinh span đó, nên chúng vô hình với SLI. Đo 30/07:
+    ở 2400 user, 8.875/8.877 đơn trả 504 Gateway Timeout trong khi panel SLO cũ
+    vẫn báo checkout_success = 100%. Đó là mù trên đúng luồng ra tiền.
+    """
+    dash = json.loads(DASHBOARD.read_text(encoding="utf-8"))
+    slo_panel_ids = {13, 41, 52}          # gauge SLO, trend, error budget
+    diagnostic_ids = {40, 42}             # request rate + latency nội bộ
+    seen = {}
+
+    def walk(node):
+        if isinstance(node, dict):
+            pid = node.get("id")
+            if pid in slo_panel_ids | diagnostic_ids and node.get("targets"):
+                exprs = [t["expr"] for t in node["targets"] if t.get("expr")]
+                seen[pid] = exprs
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(dash)
+
+    for pid in slo_panel_ids:
+        assert pid in seen, f"thiếu panel SLO checkout id={pid}"
+        joined = " ".join(seen[pid])
+        assert 'span_name="POST /api/checkout"' in joined, (
+            f"panel {pid} phải đo ở biên frontend"
+        )
+        assert "oteldemo.CheckoutService/PlaceOrder" not in joined, (
+            f"panel {pid} không được dùng span nội bộ làm SLI"
+        )
+
+    for pid in diagnostic_ids:
+        joined = " ".join(seen.get(pid, []))
+        assert "oteldemo.CheckoutService/PlaceOrder" in joined, (
+            f"panel {pid} là panel chẩn đoán, phải giữ span nội bộ"
+        )
 
 
 def test_frontend_cpu_request_matches_measured_usage_denominator():
