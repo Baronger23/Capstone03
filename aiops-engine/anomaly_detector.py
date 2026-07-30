@@ -207,10 +207,9 @@ class AnomalyDetector:
 
         # 2. Sử dụng Isolation Forest
         feature_cols = [
-            "rps", "error_rate", "client_error_rate", "latency_p90", "cpu_usage", "memory_usage", "kafka_lag",
-            "error_ratio", "client_error_ratio", "rolling_median_1h", "latency_deviation", "rps_delta",
-            "cpu_per_rps", "memory_growth", "kafka_lag_growth", "hour_of_day", "day_of_week",
-            "is_business_hours"
+            "rps", "cpu_usage", "memory_usage", "latency_p90", "error_rate", "client_error_rate", "kafka_lag",
+            "error_ratio", "client_error_ratio", "latency_deviation", "rps_delta", "cpu_per_rps", "memory_growth", "kafka_lag_growth",
+            "hour_of_day", "day_of_week", "is_business_hours", "is_high_traffic_period"
         ]
         
         # Bổ sung các cột thiếu nếu có
@@ -461,7 +460,7 @@ class AnomalyDetector:
                 
         # Fallback Z-Score nếu không có model
         try:
-            prom_query = f'(sum(rate(container_cpu_usage_seconds_total{{container_name="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{pod=~"{service}-.*"}}[5m])))'
+            prom_query = f'(sum(rate(container_cpu_usage_seconds_total{{container_name="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{pod=~"{service}-.*"}}[5m])) or vector(0.05))'
             cpu_z = self.check_infra_z_score(prom_query)
             return abs(cpu_z) >= 3.0
         except Exception as e:
