@@ -1,0 +1,104 @@
+# Mandate #19 (Directive #19 — throughput ceiling) — benchmark load driver.
+#
+# TẠM THỜI. Đây là harness đo trần thông lượng, KHÔNG phải thành phần sản phẩm.
+# Xoá lại bằng PR đóng bài (xem docs/runbooks/mandate-19-staged-rollout.md).
+#
+# Vì sao cần harness riêng thay vì dùng `load-generator` sẵn có:
+#   `load-generator` bị giới hạn CPU 1 core và đã tiêu ~0.7 core ở 300 user, nên
+#   ở tải cao nó tự throttle và ta đo trần của generator chứ không phải của hệ.
+#   Harness này chạy nhiều replica trên nhiều node để generator không bao giờ là
+#   nút thắt; CPU của nó được ghi lại trong evidence từng stage.
+#
+# Container chỉ `sleep infinity`; từng stage tải được khởi động bằng `kubectl exec`
+# (chạy công cụ đo, không phải apply config) để một PR không phải bằng một stage.
+#
+# Labels bắt buộc để đi qua NetworkPolicy `default-deny-all`:
+#   - app.kubernetes.io/name=load-generator      -> khớp egress allow của `loadgen-deny-ingress`
+#   - app.kubernetes.io/component=load-generator -> khớp ingress allow của `frontend-proxy-business-policy`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: locust-bench
+  namespace: techx-tf3
+  labels:
+    techx.io/purpose: mandate-19-benchmark
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      techx.io/purpose: mandate-19-benchmark
+  template:
+    metadata:
+      labels:
+        techx.io/purpose: mandate-19-benchmark
+        app.kubernetes.io/name: load-generator
+        app.kubernetes.io/component: load-generator
+    spec:
+      serviceAccountName: techx-load-generator
+      # === Generator PHẢI nằm ngoài tầng đang được đo ===
+      # Bench pod đặt trên node managed sẽ chiếm đúng phần CPU mà hệ đang được đo
+      # trên đó, rồi đẩy pod app sang node elastic -> vừa làm bẩn số density, vừa
+      # kích Karpenter cấp node. Vì vậy ghim generator vào tầng elastic và LOẠI
+      # tầng này khỏi mẫu số requests-per-node.
+      #
+      # Hệ quả cố ý: node set của hệ dưới đo = các node của managed nodegroup
+      # (không có label techx.io/workload=elastic). Trần cố định-node = stage cao
+      # nhất mà 4 cổng SLO còn đạt VÀ node set managed không đổi.
+      #
+      # Không đụng limits/disruption của NodePool: capacity contract của tầng
+      # elastic (scripts/ci/test_arm_nodepool_contract.py) giữ nguyên. Đây chỉ là
+      # một workload tự nguyện opt-in vào elastic.
+      nodeSelector:
+        techx.io/workload: elastic
+      tolerations:
+        - key: techx.io/workload
+          operator: Equal
+          value: elastic
+          effect: NoSchedule
+        # Image là multi-arch (amd64 + arm64) nên chấp nhận cả pool arm64.
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
+          effect: NoSchedule
+      # Trải đều trên các node để 3 replica không dồn vào một node rồi tự nghẽn.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              techx.io/purpose: mandate-19-benchmark
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bench
+          # Cùng digest với `load-generator` để locustfile/transaction mix khớp
+          # tuyệt đối với profile đã dùng cho các run trước — điều kiện để so sánh.
+          image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp@sha256:71b9499757000f0eaaccf15d083c2f5073221949839b76455b24ab8ee852a634
+          command: ["sleep", "infinity"]
+          env:
+            - name: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION
+              value: python
+            - name: FLAGD_HOST
+              value: flagd
+            - name: FLAGD_PORT
+              value: "8013"
+            - name: FLAGD_OFREP_PORT
+              value: "8016"
+            - name: LOCUST_BROWSER_TRAFFIC_ENABLED
+              value: "false"
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsGroup: 10001
+            runAsNonRoot: true
+            runAsUser: 10001

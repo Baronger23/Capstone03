@@ -1,5 +1,10 @@
 # Mandate #19 after-run assessment
 
+> This directory contains two distinct after-run records. The JSON/HTML
+> artifact below is the superseded 9→10→11-node attempt. The canonical run
+> referenced by the current report is the later operator-confirmed 7-node
+> sequence.
+
 ## Outcome
 
 The supplied run is preserved as an **invalid/incomplete after attempt**. It
@@ -22,7 +27,37 @@ What invalidates the same-infrastructure comparison:
 - therefore neither a valid after ceiling nor RPS/node improvement can be
   calculated from this run.
 
-## Evidence still required
+## Before/after comparison
+
+| Measure | Before | After |
+|---|---:|---:|
+| Highest offered users | 400 observed | 410 observed |
+| Peak served RPS holding SLO | Not established | Not established |
+| Highest current RPS observed | 76.2 at 400 users | 81.8 at 410 users |
+
+`76.2 RPS` and `81.8 RPS` are point-in-time Locust readings. Neither value may
+be presented as a sustained SLO-holding ceiling. The after run also changed
+its node set, so the two snapshots cannot support a density-improvement claim.
+
+## Canonical 7-node run (current report)
+
+The operator record states that the later run kept the node count at **7 for
+the full stage sequence** (10, 300, 350, 400, 410, 500, 600, 700, 800 and 900
+users). HPA replicas increased on those existing nodes; no node was added
+during the run. The stage-level observations and screenshots are recorded in
+[`docs/mandate-19-throughput-ceiling-report.md`](../../../mandate-19-throughput-ceiling-report.md#54-nhật-ký-stage-after).
+The checkpoint image
+[`node-350-user.jpg`](../../../tests/kyverno/mandate-19/test_slo_after/node-350-user.jpg)
+shows `Node count — Mean: 7, Max: 7` for the visible Last-1-hour window. It
+directly verifies the 10–400-user screenshot window; later stages remain
+operator-record evidence unless a separate node timeline is attached.
+
+This 7-node statement supersedes the invalid 9→10→11-node attempt for the
+within-run node-invariance claim. A machine-verifiable 7-node before/after
+`kubectl get nodes -o json` pair and matching hash should still be attached if
+the mentor requires independently reproducible infrastructure evidence.
+
+## Evidence still required for a strict Directive #19 PASS
 
 Provide the following for a valid rerun:
 
