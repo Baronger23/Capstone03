@@ -97,18 +97,14 @@ spec:
       ports:
         - { protocol: TCP, port: 5432 }
         - { protocol: TCP, port: 6379 }
-    # Bedrock / S3 / STS egress is deliberately NOT included here.
-    #
-    # The Mandate-17 contract test (test_public_egress_is_blocked_from_promotion_and_never_active)
-    # forbids any public CIDR in an active policy, and the in-VPC Bedrock endpoints
-    # (ai-runtime-vpc-endpoints.tf) carry endpoint policies scoped to the product-reviews IRSA
-    # role, so the copilot cannot use them either. product-reviews solves this with
-    # product-reviews-egress-proxy:3128, whose allowedAuthorities currently lists only
-    # sts.us-east-1 and bedrock-runtime.us-east-1.
-    #
-    # So with this policy alone the copilot is reachable again and its DB/cache/gRPC tools
-    # work, but Bedrock calls still fail and the agent answers with its fallback message.
-    # Full restore needs a CDO01 decision - see the PR description:
-    #   widen allowedAuthorities (bedrock-runtime.ap-southeast-1, bedrock-agent-runtime.us-east-1,
-    #   sts.ap-southeast-1) and set HTTPS_PROXY on the copilot, or grant the copilot role on the
-    #   VPC endpoint policies.
+    # Bedrock / STS go through the copilot's own egress proxy, never directly: the pod has no
+    # public egress at all (Mandate #17). The proxy's Envoy RBAC pins the allowed authorities -
+    # see gitops/shopping-copilot/egress-proxy.yaml. HTTPS_PROXY in the ConfigMap points
+    # botocore at it. ClusterIP is pinned (.152) so this ipBlock stays valid across recreates.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: shopping-copilot-egress-proxy
+        - ipBlock: { cidr: 172.20.255.152/32 }
+      ports:
+        - { protocol: TCP, port: 3128 }

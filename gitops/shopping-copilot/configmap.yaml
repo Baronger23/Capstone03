@@ -54,6 +54,17 @@ data:
   CURRENCY_ADDR: "currency.techx-tf3.svc.cluster.local:8080"
   SHIPPING_ADDR: "http://shipping.techx-tf3.svc.cluster.local:8080"
 
+  # ── Egress (Mandate #17: no direct public egress from the workload) ──
+  # botocore honours HTTPS_PROXY, so every AWS call (Bedrock, Bedrock Agent, STS) goes out via
+  # CONNECT through the copilot's own proxy, which allowlists the exact authorities.
+  # Only HTTPS_PROXY is set - HTTP_PROXY would also capture the plain-http in-cluster call to
+  # shipping. NO_PROXY additionally exempts cluster-local names for any client that reads it.
+  HTTPS_PROXY: "http://shopping-copilot-egress-proxy.techx-tf3.svc.cluster.local:3128"
+  NO_PROXY: "localhost,127.0.0.1,.svc,.svc.cluster.local,.cluster.local,10.0.0.0/8,172.20.0.0/16"
+  # Pinned so the Titan embed client (genai_cache reads AWS_DEFAULT_REGION, default us-east-1)
+  # and regional STS resolve to ap-southeast-1 - both are on the proxy allowlist.
+  AWS_DEFAULT_REGION: "ap-southeast-1"
+
   # ── App ──────────────────────────────────────────────────────────
   # SSO hostname + the public storefront (embedded widget calls /api/copilot/* same-origin
   # via Envoy, so CORS is not strictly required, but list the storefront for any direct call).
