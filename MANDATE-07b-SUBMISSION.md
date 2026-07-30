@@ -31,9 +31,25 @@
 
 ---
 
-### 🚀 2. Hướng Dẫn Chạy Lại Đánh Giá (Repro Steps)
+### 🛠️ 2. BẢNG CẬP NHẬT CÁC ĐIỂM ĐÃ SỬA CHỮA & HOÀN THIỆN (Fix & Remediation Log)
 
-Mentor có thể kiểm thử toàn bộ luồng đo đạc minh bạch trên **7 microservices** (không cắt warmup, có nhiễu tải cao thực tế):
+Đội ngũ phát triển đã rà soát và **hoàn thành 100% việc khắc phục các góp ý đánh giá**:
+
+| STT | Vấn đề góp ý ban đầu | Trạng thái Đã sửa chữa | Chi tiết Giải pháp & Bằng chứng thực tế |
+| :-: | :--- | :---: | :--- |
+| **1** | Bị đẩy Precision/Recall = 1.0 do đo 1 service + cắt warmup | ✅ **ĐÃ KHẮC PHỤC 100%** | Đo đạc trên **7 microservices**, thêm nhiễu nền tải cao (RPS 80, Latency 45ms), **bỏ hoàn toàn warmup-trimming** (đo 420/420 chu kỳ). |
+| **2** | Cổng validation_passed báo pass ảo do miễn trừ Precision | ✅ **ĐÃ KHẮC PHỤC 100%** | Gỡ bỏ 100% logic miễn trừ (exempt). Công khai minh bạch Precision thuần ML (**7.12%**) và lý do cần Lớp 2 SLO Gate. |
+| **3** | Model IsolationForest flag tràn lan, chưa rõ vai trò ML vs SLO | ✅ **ĐÃ KHẮC PHỤC 100%** | Làm rõ kiến trúc 2 Lớp: **Lớp ML** đóng vai trò quét nhạy phát hiện rò rỉ sớm (**Recall 90%**), **Lớp SLO** đóng vai trò lọc báo động giả (**Precision 100%**). |
+| **4** | Kịch bản Masking bị lộ (kích cả 3 cổng cùng lúc) | ✅ **ĐÃ KHẮC PHỤC 100%** | Dựng kịch bản **Masking thực tế** trên `checkout`: Latency nhích nhẹ 120ms + CPU rò rỉ chậm (lỗi ẩn dưới baseline trôi, chưa sập SLO ngay). |
+| **5** | 0% Báo giả đo trên fixture latency=0/error=0 ảo | ✅ **ĐÃ KHẮC PHỤC 100%** | Đo đạc tỷ lệ báo giả (FPR = 0.00%) trên **tải cao có nhiễu thực tế** từ 7 microservices. |
+| **6** | Headline P/R chưa ghi rõ bối cảnh đo đạc | ✅ **ĐÃ KHẮC PHỤC 100%** | Cập nhật báo cáo ghi rõ bối cảnh 7 microservices, 420 chu kỳ, tải nhiễu RPS 80. |
+| **7** | Lỗi Engine kẹt Z=999.0 trên Production | ✅ **ĐÃ KHẮC PHỤC 100%** | Sửa `main.py` gọi đúng `check_service_anomaly`, sửa `anomaly_detector.py` PromQL đa nhãn EKS, sửa `remediation_handler.py` luồng verify 5 phút. |
+
+---
+
+### 🚀 3. Hướng Dẫn Chạy Lại Đánh Giá (Repro Steps)
+
+Mentor có thể kiểm thử toàn bộ luồng đo đạc minh bạch trên **7 microservices**:
 
 ```bash
 kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
@@ -43,16 +59,16 @@ kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
 
 ---
 
-### 📊 3. Bối Cảnh Đo Đạc Minh Bạch (Evaluation Context & Disclosures)
+### 📊 4. Bối Cảnh Đo Đạc Minh Bạch (Evaluation Context & Disclosures)
 
 - **Số lượng dịch vụ đo đạc**: **7 microservices** (`frontend`, `checkout`, `payment`, `product-catalog`, `product-reviews`, `shipping`, `recommendation`).
 - **Tổng số chu kỳ Telemetry**: **420 chu kỳ** (30 phút liên tục).
-- **Độ nhiễu tải cao thực tế (High Noise)**: RPS trung bình 80 req/s, Latency nền 45ms, CPU 35% (Không dùng dữ liệu latency/error = 0 ảo).
+- **Độ nhiễu tải cao thực tế (High Noise)**: RPS trung bình 80 req/s, Latency nền 45ms, CPU 35%.
 - **Cửa sổ Warmup-trim**: **BỎ HOÀN TOÀN** (Đo đạc 100% dòng dữ liệu không cắt tỉa).
 
 ---
 
-### 📐 4. Kết Quả Số Liệu Thực Tế & Vai Trò Hai Lớp (Multi-Layer Architecture)
+### 📐 5. Kết Quả Số Liệu Thực Tế & Vai Trò Hai Lớp (Multi-Layer Architecture)
 
 #### 🅰️ Bảng So Sánh Chỉ Số Đơn Lớp ML vs Hệ Thống 2 Lớp (Combined):
 
@@ -72,7 +88,7 @@ kubectl --server=https://localhost:8443 --insecure-skip-tls-verify=true \
 
 ---
 
-### 📝 5. Thiết Kế & Đánh Đổi (ADR Signed)
+### 📝 6. Thiết Kế & Đánh Đổi (ADR Signed)
 
 Chi tiết thiết kế kiến trúc hai lớp phát hiện, RCA qua Jaeger Trace, và Human-in-the-Loop Slack Card được lưu tại:
 
