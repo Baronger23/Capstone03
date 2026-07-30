@@ -42,13 +42,9 @@ class AnomalyDetector:
     def download_models_from_s3(self):
         """Tải các model Isolation Forest từ S3 về models/ nếu có."""
         try:
-            # Chỉ chạy khi có biến môi trường AWS
-            if not os.getenv("AWS_ACCESS_KEY_ID"):
-                logger.info("No AWS credentials found. Skipping S3 model download.")
-                return
-
-            s3 = boto3.client("s3")
-            logger.info(f"Listing models in S3 bucket: {self.s3_bucket}...")
+            region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "ap-southeast-1"))
+            s3 = boto3.client("s3", region_name=region)
+            logger.info(f"Listing models in S3 bucket: {self.s3_bucket} (region: {region})...")
             response = s3.list_objects_v2(Bucket=self.s3_bucket, Prefix="current/")
             
             if "Contents" not in response:
