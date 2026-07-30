@@ -307,8 +307,35 @@ CPU thật từng node cùng lúc đó:
 managed không mang label `techx.io/workload` nên không bao giờ nhận được pod hot-path** — chúng
 ngồi ở 18–58% CPU trong khi node elastic chạm 99% và 13 pod xếp hàng.
 
-Karpenter cũng không cấp thêm được node elastic: `limits` đã cạn **và** NodePool không khai báo
-`techx.io/arch` trong `requirements` nên nó không biết cách tạo node thoả nodeSelector.
+Karpenter cũng không cấp thêm được node elastic — nhưng **chỉ vì `limits` đã cạn**:
+
+| NodePool arm64 | `limits.nodes` | `limits.cpu` |
+|---|---:|---:|
+| `flash-sale-spot-arm64` | 2 | 16 |
+| `elastic-ondemand-fallback-arm64` | 2 | 8 |
+| **Trần cứng tầng elastic arm64** | **4** | **24** |
+
+> **⚠️ Đính chính so với bản đầu của báo cáo này.** Bản đầu viết NodePool "không khai báo
+> `techx.io/arch` trong `requirements` nên không biết cách tạo node thoả nodeSelector". **Sai.**
+> Karpenter in lý do từ chối của *từng* NodePool rồi gộp thành một khối, và hai dòng đó thuộc về
+> hai pool khác nhau:
+>
+> ```
+> node limits have been exhausted for nodepool (flash-sale-spot-arm64)   <- pool arm64
+> label "techx.io/arch" does not have known values                       <- pool AMD64
+> ```
+>
+> Dòng thứ hai nói về `flash-sale-spot` và `elastic-ondemand-fallback` (amd64) — hai pool đó thật
+> sự không mang label `techx.io/arch`, và **đó là hành vi đúng**: pod ghim arm64 không nên rơi vào
+> node amd64. Hai pool **arm64** đã có sẵn label ở `template.metadata.labels`
+> (`gitops/karpenter/spot-nodepool.yaml:88`, `ondemand-fallback-nodepool.yaml:92`), và Karpenter
+> đưa static label trong template vào requirements của node sẽ tạo — không cần lặp lại ở
+> `requirements`.
+>
+> Bằng chứng thực nghiệm mạnh hơn cả đọc cấu hình: node elastic `…5-127` chạy **99% CPU** ngay tại
+> snapshot này. Nếu label thiếu thật thì tầng elastic đã rỗng, và bản tuned3 442,3 RPS không thể
+> tồn tại. **Việc cần làm vì thế cũng đổi**: không phải "sửa `requirements`" (không có gì để sửa)
+> mà là nâng `limits.nodes`, hoặc gỡ ghim arm64 cho một phần hot path.
 
 > **Đây là đòn bẩy tiếp theo, và nó đúng nghĩa "nâng trần bằng hiệu suất, không thêm node":
 > 8 vCPU đã trả tiền đang nằm không.** Image đã multi-arch (`build-push-ecr.yml` build
@@ -430,7 +457,7 @@ Chi tiết: [`scripts/mandate-19/README.md`](../scripts/mandate-19/README.md).
 | # | Việc | Vì sao |
 |---|---|---|
 | **1** | **Cho hot path dùng được 4 node `t3.large` managed** — gỡ/nới `nodeSelector` trong `values-mandate13.yaml` | **8 vCPU đã trả tiền đang nằm không** trong khi node elastic chạm 99% và 13 pod xếp hàng. Đúng nghĩa "nâng trần bằng hiệu suất, không thêm node". Image đã multi-arch nên chạy được trên amd64. **Cần thống nhất với CDO01** vì sửa thiết kế Mandate #13 (ghim Graviton để tiết kiệm) |
-| **2** | Bổ sung `techx.io/arch` vào `requirements` của NodePool arm64 | Karpenter đang báo `label "techx.io/arch" does not have known values` — nó **không biết cách** tạo node thoả nodeSelector của hot path, nên tầng elastic không co giãn được |
+| **2** | Nâng `limits.nodes` của NodePool arm64 (hiện `flash-sale-spot-arm64` = 2, `elastic-ondemand-fallback-arm64` = 2 ⇒ trần cứng **4 node**) | Karpenter báo `node limits have been exhausted for nodepool (flash-sale-spot-arm64)`. Đây là trần **cố ý** của CDO01 để giữ chi phí, nên phải cân với ngân sách chứ không nâng vô điều kiện. ~~Bổ sung `techx.io/arch` vào `requirements`~~ — đính chính: label đã có sẵn ở `template.metadata.labels`, xem §6.5 |
 | 3 | Giảm độ trễ HPA cho `product-catalog` (nâng `minReplicas` hoặc hạ target) | Burst lỗi ~8s xảy ra đều đặn ~25 giây **trước** mỗi lần scale-up |
 | 4 | Bucket shed dùng chung toàn cluster (`local_cluster_rate_limit`) | Budget hiện vẫn trôi theo số replica proxy — cần rebuild image |
 | 5 | Sửa cAdvisor 7/8 node | Panel *"Pod count"* chết, không có metric container toàn cụm |

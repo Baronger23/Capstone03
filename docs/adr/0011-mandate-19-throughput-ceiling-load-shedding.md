@@ -271,7 +271,7 @@ mang label `techx.io/workload` nên **không bao giờ** nhận được pod hot
 | Vấn đề | Chi tiết |
 |---|---|
 | cAdvisor chết 7/8 node | `Get "https://10.0.x.x:10250/metrics/cadvisor": context deadline exceeded`. Chỉ node chứa Prometheus có metric container. Panel *"Pod count — hot-path services"* vì thế luôn `No data` và **không được dùng làm bằng chứng**. Số per-pod trong ADR này lấy từ metrics-server (`kubectl top`), không từ Prometheus. |
-| Karpenter không cấp được node cho hot path | `label "techx.io/arch" does not have known values (typo of "kubernetes.io/arch"?)` — NodePool không khai báo `techx.io/arch` trong `requirements`, trong khi 10 workload hot path lại `nodeSelector` vào đúng label đó (Mandate #13). |
+| Karpenter không cấp thêm được node elastic | `node limits have been exhausted for nodepool (flash-sale-spot-arm64)`. Trần cứng tầng elastic arm64 = **4 node** (`flash-sale-spot-arm64` 2 + `elastic-ondemand-fallback-arm64` 2) — CDO01 đặt cố ý để giữ chi phí, **không phải lỗi cấu hình**. ⚠️ **Đính chính bản đầu:** ADR này từng ghi nguyên nhân là *"NodePool không khai báo `techx.io/arch` trong `requirements`"* — sai. Karpenter in lý do từ chối của *từng* NodePool rồi gộp một khối; dòng `label "techx.io/arch" does not have known values` thuộc về pool **amd64** (`flash-sale-spot`, `elastic-ondemand-fallback`), và với chúng đó là hành vi **đúng**. Hai pool arm64 đã có label ở `template.metadata.labels` (`spot-nodepool.yaml:88`, `ondemand-fallback-nodepool.yaml:92`); Karpenter đưa static label của template vào requirements của node sẽ tạo. Bằng chứng: node elastic `…5-127` chạy **99% CPU** tại đúng snapshot đó. |
 | SLI checkout từng mù | Panel SLO đo trên span **nội bộ** service checkout, nên request timeout ở tầng trên vô hình: ở 2400 user, 8 875/8 877 đơn hỏng mà dashboard vẫn báo `checkout_success = 100%`. Đã chuyển sang đo ở **biên** frontend (PR #649). |
 
 ## Hệ quả
@@ -293,7 +293,8 @@ mang label `techx.io/workload` nên **không bao giờ** nhận được pod hot
 
 1. Bucket shed dùng chung toàn cluster (`local_cluster_rate_limit`) — cần rebuild image proxy.
 2. Sửa cAdvisor 7/8 node để có metric container toàn cụm.
-3. Bổ sung `techx.io/arch` vào `requirements` của NodePool arm64 (CDO01, Mandate #13).
+3. Nâng `limits.nodes` của NodePool arm64 (trần cứng hiện tại 4 node) — cần cân với ngân sách, vì
+   đây là trần cố ý của CDO01 chứ không phải lỗi. Xem đính chính ở bảng trên.
 4. `checkout → email` vẫn là lời gọi đồng bộ không deadline riêng; nên bọc timeout riêng để hàng
    đợi của một service phụ trợ không bao giờ ăn được trọn budget của luồng tiền.
 

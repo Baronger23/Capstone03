@@ -211,7 +211,13 @@ Auditability là trụ chung. Nếu người dùng nói "trụ của mình"/"tea
   - **🔴 Trần cuối cùng là HẠ TẦNG, không phải phần mềm:** `values-mandate13.yaml` ghim 10 workload hot-path
     bằng `nodeSelector {techx.io/workload: elastic, techx.io/arch: arm64}`; **4 node `t3.large` không có
     label đó nên vĩnh viễn không nhận được pod hot-path** → 8 vCPU đã trả tiền nằm không trong khi node
-    elastic chạy 99%. NodePool `flash-sale-spot-arm64` cũng thiếu `techx.io/arch` trong `requirements`.
+    elastic chạy 99%. Tầng elastic arm64 có **trần cứng 4 node** (`flash-sale-spot-arm64` `limits.nodes:2`
+    + `elastic-ondemand-fallback-arm64` `limits.nodes:2`) — CDO01 đặt cố ý để giữ chi phí.
+    ⚠️ **Đừng đọc nhầm log Karpenter** (tôi đã nhầm một lần): `label "techx.io/arch" does not have known
+    values` là lý do từ chối của pool **amd64**, KHÔNG phải pool arm64 — Karpenter in lý do của từng
+    NodePool rồi gộp một khối. Hai pool arm64 **đã có** `techx.io/arch` ở `template.metadata.labels`
+    (`spot-nodepool.yaml:88`, `ondemand-fallback-nodepool.yaml:92`) và Karpenter đưa static label đó vào
+    requirements của node sẽ tạo, không cần lặp ở `requirements`. Lý do thật là `limits.nodes` đã cạn.
   - **YC#4 đạt tốt nhất:** 597 rps ≈ 3× trần qua CloudFront công khai, browse hy sinh 104k request
     (429), **cart+checkout 99,95%**. Envoy `browse_rate_limiter.rate_limited=19.539` vs
     `local_rate_limiter.rate_limited=0/148.919`. Demo 1 lệnh: `scripts/mandate-19/shed_demo.sh`.

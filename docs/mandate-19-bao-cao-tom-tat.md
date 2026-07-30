@@ -341,6 +341,33 @@ CPU thật từng node **cùng thời điểm đó**:
 Cấu hình `values-mandate13.yaml` giam 10 workload hot path bằng
 `nodeSelector: { techx.io/workload: elastic, techx.io/arch: arm64 }`. **Bốn node `t3.large` không mang nhãn đó nên không bao giờ nhận được pod hot-path** — chúng ngồi ở 18–58% CPU trong khi node elastic chạm 99% và 13 pod xếp hàng.
 
+Còn tầng elastic thì đụng trần cứng do chính mình đặt:
+
+| NodePool arm64 | `limits.nodes` |
+|---|---:|
+| `flash-sale-spot-arm64` | 2 |
+| `elastic-ondemand-fallback-arm64` | 2 |
+| **Tối đa** | **4 node** |
+
+> ### ⚠️ Một chỗ chúng tôi đọc sai log và đã sửa
+> Hai dòng cuối trong thông báo trên **thuộc về hai NodePool khác nhau**, không phải một lý do chung:
+>
+> - `node limits have been exhausted for nodepool (flash-sale-spot-arm64)` → pool **arm64**, hết quota node.
+> - `label "techx.io/arch" does not have known values` → pool **amd64** (`flash-sale-spot`,
+>   `elastic-ondemand-fallback`). Hai pool này thật sự không mang label đó, và **đó là đúng**:
+>   pod đã ghim arm64 thì không nên rơi vào node amd64.
+>
+> Bản đầu của báo cáo kết luận nhầm rằng *NodePool arm64 thiếu khai báo `techx.io/arch`*. **Không
+> phải.** Cả hai pool arm64 đã có label ở `template.metadata.labels`
+> (`gitops/karpenter/spot-nodepool.yaml:88` và `ondemand-fallback-nodepool.yaml:92`), và Karpenter
+> tự đưa static label của template vào ràng buộc của node sắp tạo — không cần lặp lại ở `requirements`.
+>
+> Kiểm chứng nhanh nhất không cần đọc cấu hình: **node elastic `…5-127` đang chạy 99% CPU** ngay tại
+> snapshot này. Nếu label thiếu thật thì tầng elastic đã rỗng, và bản tuned3 442,3 RPS không thể tồn tại.
+>
+> **Việc cần làm vì thế cũng đổi:** không phải "sửa `requirements`" (không có gì để sửa) mà là nâng
+> `limits.nodes` — nhưng đó là trần **cố ý** của CDO01 để giữ chi phí, nên phải cân với ngân sách.
+
 Chi tiết: [`ceiling-root-cause.txt`](evidence/mandate-19/real-2026-07-30/ceiling-root-cause.txt)
 
 > ### 👉 Đòn bẩy tiếp theo — và nó đúng nghĩa "nâng trần bằng hiệu suất, không thêm node"
@@ -357,7 +384,7 @@ Chi tiết: [`ceiling-root-cause.txt`](evidence/mandate-19/real-2026-07-30/ceili
 | Vấn đề | Vì sao đáng lo |
 |---|---|
 | **cAdvisor chết ở 7/8 node** — `context deadline exceeded` trên port 10250 | Không có metric container toàn cụm. Panel *"Pod count"* luôn `No data`. **Chúng tôi không dùng panel đó làm bằng chứng**; số per-pod lấy từ `kubectl top` |
-| **NodePool thiếu khai báo `techx.io/arch`** | Karpenter báo `label ... does not have known values` — nó **không biết cách** tạo node thoả nodeSelector của hot path, nên tầng elastic không co giãn được |
+| **Tầng elastic arm64 có trần cứng 4 node** | `limits.nodes: 2` × 2 NodePool. Là quyết định chi phí cố ý của CDO01, **không phải lỗi** — nêu ở đây để khi cần nâng trần thì biết chỗ vặn. (Bản đầu báo cáo này ghi nhầm nguyên nhân là "NodePool thiếu label" — đã đính chính ở §6) |
 | **SLI checkout từng mù** | Panel SLO đo trên span **nội bộ** service checkout, nên request timeout ở tầng trên vô hình. Ở 2400 user: **8.875/8.877 đơn hỏng** mà dashboard vẫn báo `checkout_success = 100%`. **Đã sửa** — nay đo ở biên |
 | **Sự cố production 42 phút hôm nay** | `product-catalog` bị đưa về 0 replica → `/api/products` trả 500. HPA **không bao giờ scale từ 0 lên**, và GitOps không có field `replicas` để khôi phục → chỉ `kubectl scale` cứu được. **10 service khác cùng lỗ hổng.** Xem [postmortem 0017](postmortem/0017-product-catalog-replicas-zero-hpa-cannot-recover.md) |
 
@@ -389,7 +416,7 @@ Hướng dẫn đầy đủ: [`scripts/mandate-19/README.md`](../scripts/mandate
 | # | Việc | Vì sao quan trọng |
 |---|---|---|
 | **1** | Cho hot path dùng được **4 node `t3.large` managed** | **8 vCPU đã trả tiền đang nằm không**. Cần thống nhất với CDO01 |
-| **2** | Bổ sung `techx.io/arch` vào `requirements` của NodePool arm64 | Karpenter đang không co giãn được tầng elastic |
+| **2** | Nâng `limits.nodes` của 2 NodePool arm64 (trần cứng hiện tại **4 node**) | Karpenter báo `node limits have been exhausted`. Là trần **cố ý** để giữ chi phí ⇒ phải cân với ngân sách, không nâng vô điều kiện |
 | 3 | Giảm độ trễ phản ứng HPA cho `product-catalog` | Lỗi dồn thành burst ~8 giây, đều đặn ~25 giây **trước** mỗi lần scale-up |
 | 4 | Ngân sách rate-limit dùng chung toàn cluster | Hiện vẫn trôi theo số pod proxy |
 | 5 | Sửa cAdvisor 7/8 node | Khôi phục quan sát container toàn cụm |
