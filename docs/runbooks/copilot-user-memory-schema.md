@@ -16,6 +16,7 @@ Migration đi qua **ArgoCD**, không `psql` tay, không `kubectl apply` tay:
 | Thành phần | Đường dẫn |
 |---|---|
 | Job | [`gitops/jobs/copilot-user-memory/migration-job.yaml`](../../gitops/jobs/copilot-user-memory/migration-job.yaml) |
+| NetworkPolicy | [`gitops/jobs/copilot-user-memory/networkpolicy.yaml`](../../gitops/jobs/copilot-user-memory/networkpolicy.yaml) |
 | Application | [`gitops/apps/copilot-user-memory-migration-app.yaml`](../../gitops/apps/copilot-user-memory-migration-app.yaml) |
 
 Merge PR vào `main` → app-of-apps `techx-corp-bootstrap` nhặt Application mới → Application
@@ -28,14 +29,36 @@ kubectl -n argocd get application copilot-user-memory-migration
 ```
 
 ```bash
-kubectl -n techx-tf3 logs job/copilot-user-memory-schema-migration-r1
+kubectl -n techx-tf3 logs job/copilot-user-memory-schema-migration-r2
 ```
 
 Log kết thúc bằng `SCHEMA VERIFICATION OK` là xong. Nếu có dòng `[BAD]`, Job exit 1 và log liệt
 kê đúng những check đã hỏng.
 
 **Muốn chạy lại (ví dụ sửa SQL):** PodTemplate của Job là immutable — phải đổi tên Job thành
-`-r2`, không sửa tại chỗ. Mọi statement đều `IF NOT EXISTS` / `OR REPLACE` nên chạy lại an toàn.
+`-r3`, không sửa tại chỗ. Mọi statement đều `IF NOT EXISTS` / `OR REPLACE` nên chạy lại an toàn.
+
+### ⚠️ Lần chạy đầu (`-r1`) treo vì `default-deny-all` — đã xử lý
+
+`default-deny-all` (`podSelector: {}` = mọi pod trong namespace, cả Ingress+Egress) được promote
+ngày 29/07. Pod của Job không khớp policy allow nào → **mất DNS** → `psycopg2.connect()` treo im
+lặng, log **rỗng hoàn toàn** (dòng print đầu tiên nằm sau `connect()`).
+
+Đo được trên production: `-r1` treo >5 phút; exec vào pod thì
+`socket.gethostbyname(<rds-endpoint>)` trả `gaierror [Errno -3] Try again` sau 5,2s.
+
+Đúng cái bẫy mà [`gitops/aiops-engine/cronjob.yaml`](../../gitops/aiops-engine/cronjob.yaml) đã
+ghi lại: workload chạy một lần / theo lịch dễ bị bỏ sót khi default-deny được promote, vì nó
+không chạy liên tục nên không ai thấy nó đứt mạng.
+
+Đã xử lý bằng 3 việc:
+
+1. `networkpolicy.yaml` mở **đúng** DNS + 5432 cho riêng pod của Job, dùng `ipBlock` cho RDS
+   (không phải `podSelector` — chính lỗi đã gây outage 20/07, postmortem 0012). Không nới lỏng
+   `default-deny-all`, không đụng policy nào của CDO01.
+2. `sync-wave`: netpol `0` → Job `1`, để policy có trước khi pod start.
+3. Script in một dòng **trước** khi connect + `connect_timeout=15` → lần sau bị chặn mạng thì
+   báo lỗi to rõ thay vì treo không dấu vết.
 
 ---
 
