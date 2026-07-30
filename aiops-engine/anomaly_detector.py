@@ -42,13 +42,9 @@ class AnomalyDetector:
     def download_models_from_s3(self):
         """Tải các model Isolation Forest từ S3 về models/ nếu có."""
         try:
-            # Chỉ chạy khi có biến môi trường AWS
-            if not os.getenv("AWS_ACCESS_KEY_ID"):
-                logger.info("No AWS credentials found. Skipping S3 model download.")
-                return
-
-            s3 = boto3.client("s3")
-            logger.info(f"Listing models in S3 bucket: {self.s3_bucket}...")
+            region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "ap-southeast-1"))
+            s3 = boto3.client("s3", region_name=region)
+            logger.info(f"Listing models in S3 bucket: {self.s3_bucket} (region: {region})...")
             response = s3.list_objects_v2(Bucket=self.s3_bucket, Prefix="current/")
             
             if "Contents" not in response:
@@ -383,38 +379,35 @@ class AnomalyDetector:
         manifest_loaded = False
         
         try:
-            if os.getenv("AWS_ACCESS_KEY_ID"):
-                s3 = boto3.client("s3")
-                manifest_local_path = os.path.join(self.models_dir, "active_manifest.json")
+            region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "ap-southeast-1"))
+            s3 = boto3.client("s3", region_name=region)
+            manifest_local_path = os.path.join(self.models_dir, "active_manifest.json")
+
+            # 1. Thử tải active_manifest.json
+            logger.info("Attempting to download active_manifest.json from S3...")
+            try:
+                s3.download_file(self.s3_bucket, "active_manifest.json", manifest_local_path)
+                with open(manifest_local_path, "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
                 
-                # 1. Thử tải active_manifest.json
-                logger.info("Attempting to download active_manifest.json from S3...")
-                try:
-                    s3.download_file(self.s3_bucket, "active_manifest.json", manifest_local_path)
-                    with open(manifest_local_path, "r", encoding="utf-8") as f:
-                        manifest = json.load(f)
-                    
-                    # Kiểm định manifest chất lượng
-                    if manifest.get("validation_passed", False):
-                        logger.info(f"Manifest loaded successfully: version={manifest.get('version')}, F1={manifest.get('f1_score_average')}")
-                        for service_name, s3_path in manifest.get("model_paths", {}).items():
-                            s3_key = s3_path.replace("models/", "")
-                            local_path = os.path.join(self.models_dir, f"{service_name}_iforest.joblib")
-                            logger.info(f"Downloading model for {service_name} from s3://{self.s3_bucket}/{s3_key}...")
-                            s3.download_file(self.s3_bucket, s3_key, local_path)
-                        manifest_loaded = True
-                    else:
-                        logger.warning("Manifest validation_passed is False. Model quality did not pass guardrail. Falling back to current/.")
-                except Exception as e:
-                    logger.warning(f"Could not download or parse manifest from S3: {e}. Falling back to current/.")
-                
-                # 2. Fallback nếu manifest thất bại
-                if not manifest_loaded:
-                    logger.info("Running fallback: downloading latest models from current/ folder on S3...")
-                    self.download_models_from_s3()
-            else:
-                logger.info("No AWS credentials found. Skipping S3 download (using local cache if available).")
-                
+                # Kiểm định manifest chất lượng
+                if manifest.get("validation_passed", False):
+                    logger.info(f"Manifest loaded successfully: version={manifest.get('version')}, F1={manifest.get('f1_score_average')}")
+                    for service_name, s3_path in manifest.get("model_paths", {}).items():
+                        s3_key = s3_path.replace("models/", "")
+                        local_path = os.path.join(self.models_dir, f"{service_name}_iforest.joblib")
+                        logger.info(f"Downloading model for {service_name} from s3://{self.s3_bucket}/{s3_key}...")
+                        s3.download_file(self.s3_bucket, s3_key, local_path)
+                    manifest_loaded = True
+                else:
+                    logger.warning("Manifest validation_passed is False. Model quality did not pass guardrail. Falling back to current/.")
+            except Exception as e:
+                logger.warning(f"Could not download or parse manifest from S3: {e}. Falling back to current/.")
+
+            # 2. Fallback nếu manifest thất bại
+            if not manifest_loaded:
+                logger.info("Running fallback: downloading latest models from current/ folder on S3...")
+                self.download_models_from_s3()
             # 3. Nạp tất cả file model joblib cục bộ vào RAM
             if os.path.exists(self.models_dir):
                 # Clear RAM cache trước khi nạp lại (dành cho hot reload)
@@ -468,7 +461,8 @@ class AnomalyDetector:
                 
         # Fallback Z-Score nếu không có model
         try:
-            cpu_z = self.check_infra_z_score(f'sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m]))')
+            prom_query = f'(sum(rate(container_cpu_usage_seconds_total{{container_name="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{pod=~"{service}-.*"}}[5m])))'
+            cpu_z = self.check_infra_z_score(prom_query)
             return abs(cpu_z) >= 3.0
         except Exception as e:
             logger.error(f"Failed to run Z-Score fallback for {service}: {e}")
