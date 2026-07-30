@@ -58,7 +58,7 @@ spec:
               type: RuntimeDefault
           containers:
           - name: trainer
-            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:6c3ad7c-30515307037-aiops-engine@sha256:8daf8318830874dd5ebf3d91dac2d78e1b3e2613fa20b5041c7a33b7c7aaed24
+            image: 197826770971.dkr.ecr.ap-southeast-1.amazonaws.com/techx-corp:20325b3-30555774691-aiops-engine@sha256:f0ac38eb2b7e37a6c9ef4cbb1d8c2702c24dac8ca285ce3e6fbb070fd60976ba
             imagePullPolicy: Always
             command:
             - python
