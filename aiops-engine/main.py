@@ -287,10 +287,13 @@ async def active_metrics_polling_loop():
                     # 1. Gọi trực tiếp Isolation Forest Machine Learning Predictor
                     res = detector.check_service_anomaly(service)
                     is_anomalous = res.get("is_anomalous", False)
+                    pred = res.get("prediction", -1 if is_anomalous else 1)
                     score = res.get("score", 0.0)
 
+                    logger.info(f"[ML Scan] Service '{service}': pred={pred} (1:Normal, -1:Anomaly), score={score:.4f}")
+
                     if is_anomalous:
-                        logger.warning(f"ML Isolation Forest proactively detected ANOMALY on service: {service} (score={score:.4f})!")
+                        logger.warning(f"ML Isolation Forest proactively detected ANOMALY on service: {service} (pred={pred}, score={score:.4f})!")
                         anomalous_services.add(service)
                         consecutive_healthy_count[service] = 0
                     else:
