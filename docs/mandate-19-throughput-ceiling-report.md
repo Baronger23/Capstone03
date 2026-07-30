@@ -165,22 +165,31 @@ Phần này để trống có cấu trúc để cập nhật ngay sau khi bạn 
 
 ### 5.1. Kết quả breakpoint after
 
-| Chỉ số | Before | After | Delta |
-|---|---:|---:|---:|
-| Highest passing stage | 400 users (screenshot-observed) | 300 users (provisional) | -100 users |
-| Failing stage | 410 users | 350 users (provisional) | -60 users |
-| Served RPS giữ SLO | Chưa có exact-window; current snapshot 76.2 | 63.25 RPS average tại 300 users | Không so sánh sustained với snapshot |
-| Breakpoint served RPS | Chưa có exact-window; current snapshot 73.9 | 71.20 RPS average tại 350 users | Không so sánh sustained với snapshot |
+| Measure | Before | After |
+|---|---:|---:|
+| Highest offered users | 400 observed | 410 observed |
+| Peak served RPS holding SLO | Not established | Not established |
+| Highest current RPS observed | 76.2 at 400 users | 81.8 at 410 users |
+
+Giá trị before `76.2 RPS` và after `81.8 RPS` đều chỉ là current RPS tại thời
+điểm chụp Locust. Do thiếu raw CSV và exact-window SLO, không được dùng hai số
+này làm sustained ceiling hoặc kết luận throughput đã tăng/giảm.
+
+| Chỉ số định tính | Before | After | Kết luận |
+|---|---|---|---|
 | Primary bottleneck | frontend CPU saturation and throttling | Recommendation CPU 71% / HPA target 65% tại failing candidate 350 users; frontend đã scale 2→3 replica và hạ còn 63%/65% | Frontend bottleneck đã được nới; điểm nóng đầu tiên tại vùng SLO gãy dịch sang recommendation |
 | Co-bottlenecks | proxy không overflow, DB pool chưa cạn | Frontend-proxy 62%/65% tại 350 users, sau đó 71%/65% tại 400 users; product-catalog 51%/65% tại 350 và 57%/65% tại 400; không có bằng chứng Envoy overflow hoặc DB pool cạn | Proxy trở thành saturation candidate kế tiếp tại 400 users; DB pool vẫn được loại trừ |
 
 ### 5.2. Density before/after
 
-| Chỉ số | Before | After | Delta |
-|---|---:|---:|---:|
-| Node count trong từng run | 9 | 7 xuyên suốt run after | 0 trong nội bộ mỗi run |
-| Served RPS giữ SLO | Chưa có exact-window; current snapshot 76.2 | 63.25 RPS tại stage 300 (provisional) | Chưa thể so sánh hợp lệ |
-| Requests-per-node | 8.47 (snapshot) | 9.04 (provisional) | Chưa thể kết luận từ snapshot |
+| Measure | Before | After |
+|---|---:|---:|
+| Node count | Not comparable | 9 → 11 in the captured attempt |
+| Served RPS/node | Not comparable | Not valid: node set changed |
+| Peak served RPS holding SLO | Not established | Not established |
+
+Không tính delta hay improvement percentage cho attempt này vì node set thay
+đổi và after chưa có sustained served RPS giữ SLO.
 
 **Diễn giải node đúng:** run after không scale node theo tải. Bộ ảnh after mới
 bao phủ các stage 10, 300, 350 và 400 users; panel `Node count (Karpenter burst)`

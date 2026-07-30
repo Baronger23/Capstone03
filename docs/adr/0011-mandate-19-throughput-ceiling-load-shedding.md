@@ -77,11 +77,15 @@ là ứng viên breakpoint, chưa phải trần chính xác đã ký xác nhận
 
 ### Quyết định so sánh before/after
 
-| Tiêu chí nghiệm thu | Trước tuning | Sau tuning | Kết quả |
-|---|---:|---:|---|
-| RPS giữ SLO | Chưa có sustained exact-window; snapshot 76.2 | 63.25 provisional | Chưa thể so sánh hợp lệ |
-| Requests-per-node | Snapshot 8.47 | 9.04 provisional | Chưa thể kết luận từ snapshot |
-| Số node | 9 | 7 | FAIL đối với phép so sánh cùng node-set |
+| Measure | Before | After |
+|---|---:|---:|
+| Highest offered users | 400 observed | 410 observed |
+| Peak served RPS holding SLO | Not established | Not established |
+| Highest current RPS observed | 76.2 at 400 users | 81.8 at 410 users |
+
+`76.2 RPS` và `81.8 RPS` đều là current RPS tại snapshot, không phải sustained
+served RPS giữ SLO. Node set của after attempt thay đổi `9 → 10 → 11`, nên
+không thể tính hay tuyên bố cải thiện requests-per-node.
 
 Evidence hiện tại vì vậy **không chứng minh** tuning đã nâng trần thông lượng
 hoặc density trên cùng node-set. Run cũ có node tăng 9→10→11 đã bị loại và
