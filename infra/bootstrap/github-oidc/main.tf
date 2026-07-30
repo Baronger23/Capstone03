@@ -83,6 +83,41 @@ resource "aws_iam_role" "terraform_apply" {
   })
 }
 
+# Plan-time decrypt for SecureString SSM parameters.
+#
+# terraform_plan carries the AWS-managed ReadOnlyAccess policy, which deliberately excludes
+# kms:Decrypt. That was fine until the product-reviews AI endpoint parameters
+# (/techx-corp-tf3/product-reviews/ai-endpoints/*, ai-runtime-vpc-endpoints.tf) were applied:
+# once they exist in state, every `terraform plan` has to REFRESH them, and reading a
+# SecureString requires kms:Decrypt. The plan that first added them passed because it only
+# had to CREATE them - the failure surfaces on the next plan, and then blocks every
+# production plan regardless of what the PR changes.
+#
+# Scoped down two ways so this stays a read path, not a general decrypt grant:
+#   - kms:ViaService pins it to SSM (the role cannot decrypt anything directly), and
+#   - the key is the cluster KMS key, which is what those parameters are encrypted with.
+resource "aws_iam_role_policy" "terraform_plan_ssm_decrypt" {
+  name = "ssm-securestring-decrypt"
+  role = aws_iam_role.terraform_plan.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "DecryptSecureStringParametersViaSSM"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = "arn:aws:kms:${var.region}:${data.aws_caller_identity.current.account_id}:key/*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${var.region}.amazonaws.com"
+          }
+        }
+      },
+    ]
+  })
+}
+
 resource "aws_iam_role_policy_attachment" "terraform_apply_admin" {
   role       = aws_iam_role.terraform_apply.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
