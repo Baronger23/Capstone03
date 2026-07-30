@@ -27,6 +27,18 @@ What invalidates the same-infrastructure comparison:
 - therefore neither a valid after ceiling nor RPS/node improvement can be
   calculated from this run.
 
+## Before/after comparison
+
+| Measure | Before | After |
+|---|---:|---:|
+| Highest offered users | 400 observed | 410 observed |
+| Peak served RPS holding SLO | Not established | Not established |
+| Highest current RPS observed | 76.2 at 400 users | 81.8 at 410 users |
+
+`76.2 RPS` and `81.8 RPS` are point-in-time Locust readings. Neither value may
+be presented as a sustained SLO-holding ceiling. The after run also changed
+its node set, so the two snapshots cannot support a density-improvement claim.
+
 ## Canonical 7-node run (current report)
 
 The operator record states that the later run kept the node count at **7 for

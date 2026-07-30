@@ -1,0 +1,255 @@
+# Egress proxy for shopping-copilot.
+#
+# Same shape as aiops-egress-proxy / product-reviews-egress-proxy: an Envoy HTTP CONNECT
+# forward proxy whose RBAC filter only permits CONNECT to an explicit authority allowlist, so
+# the workload itself never needs public egress (Mandate #17). Each consumer gets its own
+# proxy with its own allowlist - widening product-reviews' proxy would have handed its
+# workload the copilot's endpoints too.
+#
+# Allowlist below = exactly what the copilot calls at runtime:
+#   bedrock-runtime.ap-southeast-1   nova-lite (BEDROCK_REGION) + Titan embed (AWS_DEFAULT_REGION)
+#   bedrock-runtime.us-east-1        ApplyGuardrail (BEDROCK_GUARDRAIL_REGION)
+#   bedrock-agent-runtime.us-east-1  Knowledge Base Retrieve (BEDROCK_KB_REGION)
+#   sts.ap-southeast-1 + sts         AssumeRoleWithWebIdentity for IRSA
+# S3 is intentionally absent: no runtime code path calls it (the IRSA grant covers the
+# separate KB sync job, not the request path).
+#
+# ClusterIP is pinned so the NetworkPolicy ipBlock stays valid across recreates
+# (aiops=.150, product-reviews=.151, copilot=.152).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: shopping-copilot-egress-proxy
+  namespace: techx-tf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shopping-copilot-egress-proxy-config
+  namespace: techx-tf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+data:
+  egress-proxy.yaml: |
+    static_resources:
+      listeners:
+        - name: copilot_https_forward_proxy
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: 3128
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: copilot_egress_proxy
+                    http_protocol_options:
+                      accept_http_10: true
+                    upgrade_configs:
+                      - upgrade_type: CONNECT
+                    route_config:
+                      name: copilot_egress_proxy_route
+                      virtual_hosts:
+                        - name: copilot_external_https
+                          domains:
+                            - "*"
+                          routes:
+                            - match:
+                                connect_matcher: {}
+                              route:
+                                cluster: dynamic_forward_proxy_cluster
+                                upgrade_configs:
+                                  - upgrade_type: CONNECT
+                                    connect_config: {}
+                    http_filters:
+                      - name: envoy.filters.http.rbac
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                          rules:
+                            action: ALLOW
+                            policies:
+                              copilot_reviewed_external_https:
+                                permissions:
+                                  - and_rules:
+                                      rules:
+                                        - header:
+                                            name: ":method"
+                                            string_match:
+                                              exact: CONNECT
+                                        - header:
+                                            name: ":authority"
+                                            string_match:
+                                              exact: bedrock-runtime.ap-southeast-1.amazonaws.com:443
+                                  - and_rules:
+                                      rules:
+                                        - header:
+                                            name: ":method"
+                                            string_match:
+                                              exact: CONNECT
+                                        - header:
+                                            name: ":authority"
+                                            string_match:
+                                              exact: bedrock-runtime.us-east-1.amazonaws.com:443
+                                  - and_rules:
+                                      rules:
+                                        - header:
+                                            name: ":method"
+                                            string_match:
+                                              exact: CONNECT
+                                        - header:
+                                            name: ":authority"
+                                            string_match:
+                                              exact: bedrock-agent-runtime.us-east-1.amazonaws.com:443
+                                  - and_rules:
+                                      rules:
+                                        - header:
+                                            name: ":method"
+                                            string_match:
+                                              exact: CONNECT
+                                        - header:
+                                            name: ":authority"
+                                            string_match:
+                                              exact: sts.ap-southeast-1.amazonaws.com:443
+                                  - and_rules:
+                                      rules:
+                                        - header:
+                                            name: ":method"
+                                            string_match:
+                                              exact: CONNECT
+                                        - header:
+                                            name: ":authority"
+                                            string_match:
+                                              exact: sts.amazonaws.com:443
+                                principals:
+                                  - any: true
+                      - name: envoy.filters.http.dynamic_forward_proxy
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+                          dns_cache_config:
+                            name: copilot_external_dns_cache
+                            dns_lookup_family: V4_ONLY
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+      clusters:
+        - name: dynamic_forward_proxy_cluster
+          connect_timeout: 5s
+          lb_policy: CLUSTER_PROVIDED
+          cluster_type:
+            name: envoy.clusters.dynamic_forward_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+              dns_cache_config:
+                name: copilot_external_dns_cache
+                dns_lookup_family: V4_ONLY
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopping-copilot-egress-proxy
+  namespace: techx-tf3
+  labels:
+    app.kubernetes.io/name: shopping-copilot-egress-proxy
+    app.kubernetes.io/component: shopping-copilot-egress-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: shopping-copilot-egress-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: shopping-copilot-egress-proxy
+        app.kubernetes.io/component: shopping-copilot-egress-proxy
+    spec:
+      serviceAccountName: shopping-copilot-egress-proxy
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.34.10@sha256:3343a698c1bdfdbb174f1bd907dea789d728692f4f99a943e3e6f0bc5ef6513f
+          imagePullPolicy: IfNotPresent
+          command:
+            - /usr/local/bin/envoy
+          args:
+            - -c
+            - /etc/envoy/egress-proxy.yaml
+            - --log-level
+            - info
+          ports:
+            - name: http-proxy
+              containerPort: 3128
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            tcpSocket:
+              port: 3128
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: 3128
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 1
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy/egress-proxy.yaml
+              subPath: egress-proxy.yaml
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: envoy-config
+          configMap:
+            name: shopping-copilot-egress-proxy-config
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shopping-copilot-egress-proxy
+  namespace: techx-tf3
+  labels:
+    app.kubernetes.io/name: shopping-copilot-egress-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  type: ClusterIP
+  clusterIP: 172.20.255.152
+  selector:
+    app.kubernetes.io/name: shopping-copilot-egress-proxy
+  ports:
+    - name: http-proxy
+      port: 3128
+      targetPort: 3128
+      protocol: TCP

@@ -6,8 +6,14 @@
 # phai di qua GitOps de co dau vet + chay lai duoc. Mau lay tu
 # gitops/jobs/product-reviews-sprint3/migration-job.yaml.
 #
-# Ten Job co hau to `-r1` vi PodTemplate cua Job la IMMUTABLE: muon chay lai (vi du sua SQL)
-# phai dat ten moi (`-r2`, ...), khong sua tai cho.
+# Ten Job co hau to vi PodTemplate cua Job la IMMUTABLE: muon chay lai phai dat ten moi,
+# khong sua tai cho.
+#
+# -r2: lan chay dau (…-r1) TREO, khong chay duoc statement nao. Nguyen nhan: `default-deny-all`
+# (podSelector: {} = moi pod trong namespace) duoc promote 29/07, pod Job khong khop policy
+# allow nao -> mat DNS -> psycopg2.connect() treo im lang. Da fix bang networkpolicy.yaml
+# canh file nay (sync-wave 0, truoc Job o wave 1). Job …-r1 bi prune khoi cluster khi no roi
+# khoi git; khong con gia tri lam evidence vi no chua kip cham vao DB.
 #
 # KHONG dat ttlSecondsAfterFinished: Application nay bat automated sync, TTL xoa Job thi Argo
 # thay thieu resource va tao lai -> migration chay lap vo han. Job o lai lam evidence.
@@ -30,14 +36,24 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: copilot-user-memory-schema-migration-r1
+  name: copilot-user-memory-schema-migration-r2
   namespace: techx-tf3
+  annotations:
+    # Sau networkpolicy.yaml (wave 0) - policy phai co TRUOC khi pod Job start, khong thi
+    # pod mat DNS va treo (da xay ra voi …-r1).
+    argocd.argoproj.io/sync-wave: "1"
   labels:
     app.kubernetes.io/name: copilot-user-memory-schema-migration
     app.kubernetes.io/part-of: techx-corp
     techx.io/change: copilot-user-memory
 spec:
   backoffLimit: 2
+  # Dead-man switch. …-r1 treo VO HAN: pod khong crash nen backoffLimit khong bao gio kich,
+  # va no giu mot pod + mot node Karpenter song mai. Migration nay chay xong trong vai giay
+  # (bang rong, index tao tuc thi), nen 600s la rat thoai mai; qua nguong thi Job tu chet voi
+  # DeadlineExceeded thay vi treo im lang. Cung ly do gitops/aiops-engine/cronjob.yaml dat
+  # activeDeadlineSeconds cho trainer.
+  activeDeadlineSeconds: 600
   template:
     metadata:
       labels:
@@ -140,7 +156,11 @@ spec:
                   """),
               ]
 
-              conn = psycopg2.connect(dsn)
+              # In TRUOC khi connect, va connect_timeout de mot lan bi chan mang lai bao loi
+              # to ro thay vi treo im lang. …-r1 treo >5 phut voi log RONG vi dong print dau
+              # tien nam SAU connect() - khong co dau vet nao de chan doan tu log.
+              print(f"connecting to postgres (connect_timeout=15s) ...", flush=True)
+              conn = psycopg2.connect(dsn, connect_timeout=15)
               conn.autocommit = True
               failures = []
 
@@ -279,7 +299,7 @@ spec:
                   # Connection rieng, autocommit=False, de BEGIN/ROLLBACK co hieu luc ->
                   # khong de lai rac trong bang.
                   print("\n== verify: functional probe (rollback) ==", flush=True)
-                  probe = psycopg2.connect(dsn)
+                  probe = psycopg2.connect(dsn, connect_timeout=15)
                   probe_id = "__tf3_copilot_memory_probe__"
                   try:
                       with probe.cursor() as cur:
