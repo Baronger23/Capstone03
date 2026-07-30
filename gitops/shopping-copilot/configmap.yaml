@@ -61,9 +61,16 @@ data:
   # shipping. NO_PROXY additionally exempts cluster-local names for any client that reads it.
   HTTPS_PROXY: "http://shopping-copilot-egress-proxy.techx-tf3.svc.cluster.local:3128"
   NO_PROXY: "localhost,127.0.0.1,.svc,.svc.cluster.local,.cluster.local,10.0.0.0/8,172.20.0.0/16"
-  # Pinned so the Titan embed client (genai_cache reads AWS_DEFAULT_REGION, default us-east-1)
-  # and regional STS resolve to ap-southeast-1 - both are on the proxy allowlist.
-  AWS_DEFAULT_REGION: "ap-southeast-1"
+  # genai_cache reads AWS_DEFAULT_REGION directly and passes it as region_name for the Titan
+  # embed client. It MUST be us-east-1: amazon.titan-embed-text-v2:0 does not exist in
+  # ap-southeast-1 (verified with bedrock list-foundation-models - the region returns no
+  # titan-embed model at all), so pinning ap-southeast-1 made every embed call fail with
+  # "The provided model identifier is invalid" and the semantic cache silently never worked.
+  # This does not move any other client: botocore resolves AWS_REGION before
+  # AWS_DEFAULT_REGION, and the IRSA webhook injects AWS_REGION=ap-southeast-1, so STS and
+  # anything without an explicit region stay in ap-southeast-1. Both bedrock-runtime.us-east-1
+  # and sts.ap-southeast-1 are already on the egress proxy allowlist.
+  AWS_DEFAULT_REGION: "us-east-1"
 
   # ── Mandate-23 GenAI semantic cache (AIE2 copilot update) ────────
   # Tier-2 lookup embeds the query with amazon.titan-embed-text-v2:0; the IRSA role allows
