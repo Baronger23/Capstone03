@@ -6,8 +6,8 @@ Runbook này dùng để chạy restore drill RDS cho Mandate #20 trước mento
 **Source DB:** `techx-tf3-postgres`  
 **Region:** `ap-southeast-1`  
 **Account:** `197826770971`  
-**ADR:** `docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md`  
-**Solution:** `docs/docx_cdo02/mandate-20-rds-pitr-restore-solution.md`
+**ADR:** [docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md](../adr/0016-mandate-20-backup-restore-drill-cdo02.md)
+**Solution:** [docs/docx_cdo02/mandate-20-rds-pitr-restore-solution.md](../docx_cdo02/mandate-20-rds-pitr-restore-solution.md)
 
 Không chạy runbook này nếu chưa có cửa sổ drill được PM/mentor đồng ý.
 
@@ -226,7 +226,7 @@ Không drop schema/table trừ khi có change request riêng và đã xác nhậ
 
 ## 10. Evidence record checklist
 
-Lưu evidence vào `docs/evidence/mandate-20/`:
+Lưu evidence vào [docs/evidence/mandate-20/](../evidence/mandate-20/):
 
 ```text
 Git baseline:

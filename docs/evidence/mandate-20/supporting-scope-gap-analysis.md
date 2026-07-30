@@ -3,8 +3,8 @@
 Tài liệu này nối giữa:
 
 - directive gốc `MANDATE-20-dr-backup-restore.md`
-- ADR `docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md`
-- runbook `docs/runbooks/mandate-20-rds-pitr-drill.md`
+- ADR [docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md](../../adr/0016-mandate-20-backup-restore-drill-cdo02.md)
+- runbook [docs/runbooks/mandate-20-rds-pitr-drill.md](../../runbooks/mandate-20-rds-pitr-drill.md)
 
 Mục tiêu là trả lời 3 câu hỏi trước khi claim pass Mandate 20:
 
@@ -20,7 +20,7 @@ Hiện tại CDO02 đã có:
 - Runbook restore drill an toàn, restore ra DB tách biệt.
 - Evidence index cho Mandate 20.
 - Production baseline cho từng tầng dữ liệu/state.
-- RDS PITR drill record thật: `docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md`.
+- RDS PITR drill record thật: [docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md).
 
 Hiện tại CDO02 vẫn còn cần chốt:
 
@@ -36,7 +36,7 @@ Kết luận ngắn: RDS drill đã pass; Mandate 20 overall còn phụ thuộc 
 | 1. Không sót store nào trên luồng ra tiền | ADR đã có data-tier commitments và coverage matrix | `Partial` |
 | 2. RPO/RTO rõ ràng, cadence tương xứng | RDS có target và measured result; store khác ghi limitation/strategy | `RDS passed / Non-RDS partial` |
 | 3. Point-in-time restore chứng minh được | RDS PITR drill đã restore về `T_restore` và trả marker GOOD | `Passed for RDS` |
-| 4. Tested restore drill | Evidence record `mandate-20-final-rds-pitr-evidence-20260729.md`, RTO 23.83 phút | `Passed for RDS` |
+| 4. Tested restore drill | Evidence record [mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md), RTO 23.83 phút | `Passed for RDS` |
 | 5. Backup an toàn, tách quyền xóa | ADR đã nêu delete-authority matrix | `Needs enforcement evidence or accepted risk` |
 
 ## 3. Data-tier baseline cần có trước buổi drill
@@ -108,7 +108,7 @@ RDS tested restore drill đã chạy thật.
 
 Evidence:
 
-- `docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md`
+- [docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md)
 - 4 video đã quay, Drive links đã ghi trong final evidence
 - RTO `23.83 phút`, trong target `<= 45 phút`
 - Production marker vẫn `CORRUPTED_AFTER_GOOD_TIME`
@@ -127,7 +127,7 @@ Phần còn thiếu:
 
 ## 5. Checklist production baseline cần chụp trước khi drill
 
-Lưu thành raw evidence trong thư mục `docs/evidence/mandate-20/`.
+Lưu thành raw evidence trong thư mục [docs/evidence/mandate-20/](.).
 
 ### 5.1. RDS
 
