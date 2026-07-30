@@ -42,13 +42,9 @@ class AnomalyDetector:
     def download_models_from_s3(self):
         """Tải các model Isolation Forest từ S3 về models/ nếu có."""
         try:
-            # Chỉ chạy khi có biến môi trường AWS
-            if not os.getenv("AWS_ACCESS_KEY_ID"):
-                logger.info("No AWS credentials found. Skipping S3 model download.")
-                return
-
-            s3 = boto3.client("s3")
-            logger.info(f"Listing models in S3 bucket: {self.s3_bucket}...")
+            region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "ap-southeast-1"))
+            s3 = boto3.client("s3", region_name=region)
+            logger.info(f"Listing models in S3 bucket: {self.s3_bucket} (region: {region})...")
             response = s3.list_objects_v2(Bucket=self.s3_bucket, Prefix="current/")
             
             if "Contents" not in response:
@@ -468,7 +464,8 @@ class AnomalyDetector:
                 
         # Fallback Z-Score nếu không có model
         try:
-            cpu_z = self.check_infra_z_score(f'sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m]))')
+            prom_query = f'(sum(rate(container_cpu_usage_seconds_total{{container_name="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{container="{service}"}}[5m])) or sum(rate(container_cpu_usage_seconds_total{{pod=~"{service}-.*"}}[5m])))'
+            cpu_z = self.check_infra_z_score(prom_query)
             return abs(cpu_z) >= 3.0
         except Exception as e:
             logger.error(f"Failed to run Z-Score fallback for {service}: {e}")
