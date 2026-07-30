@@ -59,6 +59,8 @@ không chạy liên tục nên không ai thấy nó đứt mạng.
 2. `sync-wave`: netpol `0` → Job `1`, để policy có trước khi pod start.
 3. Script in một dòng **trước** khi connect + `connect_timeout=15` → lần sau bị chặn mạng thì
    báo lỗi to rõ thay vì treo không dấu vết.
+4. `activeDeadlineSeconds: 600` làm dead-man switch. `-r1` treo **vô hạn**: pod không crash nên
+   `backoffLimit` không bao giờ kích, và nó giữ một pod + một node Karpenter sống mãi.
 
 ---
 

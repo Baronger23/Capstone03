@@ -48,6 +48,12 @@ metadata:
     techx.io/change: copilot-user-memory
 spec:
   backoffLimit: 2
+  # Dead-man switch. …-r1 treo VO HAN: pod khong crash nen backoffLimit khong bao gio kich,
+  # va no giu mot pod + mot node Karpenter song mai. Migration nay chay xong trong vai giay
+  # (bang rong, index tao tuc thi), nen 600s la rat thoai mai; qua nguong thi Job tu chet voi
+  # DeadlineExceeded thay vi treo im lang. Cung ly do gitops/aiops-engine/cronjob.yaml dat
+  # activeDeadlineSeconds cho trainer.
+  activeDeadlineSeconds: 600
   template:
     metadata:
       labels:
