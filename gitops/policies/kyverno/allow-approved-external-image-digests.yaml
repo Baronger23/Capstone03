@@ -37,7 +37,17 @@ spec:
                 # no digest-only branch. Without it, a first-party image would
                 # be judged against the external catalogue it can never appear
                 # in, instead of against its signature and SBOM.
-                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/techx-corp(:[^@]+)?@sha256:[0-9a-f]{64}$', element.image) }}"
+                #
+                # shopping-copilot is first-party too - built, Trivy-gated and
+                # Cosign-signed by .github/workflows/build-push-copilot.yml - but
+                # it lives in its own ECR repository rather than techx-corp. Once
+                # this policy moved to Enforce (2026-07-28) that made every
+                # copilot deploy fail admission, because an image that can never
+                # be in the reviewed external catalogue was being judged against
+                # it. It is NOT yet in verify-first-party-signatures: that policy
+                # also requires a CycloneDX SBOM attestation, which the copilot
+                # build does not produce yet (follow-up).
+                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/(techx-corp|shopping-copilot)(:[^@]+)?@sha256:[0-9a-f]{64}$', element.image) }}"
                   operator: Equals
                   value: false
             deny:
@@ -64,7 +74,17 @@ spec:
                 # no digest-only branch. Without it, a first-party image would
                 # be judged against the external catalogue it can never appear
                 # in, instead of against its signature and SBOM.
-                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/techx-corp(:[^@]+)?@sha256:[0-9a-f]{64}$', element.image) }}"
+                #
+                # shopping-copilot is first-party too - built, Trivy-gated and
+                # Cosign-signed by .github/workflows/build-push-copilot.yml - but
+                # it lives in its own ECR repository rather than techx-corp. Once
+                # this policy moved to Enforce (2026-07-28) that made every
+                # copilot deploy fail admission, because an image that can never
+                # be in the reviewed external catalogue was being judged against
+                # it. It is NOT yet in verify-first-party-signatures: that policy
+                # also requires a CycloneDX SBOM attestation, which the copilot
+                # build does not produce yet (follow-up).
+                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/(techx-corp|shopping-copilot)(:[^@]+)?@sha256:[0-9a-f]{64}$', element.image) }}"
                   operator: Equals
                   value: false
             deny:
@@ -91,7 +111,17 @@ spec:
                 # no digest-only branch. Without it, a first-party image would
                 # be judged against the external catalogue it can never appear
                 # in, instead of against its signature and SBOM.
-                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/techx-corp(:[^@]+)?@sha256:[0-9a-f]{64}$', element.image) }}"
+                #
+                # shopping-copilot is first-party too - built, Trivy-gated and
+                # Cosign-signed by .github/workflows/build-push-copilot.yml - but
+                # it lives in its own ECR repository rather than techx-corp. Once
+                # this policy moved to Enforce (2026-07-28) that made every
+                # copilot deploy fail admission, because an image that can never
+                # be in the reviewed external catalogue was being judged against
+                # it. It is NOT yet in verify-first-party-signatures: that policy
+                # also requires a CycloneDX SBOM attestation, which the copilot
+                # build does not produce yet (follow-up).
+                - key: "{{ regex_match('^197826770971[.]dkr[.]ecr[.]ap-southeast-1[.]amazonaws[.]com/(techx-corp|shopping-copilot)(:[^@]+)?@sha256:[0-9a-f]{64}$', element.image) }}"
                   operator: Equals
                   value: false
             deny:
