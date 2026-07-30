@@ -213,9 +213,14 @@ components:
       periodSeconds: 20
       timeoutSeconds: 3
       failureThreshold: 3
+    # Mandate-19 "resource request sát usage" — chiều NGƯỢC lại: ad giữ chỗ 100m CPU
+    # nhưng ở stage 1400 user chỉ dùng 17-21m và throttle 0%. Request là thứ scheduler
+    # dùng để chia node, nên 80m thừa/pod là 80m mà email/accounting KHÔNG xin được
+    # trên chính node đó. Hạ 100m -> 30m (vẫn trên đỉnh usage đo được) để trả chỗ cho
+    # hai service đang cạn. Limit giữ 500m: ad vẫn được burst, chỉ thôi giữ chỗ.
     resources:
       requests:
-        cpu: 100m
+        cpu: 30m
         memory: 256Mi
       limits:
         cpu: 500m
@@ -294,6 +299,26 @@ components:
       timeoutSeconds: 3
       failureThreshold: 3
     replicas: 2        # web khách thấy, traffic HTTP cao nhất
+    # === Mandate-19: deadline gRPC 500ms là nguồn TOÀN BỘ lỗi browse ===
+    # Đo 30/07 stage 1400 user, log frontend:
+    #   "Error: 4 DEADLINE_EXCEEDED: Deadline exceeded after 0.500s" -> product-catalog
+    # Hai deadline này (REL-17-02, Mandate #17) đúng về nguyên tắc — gRPC-js KHÔNG có
+    # deadline mặc định nên upstream treo sẽ giữ mọi request browse. Vấn đề là NGƯỠNG:
+    # 500ms sát đuôi phân phối. product-catalog p95 server-side chỉ 6,9ms, nhưng đuôi
+    # dưới tải vượt 500ms và KHÔNG có retry -> DEADLINE_EXCEEDED thành lỗi cứng:
+    #   311 x HTTP 500 trên /api/products/[id]  +  431 x HTTP 503 trên
+    #   /api/product-reviews/[id] = 742 lỗi, đúng phần đốt browse SLO xuống 99,06%.
+    # Cả hai route nằm trong mẫu số SLI browse (scripts/mandate-19/sli_queries.json).
+    #
+    # 500 -> 1200ms: vẫn fail-fast và vẫn chặn treo vô hạn (mục tiêu gốc của REL-17-02),
+    # nhưng không còn cắt vào đuôi bình thường. An toàn với cổng browse p95 < 1000ms vì
+    # p95 đo được chỉ 110ms ở stage này — chỉ phần đuôi bị ảnh hưởng, và đuôi chậm vẫn
+    # tốt hơn đuôi lỗi. PRODUCT_AI_DEADLINE_MS (15s, đường Bedrock) giữ nguyên.
+    envOverrides:
+      - name: PRODUCT_CATALOG_DEADLINE_MS
+        value: "1200"
+      - name: PRODUCT_REVIEWS_DEADLINE_MS
+        value: "1200"
     resources:
       requests:
         # PM-152 measured ~218m CPU/pod at the failing stage. A 200m request gives
@@ -927,11 +952,15 @@ components:
       digest: sha256:9cd92fccd5050dbb696beb6a205fd73290a7de311db585cb993bcc35a7c03a35
       tag: 43dcf62-29569108433-recommendation
     resources:
+      # Mandate-19 (đo 30/07, stage 1400 user): recommendation throttle 18,1%, usage
+      # thật 171m > request 100m. GET /api/recommendations nằm TRONG mẫu số SLI browse
+      # (xem scripts/mandate-19/sli_queries.json) nên throttle ở đây đốt trực tiếp
+      # browse p95. request 100m -> 150m (sát usage), limit 500m -> 700m.
       requests:
-        cpu: 100m
+        cpu: 150m
         memory: 64Mi
       limits:
-        cpu: 500m
+        cpu: 700m
         memory: 500Mi
     readinessProbe:
       grpc:
@@ -953,12 +982,18 @@ components:
     imageOverride: # CDO02 fix Consumer.cs - xem comment imageOverride đầu components:
       digest: sha256:32aeb5e03cd55a4f6a9927b950d019393e39e480541877471e622f002c3107f7
       tag: e43df42-29655320898-accounting
+    # Mandate-19 (đo 30/07, stage 1400 user): accounting bị CPU-throttle **86,1%** —
+    # cao nhất cụm. Nó là consumer MSK duy nhất ghi đơn vào RDS, nên throttle ở đây
+    # nghĩa là đơn đã đặt xong vẫn nằm chờ trong topic. Usage thật 166-171m mà limit
+    # chỉ 200m => cứ mỗi chu kỳ CFS nó bị treo 86% thời gian.
+    # request 50m -> 150m (sát usage thật, để scheduler và HPA thấy đúng khối lượng),
+    # limit 200m -> 600m (còn trần, nhưng đủ để tiêu backlog thay vì tích luỹ).
     resources:
       requests:
-        cpu: 50m
+        cpu: 150m
         memory: 150Mi
       limits:
-        cpu: 200m
+        cpu: 600m
         memory: 350Mi
     # Mandate #8 buoc 2 (cutover Postgres -> RDS, runbook §5 buoc 4): DB_CONNECTION_STRING -> RDS
     # qua secret techx-tf3-postgres-conn (format .NET/Npgsql, SSL Mode=Require). accounting la
@@ -988,6 +1023,24 @@ components:
             name: techx-tf3-kafka-scram
             key: password
   email:
+    # === Mandate-19: NÚT THẮT THÔNG LƯỢNG CỦA TOÀN HỆ (đo 30/07/2026) ===
+    # email quyết định trần checkout, không phải checkout. Ở stage 1400 user:
+    #   span CLIENT `POST` checkout -> email  p95 = 15000 ms  (= route timeout Envoy)
+    #   span SERVER email                     p95 =   391 ms
+    # Chênh 14,6s là XẾP HÀNG, không phải xử lý. checkout gọi đồng bộ
+    # (src/checkout/main.go:473) nên hàng đợi này ăn trọn budget request -> 504:
+    # 3.432/5.431 đơn hỏng, 82% toàn bộ lỗi client của stage.
+    #
+    # 1 replica Ruby/Sinatra+Puma (GIL) với limit 100m = 0,1 core không kham nổi
+    # 14,7 rps x 391 ms (~5,8 request đồng thời). Chuyển sang HPA 2..8
+    # (gitops/infrastructure/hpa-hotpath.yaml, email-hpa) + nới CPU.
+    #
+    # Không thêm node: email KHÔNG bị ghim tầng elastic (vắng mặt trong
+    # values-mandate13.yaml) nên nó nằm trên node managed t3.large — nhóm node
+    # đang rảnh nhất cụm (~20-30% CPU thật). Đây đúng là "nhiều request hơn trên
+    # cùng số node".
+    replicasManagedExternally: true
+    replicas: 2
     imageOverride:
       digest: sha256:afdbc98c923cff6e7652d84bee0bea0e658dab0bad99299ae8a9e423969d82f4
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
@@ -1008,11 +1061,16 @@ components:
       failureThreshold: 3
     resources:
       requests:
-        cpu: 25m
-        memory: 64Mi
+        # 25m -> 75m: request cũ thấp hơn usage thật (đo 100m ở 1800 user) nên HPA
+        # tính utilization sai lệch VÀ scheduler đặt pod như thể nó gần như miễn phí.
+        cpu: 75m
+        memory: 96Mi
       limits:
-        cpu: 100m
-        memory: 100Mi
+        # 100m -> 600m: limit cũ CHÍNH LÀ trần. Ruby MRI có GIL, một pod dùng được
+        # tối đa ~1 core; 0,1 core biến mọi burst thành hàng đợi. 600m cho pod đủ
+        # sức nuốt burst mà vẫn có trần chống pod lỗi ăn hết node.
+        cpu: 600m
+        memory: 256Mi
   fraud-detection:
     imageOverride:
       digest: sha256:45fc3b08aa4a1ef057866565970aaac5672d4a0c6b6a7dd91c1ec0ff65517bb2
