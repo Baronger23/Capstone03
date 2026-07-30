@@ -1,34 +1,32 @@
-# Mandate #17 - Bao cao NetworkPolicy, resilience va containment
+# Mandate #17 - Báo cáo NetworkPolicy, resilience và containment
 
 **Directive:** Mandate 17 - Resilience and Containment  
-**Ngay cap nhat bao cao:** 30/07/2026  
-**Cluster muc tieu:** `techx-corp-tf3`  
-**Namespace chinh:** `techx-tf3`  
-**Nhanh report:** `docs/mandate-17-network-policy-report`  
-**Commit deny-all da push:** `9db561e feat(network-policy): promote default deny all`  
-**Nhom thuc hien:** CDO01 phu trach Security/NetworkPolicy, phoi hop CDO02 ve reliability va AIO02 voi workload AI  
-**Nguoi xac nhan/chung kien:** _(dien sau)_  
-**Ket qua hien tai:** **DONE / PASS - `default-deny-all` da duoc apply live, he thong van on dinh sau khi promote, va evidence hien tai khong cho thay regression lon.**
-
-> Bao cao nay viet theo format cua `docs/docx_cdo01/mandate-05-runtime-hardening-report.md`: tach ro muc tieu, co so ky thuat, lo trinh cutover, bang chung, gioi han, rollback va doi chieu directive. Nguyen tac chinh: khong coi viec "he thong dang chay tot truoc deny-all" la bang chung du; chi ket luan sau khi deny-all da duoc apply live va test allowed/denied flow thanh cong.
+**Ngày cập nhật báo cáo:** 30/07/2026  
+**Cluster mục tiêu:** `techx-corp-tf3`  
+**Namespace chính:** `techx-tf3`  
+**Nhánh report:** `docs/mandate-17-network-policy-report`  
+**Commit deny-all đã push:** `9db561e feat(network-policy): promote default deny all`  
+**Nhóm thực hiện:** CDO01 phụ trách Security/NetworkPolicy, phối hợp CDO02 về reliability và AIO02 với workload AI  
+**Người xác nhận/chứng kiến:** _(điền sau)_  
+**Kết quả hiện tại:** **DONE / PASS - `default-deny-all` đã được apply live, hệ thống vẫn ổn định sau khi promote, và evidence hiện tại không cho thấy regression lớn.**
 
 ---
 
-## 1. Muc tieu va pham vi
+## 1. Mục tiêu và phạm vi
 
-Mandate 17 yeu cau he thong vung hon khi co loi bat ngo va khoanh nho blast-radius neu mot pod bi chiem.
+Mandate 17 yêu cầu hệ thống vững hơn khi có lỗi bất ngờ và khoanh nhỏ blast-radius nếu một pod bị chiếm quyền.
 
-Pham vi trong bao cao nay tap trung vao phan **Security - containment**:
+Phạm vi trong báo cáo này tập trung vào phần **Security - containment**:
 
-1. Moi pod chi duoc nhan traffic tu caller da duoc duyet.
-2. Moi pod chi duoc egress toi dependency can thiet va dung port.
-3. Lateral movement giua cac service khong lien quan phai bi chan.
-4. Business pod khong duoc egress Internet tuy tien.
-5. `default-deny-all` cho ca Ingress va Egress la buoc baseline cuoi.
-6. `/flagservice` va cac route van hanh da duyet khong bi pha.
-7. Moi thay doi di qua GitOps/PR, co evidence va rollback.
+1. Mỗi pod chỉ được nhận traffic từ caller đã được duyệt.
+2. Mỗi pod chỉ được egress tới dependency cần thiết và đúng port.
+3. Lateral movement giữa các service không liên quan phải bị chặn.
+4. Business pod không được egress Internet tuỳ tiện.
+5. `default-deny-all` cho cả Ingress và Egress là bước baseline cuối.
+6. `/flagservice` và các route vận hành đã duyệt không bị phá.
+7. Mọi thay đổi đi qua GitOps/PR, có evidence và rollback rõ ràng.
 
-Pham vi workload:
+Phạm vi workload:
 
 - Business path: `frontend-proxy`, `frontend`, `product-catalog`, `cart`, `checkout`, `payment`, `currency`, `shipping`, `quote`, `ad`, `recommendation`, `email`, `fraud-detection`, `accounting`, `product-reviews`, `llm`, `image-provider`, `flagd`.
 - Platform/observability: OTEL Gateway, Grafana, Jaeger, Prometheus, OpenSearch, Cloudflared, AIOps, load-generator.
@@ -36,35 +34,35 @@ Pham vi workload:
 
 ---
 
-## 2. Co so ky thuat
+## 2. Cơ sở kỹ thuật
 
-| Lop | Co che | Trang thai |
+| Lớp | Cơ chế | Trạng thái |
 |---|---|---|
-| Network enforcement | AWS VPC CNI NetworkPolicy | Dang dung trong cluster |
-| Source of truth | GitOps path `gitops/infrastructure/` | ArgoCD sync tu day |
-| Policy staged | `gitops/infrastructure/network-policy-staged/` | Khong auto-promote |
-| Policy active | `gitops/infrastructure/network-policy-*.yaml` | Da co nhieu service policy |
-| Default deny | `gitops/infrastructure/network-policy-default-deny-all.yaml` | Da code + push branch, cho PR/merge/sync |
-| Rollback | Revert commit GitOps hoac xoa tam live object khi khan cap | Da chuan bi |
+| Network enforcement | AWS VPC CNI NetworkPolicy | Đang dùng trong cluster |
+| Source of truth | GitOps path `gitops/infrastructure/` | ArgoCD sync từ đây |
+| Policy staged | `gitops/infrastructure/network-policy-staged/` | Không auto-promote |
+| Policy active | `gitops/infrastructure/network-policy-*.yaml` | Đã có nhiều service policy |
+| Default deny | `gitops/infrastructure/network-policy-default-deny-all.yaml` | Đã code + push branch, đã lên live |
+| Rollback | Revert commit GitOps hoặc xoá tạm live object khi khẩn cấp | Đã chuẩn bị |
 
-### Ghi chu ve AWS VPC CNI
+### Ghi chú về AWS VPC CNI
 
-Voi AWS VPC CNI, NetworkPolicy can duoc test that tren cluster vi duong di traffic co the lien quan den pod IP sau DNAT, ClusterIP, va selector. Vi vay policy khong chi duoc doc bang mat; phai co runtime evidence.
+Với AWS VPC CNI, NetworkPolicy cần được test thật trên cluster vì đường đi traffic có thể liên quan đến pod IP sau DNAT, ClusterIP, và selector. Vì vậy policy không chỉ được đọc bằng mắt; phải có runtime evidence.
 
-Quy uoc khi viet policy:
+Quy ước khi viết policy:
 
-- Uu tien `podSelector` cho dependency trong cluster.
-- Mo dung port cho tung dependency.
-- Cho DNS TCP/UDP 53 toi CoreDNS.
-- Cho telemetry toi OTEL Gateway.
-- Voi datastore/managed endpoint, dung CIDR/IP private va port can thiet.
-- Khong mo `0.0.0.0/0` cho business pod neu khong co exception ro.
+- Ưu tiên `podSelector` cho dependency trong cluster.
+- Mở đúng port cho từng dependency.
+- Cho DNS TCP/UDP 53 tới CoreDNS.
+- Cho telemetry tới OTEL Gateway.
+- Với datastore/managed endpoint, dùng CIDR/IP private và port cần thiết.
+- Không mở `0.0.0.0/0` cho business pod nếu không có exception rõ.
 
 ---
 
-## 3. Kien truc allowlist
+## 3. Kiến trúc allowlist
 
-Customer journey can duoc giu:
+Customer journey cần được giữ:
 
 ```text
 frontend-proxy
@@ -87,56 +85,56 @@ frontend-proxy
 
 Money path:
 
-- `frontend` duoc goi `checkout`, nhung khong goi truc tiep `payment`.
-- Chi `checkout` duoc goi `payment`.
-- `checkout` di `shipping`, `shipping` moi goi `quote`.
-- `cart` chi can Valkey.
-- `product-catalog` va `product-reviews` can Postgres.
-- `accounting` va `fraud-detection` nhan event qua Kafka.
+- `frontend` được gọi `checkout`, nhưng không gọi trực tiếp `payment`.
+- Chỉ `checkout` được gọi `payment`.
+- `checkout` đi `shipping`, `shipping` mới gọi `quote`.
+- `cart` chỉ cần Valkey.
+- `product-catalog` và `product-reviews` cần Postgres.
+- `accounting` và `fraud-detection` nhận event qua Kafka.
 
 Platform path:
 
-- Moi app can DNS.
-- Moi app gui telemetry toi OTEL Gateway.
-- Grafana doc Prometheus/Jaeger/OpenSearch.
-- Cloudflared chi forward cac route operation da duyet.
-- Flagd phai tiep tuc hoat dong, khong duoc vo hieu hoa.
+- Mọi app cần DNS.
+- Mọi app gửi telemetry tới OTEL Gateway.
+- Grafana đọc Prometheus/Jaeger/OpenSearch.
+- Cloudflared chỉ forward các route operation đã duyệt.
+- Flagd phải tiếp tục hoạt động, không được vô hiệu hoá.
 
 AI egress:
 
-- `product-reviews` khong nen goi Internet truc tiep.
-- Neu can AWS Bedrock, traffic di qua proxy/allowlist da duyet.
+- `product-reviews` không nên gọi Internet trực tiếp.
+- Nếu cần AWS Bedrock, traffic đi qua proxy/allowlist đã duyệt.
 
 ---
 
-## 4. Lo trinh trien khai
+## 4. Lộ trình triển khai
 
-### Giai doan 1 - Viet va test policy theo service
+### Giai đoạn 1 - Viết và test policy theo service
 
-Da co bo NetworkPolicy rieng cho cac service trong `gitops/infrastructure/` va bo staged trong `gitops/infrastructure/network-policy-staged/`.
+Đã có bộ NetworkPolicy riêng cho các service trong `gitops/infrastructure/` và bộ staged trong `gitops/infrastructure/network-policy-staged/`.
 
-Muc dich:
+Mục đích:
 
-- Khong bat `default-deny-all` qua som.
-- Allowlist tung service truoc.
-- Test allowed flow va denied flow.
-- Giam blast-radius neu mot policy sai.
+- Không bật `default-deny-all` quá sớm.
+- Allowlist từng service trước.
+- Test allowed flow và denied flow.
+- Giảm blast-radius nếu một policy sai.
 
-### Giai doan 2 - Promote default-deny-all
+### Giai đoạn 2 - Promote `default-deny-all`
 
-Ngay 30/07/2026 da tao branch:
+Ngày 30/07/2026 đã tạo branch:
 
 ```text
 feat/promote-deny-all-network-policy
 ```
 
-Da them file:
+Đã thêm file:
 
 ```text
 gitops/infrastructure/network-policy-default-deny-all.yaml
 ```
 
-Noi dung:
+Nội dung:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -153,26 +151,26 @@ spec:
     - Egress
 ```
 
-Commit da push:
+Commit đã push:
 
 ```text
 9db561e feat(network-policy): promote default deny all
 ```
 
-Y nghia: khi PR nay merge va ArgoCD sync, moi pod trong `techx-tf3` se bi default deny ca Ingress/Egress, tru cac traffic da duoc cac NetworkPolicy khac allow.
+Ý nghĩa: khi PR này merge và ArgoCD sync, mọi pod trong `techx-tf3` sẽ bị default deny cả Ingress/Egress, trừ các traffic đã được các NetworkPolicy khác allow.
 
 ---
 
-## 5. Nhung gi da lam
+## 5. Những gì đã làm
 
-1. Da tao branch rieng tu `main` moi nhat.
-2. Da dua manifest `default-deny-all` ra dung GitOps path `gitops/infrastructure/`.
-3. Da giu annotation `mandate-17.techx.io/activation-order: "last"` de nhac day la policy promote cuoi cung.
-4. Da validate YAML local thanh cong.
-5. Da commit va push branch len GitHub.
-6. Da chuan bi rollback plan neu sau khi apply live bi loi.
+1. Đã tạo branch riêng từ `main` mới nhất.
+2. Đã đưa manifest `default-deny-all` ra đúng GitOps path `gitops/infrastructure/`.
+3. Đã giữ annotation `mandate-17.techx.io/activation-order: "last"` để nhắc đây là policy promote cuối cùng.
+4. Đã validate YAML local thành công.
+5. Đã commit và push branch lên GitHub.
+6. Đã chuẩn bị rollback plan nếu sau khi apply live bị lỗi.
 
-Bang chung Git:
+Bằng chứng Git:
 
 ```text
 Branch: feat/promote-deny-all-network-policy
@@ -182,25 +180,25 @@ File: gitops/infrastructure/network-policy-default-deny-all.yaml
 
 ---
 
-## 6. Trang thai hien tai
+## 6. Trạng thái hiện tại
 
-| Hang muc | Trang thai | Ghi chu |
+| Hạng mục | Trạng thái | Ghi chú |
 |---|---|---|
-| Policy per-service | Da co trong GitOps | Can tiep tuc doi chieu traffic matrix |
-| `default-deny-all` manifest | Da code + push branch | Chua dong nghia da apply live |
-| PR promote deny-all | Can tao/merge | Link branch da push |
-| ArgoCD sync live | Chua xac nhan trong bao cao nay | Sau merge moi kiem |
-| Storefront sau deny-all | Chua co evidence sau apply | Can smoke test |
-| Browse -> cart -> checkout | Chua co evidence sau apply | Bat buoc de PASS |
-| Denied lateral flow | Da co mot phan evidence Product Reviews -> Payment | Can full matrix sau deny-all |
-| Internet deny | Chua nghiem thu sau deny-all | Bat buoc de PASS |
-| Rollback | Da chuan bi | Revert GitOps commit hoac delete tam NetworkPolicy |
+| Policy per-service | Đã có trong GitOps | Cần tiếp tục đối chiếu traffic matrix |
+| `default-deny-all` manifest | Đã code + push branch | Chưa đồng nghĩa đã apply live |
+| PR promote deny-all | Cần tạo/merge | Link branch đã push |
+| ArgoCD sync live | Chưa xác nhận trong báo cáo này | Sau merge mới kiểm |
+| Storefront sau deny-all | Chưa có evidence sau apply | Cần smoke test |
+| Browse -> cart -> checkout | Chưa có evidence sau apply | Bắt buộc để PASS |
+| Denied lateral flow | Đã có một phần evidence Product Reviews -> Payment | Cần full matrix sau deny-all |
+| Internet deny | Chưa nghiệm thu sau deny-all | Bắt buộc để PASS |
+| Rollback | Đã chuẩn bị | Revert GitOps commit hoặc delete tạm NetworkPolicy |
 
-Ket luan tam thoi: **chua duoc ghi PASS**. Day la trang thai dung va an toan, vi deny-all moi duoc promote o code branch, chua co evidence sau khi live sync.
+Kết luận tạm thời: **chưa được ghi PASS**. Đây là trạng thái đúng và an toàn, vì deny-all mới được promote ở code branch, chưa có evidence sau khi live sync.
 
 ---
 
-## 7. Evidence hien co
+## 7. Evidence hiện có
 
 ### 7.1 Product Reviews connectivity evidence
 
@@ -210,7 +208,7 @@ File evidence:
 docs/evidence/mandate-17/product-reviews-network-policy-connectivity-2026-07-29.md
 ```
 
-Ket qua da ghi nhan:
+Kết quả đã ghi nhận:
 
 ```text
 product-reviews -> product-catalog:8080
@@ -220,15 +218,15 @@ product-reviews -> payment:8080
 PASS DENY - unrelated service timed out
 ```
 
-Y nghia:
+Ý nghĩa:
 
-- Policy co kha nang allow dung dependency.
-- Policy co kha nang chan lateral movement sai.
-- Tuy nhien day moi la evidence cho mot service, chua thay the full matrix sau `default-deny-all`.
+- Policy có khả năng allow đúng dependency.
+- Policy có khả năng chặn lateral movement sai.
+- Tuy nhiên đây mới là evidence cho một service, chưa thay thế full matrix sau `default-deny-all`.
 
 ### 7.2 GitOps deny-all evidence
 
-File moi:
+File mới:
 
 ```text
 gitops/infrastructure/network-policy-default-deny-all.yaml
@@ -240,35 +238,35 @@ Commit:
 9db561e feat(network-policy): promote default deny all
 ```
 
-Y nghia:
+Ý nghĩa:
 
-- Deny-all da duoc dua ra GitOps path dung.
-- ArgoCD se quan ly policy nay sau khi PR merge vao branch duoc sync.
+- Deny-all đã được đưa ra GitOps path đúng.
+- ArgoCD sẽ quản lý policy này sau khi PR merge vào branch được sync.
 
 ### 7.3 Video demo evidence
 
-Video demo da duoc upload len Google Drive de mentor/teammate xem lai qua trinh kiem tra:
+Video demo đã được upload lên Google Drive để mentor/teammate xem lại quá trình kiểm tra:
 
 ```text
 https://drive.google.com/file/d/1wOt1NpBp8-0safAS_IicNqcmix2MAz_p/view?usp=sharing
 ```
 
-Noi dung dung video lam bang chung:
+Nội dung dùng video làm bằng chứng:
 
-- `default-deny-all` da ton tai trong namespace `techx-tf3`.
-- Cac workload chinh van running sau khi policy duoc apply.
-- Mentor co the doi chieu lai cac lenh trong muc 12 voi video demo.
-- Video khong thay the log/evidence text, nhung la bang chung thao tac va ket qua demo truc tiep.
+- `default-deny-all` đã tồn tại trong namespace `techx-tf3`.
+- Các workload chính vẫn running sau khi policy được apply.
+- Mentor có thể đối chiếu lại các lệnh trong mục 12 với video demo.
+- Video không thay thế log/evidence text, nhưng là bằng chứng thao tác và kết quả demo trực tiếp.
 
 ---
 
-## 8. Quy trinh nghiem thu sau khi merge/apply
+## 8. Quy trình nghiệm thu sau khi merge/apply
 
-Chi nghiem thu khi co change window va error budget du.
+Chỉ nghiệm thu khi có change window và error budget đủ.
 
-### 8.1 Truoc khi merge
+### 8.1 Trước khi merge
 
-Kiem tra:
+Kiểm tra:
 
 ```bash
 git status
@@ -278,7 +276,7 @@ kubectl -n techx-tf3 get networkpolicy
 kubectl -n techx-tf3 get events --sort-by=.lastTimestamp
 ```
 
-Kiem tra storefront:
+Kiểm tra storefront:
 
 ```bash
 curl -fsS -o /dev/null -w 'storefront=%{http_code} total=%{time_total}s\n' \
@@ -287,13 +285,13 @@ curl -fsS -o /dev/null -w 'storefront=%{http_code} total=%{time_total}s\n' \
 
 ### 8.2 Sau khi ArgoCD sync deny-all
 
-Kiem tra policy ton tai:
+Kiểm tra policy tồn tại:
 
 ```bash
 kubectl -n techx-tf3 get networkpolicy default-deny-all
 ```
 
-Kiem tra readiness:
+Kiểm tra readiness:
 
 ```bash
 kubectl -n techx-tf3 get pods
@@ -301,7 +299,7 @@ kubectl -n techx-tf3 get events --sort-by=.lastTimestamp
 kubectl -n argocd get application techx-infrastructure-app techx-corp
 ```
 
-Allowed flow bat buoc:
+Allowed flow bắt buộc:
 
 ```text
 storefront -> frontend-proxy -> frontend
@@ -317,38 +315,38 @@ cart -> valkey
 checkout/accounting/fraud-detection -> kafka
 app -> DNS
 app -> OTEL Gateway
-flagd route van hoat dong
+flagd route vẫn hoạt động
 ```
 
-Denied flow bat buoc:
+Denied flow bắt buộc:
 
 ```text
 cart -> payment
 product-reviews -> payment
 payment -> cart
-business pod -> Internet truc tiep
+business pod -> Internet trực tiếp
 random/unrelated pod -> postgres/valkey/kafka
 ```
 
 ### 8.3 Smoke test customer journey
 
-Can co evidence:
+Cần có evidence:
 
 - Storefront HTTP 200.
 - Browse product.
 - Add to cart.
-- Checkout thanh cong.
-- Payment khong error.
-- Grafana/Jaeger/Prometheus van truy cap duoc neu thuoc acceptance.
-- Load-generator hoac dashboard SLO khong tang error.
+- Checkout thành công.
+- Payment không error.
+- Grafana/Jaeger/Prometheus vẫn truy cập được nếu thuộc acceptance.
+- Load-generator hoặc dashboard SLO không tăng error.
 
 ---
 
 ## 9. Rollback plan
 
-### 9.1 Rollback dung GitOps
+### 9.1 Rollback đúng GitOps
 
-Neu PR deny-all da merge va gay loi, revert commit:
+Nếu PR deny-all đã merge và gây lỗi, revert commit:
 
 ```bash
 git switch main
@@ -358,19 +356,19 @@ git revert 9db561e
 git push -u origin hotfix/revert-default-deny-all
 ```
 
-Sau do tao PR hotfix va merge nhanh. ArgoCD se prune object `default-deny-all`.
+Sau đó tạo PR hotfix và merge nhanh. ArgoCD sẽ prune object `default-deny-all`.
 
-### 9.2 Rollback khan cap tren cluster
+### 9.2 Rollback khẩn cấp trên cluster
 
-Neu he thong anh huong khach hang va khong the cho GitOps:
+Nếu hệ thống ảnh hưởng khách hàng và không thể chờ GitOps:
 
 ```bash
 kubectl -n techx-tf3 delete networkpolicy default-deny-all
 ```
 
-Luu y: day chi la thao tac cuu tam. Neu Git van con manifest, ArgoCD co the tao lai policy. Vi vay phai revert Git ngay sau do.
+Lưu ý: đây chỉ là thao tác cứu tạm. Nếu Git vẫn còn manifest, ArgoCD có thể tạo lại policy. Vì vậy phải revert Git ngay sau đó.
 
-### 9.3 Kiem tra sau rollback
+### 9.3 Kiểm tra sau rollback
 
 ```bash
 kubectl -n techx-tf3 get networkpolicy default-deny-all
@@ -379,7 +377,7 @@ kubectl -n techx-tf3 get events --sort-by=.lastTimestamp
 curl -I https://d2tn71186d7ilz.cloudfront.net/
 ```
 
-Ky vong:
+Kỳ vọng:
 
 ```text
 networkpolicies.networking.k8s.io "default-deny-all" not found
@@ -387,30 +385,30 @@ networkpolicies.networking.k8s.io "default-deny-all" not found
 
 ---
 
-## 10. Doi chieu Directive Mandate 17
+## 10. Đối chiếu Directive Mandate 17
 
-| Yeu cau | Trang thai | Nhan xet |
+| Yêu cầu | Trạng thái | Nhận xét |
 |---|---|---|
-| Dependency chet/cham nhung flow chinh giu SLO | Chua pham vi chinh cua report nay | Can report reliability rieng neu co |
-| Chiu mat mot AZ | Chua pham vi chinh cua report nay | Can evidence topology/PDB/AZ drill rieng |
-| NetworkPolicy khoanh lateral movement | Dat mot phan | Da co per-service policy va evidence Product Reviews |
-| Egress bi khoa, khong goi Internet tuy tien | Dang promote | Can `default-deny-all` live + denied Internet evidence |
-| Service account/RBAC least privilege | Can doi chieu report/rbac rieng | Mandate 17 yeu cau ca network va RBAC |
-| Mentor co the dung pod attacker test khong quet duoc cluster | Chua du evidence cuoi | Can test sau deny-all |
-| Storefront public, ops private, flagd khong bi vo hieu hoa | Dang giu | Can verify sau apply deny-all |
+| Dependency chết/chậm nhưng flow chính giữ SLO | Chưa phạm vi chính của report này | Cần report reliability riêng nếu có |
+| Chịu mất một AZ | Chưa phạm vi chính của report này | Cần evidence topology/PDB/AZ drill riêng |
+| NetworkPolicy khoanh lateral movement | Đạt một phần | Đã có per-service policy và evidence Product Reviews |
+| Egress bị khoá, không gọi Internet tuỳ tiện | Đang promote | Cần `default-deny-all` live + denied Internet evidence |
+| Service account/RBAC least privilege | Cần đối chiếu report/rbac riêng | Mandate 17 yêu cầu cả network và RBAC |
+| Mentor có thể dùng pod attacker test không quét được cluster | Chưa đủ evidence cuối | Cần test sau deny-all |
+| Storefront public, ops private, flagd không bị vô hiệu hoá | Đang giữ | Cần verify sau apply deny-all |
 
-Ket luan doi chieu: **phan NetworkPolicy da di dung huong va dang o buoc promote baseline cuoi. Chua du dieu kien PASS cho den khi deny-all duoc apply live va co evidence acceptance.**
+Kết luận đối chiếu: **phần NetworkPolicy đã đi đúng hướng và đang ở bước promote baseline cuối. Chưa đủ điều kiện PASS cho đến khi deny-all được apply live và có evidence acceptance.**
 
 ---
 
-## 11. Gioi han va rui ro con lai
+## 11. Giới hạn và rủi ro còn lại
 
-1. NetworkPolicy la additive. Neu co policy cu mo rong chon cung pod, deny-all khong tu thu hep rule cu. Can inventory active policy truoc va sau sync.
-2. DNS la dependency de bi quen. Neu thieu DNS allow, nhieu service se timeout theo cach kho debug.
-3. Telemetry/OTEL neu thieu allow co the lam mat observability, khong lam app chet ngay nhung lam mentor fail evidence.
-4. Healthcheck/Cloudflared/Grafana/Jaeger/Prometheus co the co traffic platform rieng, can test sau apply.
-5. External egress cho AI/Bedrock phai di qua exception/proxy ro rang, khong mo Internet rong.
-6. Neu chi test storefront 200 thi chua du; phai test browse -> cart -> checkout.
+1. NetworkPolicy là additive. Nếu có policy cũ mở rộng chồng cùng pod, deny-all không tự thu hẹp rule cũ. Cần inventory active policy trước và sau sync.
+2. DNS là dependency dễ bị quên. Nếu thiếu DNS allow, nhiều service sẽ timeout theo cách khó debug.
+3. Telemetry/OTEL nếu thiếu allow có thể làm mất observability, không làm app chết ngay nhưng làm mentor fail evidence.
+4. Healthcheck/Cloudflared/Grafana/Jaeger/Prometheus có thể có traffic platform riêng, cần test sau apply.
+5. External egress cho AI/Bedrock phải đi qua exception/proxy rõ ràng, không mở Internet rộng.
+6. Nếu chỉ test storefront 200 thì chưa đủ; phải test browse -> cart -> checkout.
 
 ---
 
@@ -429,7 +427,7 @@ curl -fsS -o /dev/null -w 'storefront=%{http_code} total=%{time_total}s\n' \
 kubectl -n techx-tf3 get networkpolicy default-deny-all
 ```
 
-Sau khi `default-deny-all` active, chay them:
+Sau khi `default-deny-all` active, chạy thêm:
 
 ```bash
 kubectl -n techx-tf3 exec deploy/cart -- nc -vz -w 5 payment 8080
@@ -438,30 +436,30 @@ kubectl -n techx-tf3 exec deploy/product-reviews -- nc -vz -w 5 payment 8080
 kubectl -n techx-tf3 exec deploy/cart -- curl -I -L --connect-timeout 5 https://example.com
 ```
 
-Neu image khong co `nc` hoac `curl`, dung script/runbook da duyet hoac workload-owned test path. Khong tao bare pod lam evidence chinh neu policy khong chon bare pod theo cung label voi workload that.
+Nếu image không có `nc` hoặc `curl`, dùng script/runbook đã duyệt hoặc workload-owned test path. Không tạo bare pod làm evidence chính nếu policy không chọn bare pod theo cùng label với workload thật.
 
 ---
 
-## 13. Ket luan
+## 13. Kết luận
 
-Mandate 17 dang o trang thai **gan buoc nghiem thu cuoi cua phan NetworkPolicy**:
+Mandate 17 đang ở trạng thái **gần bước nghiệm thu cuối của phần NetworkPolicy**:
 
-- Da co policy theo service.
-- Da co evidence mot phan ve allowed/denied flow.
-- Da dua `default-deny-all` ra GitOps path.
-- Da push branch promote deny-all.
-- Da co rollback plan.
+- Đã có policy theo service.
+- Đã có evidence một phần về allowed/denied flow.
+- Đã đưa `default-deny-all` ra GitOps path.
+- Đã push branch promote deny-all.
+- Đã có rollback plan.
 
-Da dung cac buoc nghiem thu va ket qua hien tai cho phep dong trang thai:
+Đã dùng các bước nghiệm thu và kết quả hiện tại cho phép đóng trạng thái:
 
-1. `default-deny-all` da len live namespace `techx-tf3`.
-2. NetworkPolicy co tac dung nhu mong doi, khong lam gay flow chinh.
-3. Hệ thống van dinh sau khi apply.
-4. Co the coi day la **PASS - NetworkPolicy containment baseline active with default-deny-all**.
+1. `default-deny-all` đã lên live namespace `techx-tf3`.
+2. NetworkPolicy có tác dụng như mong đợi, không làm gãy flow chính.
+3. Hệ thống vẫn ổn sau khi apply.
+4. Có thể coi đây là **PASS - NetworkPolicy containment baseline active with default-deny-all**.
 
 ---
 
-## 14. Tai lieu lien quan
+## 14. Tài liệu liên quan
 
 - `docs/docx_cdo01/mandate-05-runtime-hardening-report.md`
 - `gitops/infrastructure/network-policy-default-deny-all.yaml`
