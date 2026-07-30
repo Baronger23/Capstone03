@@ -45,6 +45,9 @@ Không yêu cầu cài `psql` local; dùng Docker image `postgres:17` làm `psql
 ```powershell
 $Region = "ap-southeast-1"
 $SourceDb = "techx-tf3-postgres"
+$DbSubnetGroup = "techx-tf3-postgres"
+$VpcSecurityGroupId = "sg-025478cd9d0ae1f52"
+$DbParameterGroupName = "techx-tf3-postgres17"
 $DrillSuffix = Get-Date -Format 'yyyyMMdd-HHmmss'
 $DrillId = "techx-tf3-postgres-drill-$DrillSuffix"
 $DrillMarkerId = "m20-rds-pitr-$DrillSuffix"
@@ -132,6 +135,8 @@ Chỉ chạy restore khi `LatestRestorableTime >= T_restore`.
 
 ## 7. Restore to isolated drill DB
 
+Production VPC không có default subnet. Vì vậy lệnh restore phải chỉ rõ DB subnet group, security group và DB parameter group của production RDS. Nếu bỏ các tham số này, restore có thể fail với lỗi `InvalidSubnet`.
+
 ```powershell
 $RestoreTime = "2026-07-28Txx:xx:xxZ"
 $Start = Get-Date
@@ -142,6 +147,9 @@ aws rds restore-db-instance-to-point-in-time `
   --target-db-instance-identifier $DrillId `
   --restore-time $RestoreTime `
   --db-instance-class db.t4g.micro `
+  --db-subnet-group-name $DbSubnetGroup `
+  --vpc-security-group-ids $VpcSecurityGroupId `
+  --db-parameter-group-name $DbParameterGroupName `
   --no-publicly-accessible
 
 aws rds wait db-instance-available `
