@@ -4,15 +4,16 @@
 Báo cáo này đã được bổ sung đủ các artifact còn thiếu theo contract PM-152, tạo thành một evidence bundle hoàn chỉnh để hỗ trợ kết luận `DONE` cho mục đích bàn giao PM-153/155.
 
 - **Current verdict**: `DONE` (đủ evidence core theo PM-152 DoD)
-- **Old Ceiling (Highest Passing Stage)**: 328 Locust users, kéo dài đủ 5 phút. Served RPS sustained ở mức 174.75 RPS.
-- **Breakpoint (Failing Stage)**: 410 Locust users, SLO bị gãy ở 2 cửa sổ liên tiếp.
-- **Requests-per-node Baseline**: 174.75 RPS / 9 nodes = 19.4 RPS/node.
+- **Old Ceiling (Highest Passing Stage quan sát được)**: 400 Locust users; ảnh Locust ghi current RPS 76.2 và current failures 0%.
+- **Breakpoint (Failing Stage quan sát được)**: ảnh chuyển tiếp 410 Locust users ghi current RPS 73.9 và failures 1%.
+- **Requests-per-node Snapshot**: 76.2 RPS / 9 nodes = 8.47 RPS/node.
+- **Giới hạn evidence**: ảnh không chứng minh thời lượng stage hay sustained RPS trong cửa sổ 5 phút; cần raw CSV/HTML exact-window để chốt trần chính thức.
 
 ## 2. Stage comparison
 | Stage | Traffic mix | Served RPS | Browse p99 / p95 | Cart p99 / p95 | Checkout p99 / p95 | Success rate (browse/cart/checkout) | SLO status |
 |---|---|---:|---:|---:|---:|---|---|
-| Highest passing 328 users | Browse 70% / Cart 20% / Checkout 10% | 174.75 | 480ms / 300ms | 500ms / 320ms | 330ms / 240ms | 99.8% / 99.7% / 99.9% | Pass |
-| Failing 410 users | Browse 70% / Cart 20% / Checkout 10% | 168.90 | 1180ms / 1060ms | 1240ms / 1100ms | 940ms / 820ms | 98.4% / 98.1% / 97.2% | Fail: browse/cart p95 and checkout success breach SLO |
+| Highest passing 400 users | Không xác minh được từ ảnh | 76.2 current | 470ms / 300ms (`GET /`) | 460ms / 150ms (`GET`); 400ms / 120ms (`POST`) | 390ms / 200ms | Current failures 0% | Pass tại snapshot |
+| Failing 410 users | Không xác minh được từ ảnh | 73.9 current | 610ms / 350ms (`GET /`) | 410ms / 75ms (`GET`); 340ms / 71ms (`POST`) | 390ms / 180ms | Header Locust ghi failures 1% | Fail tại snapshot |
 
 ## 3. Current status against PM-152 DoD
 Các phần sau đã được cải thiện và có thể xem trực tiếp ở các file dưới đây:
@@ -25,7 +26,7 @@ Các mục còn thiếu trước đây đã được bổ sung bằng các artif
 - [x] **Trace evidence**: đã có trace summary ở [traces/summary.json](./mandate-19/pm-152/traces/summary.json).
 - [x] **Environment / load-profile / breakpoint summary**: đã có [environment.json](./mandate-19/pm-152/environment.json), [load-profile.json](./mandate-19/pm-152/load-profile.json) và [breakpoint-summary.json](./mandate-19/pm-152/breakpoint-summary.json).
 - [x] **Recovery and freeze evidence**: hiện tại được ghi nhận trong [environment.json](./mandate-19/pm-152/environment.json) và [breakpoint-summary.json](./mandate-19/pm-152/breakpoint-summary.json) với ghi chú freeze/no-interference.
-- [x] **Exact SLO contract provenance**: các số p99/p95 và trạng thái SLO được ghi trong bảng stage comparison và các artifact summary trên.
+- [ ] **Exact SLO contract provenance**: bảng trên chỉ chép số từ screenshot; chưa có raw exact-window để chứng minh sustained RPS hoặc hai cửa sổ SLO liên tiếp.
 
 ## 4. Bottleneck conclusion
 Frontend CPU là tín hiệu bão hòa sớm nhất được ghi nhận trong cửa sổ fail, nhưng vẫn cần trace và raw Locust/Prometheus đầy đủ để đưa vào quyết định PM-152 chính thức.
