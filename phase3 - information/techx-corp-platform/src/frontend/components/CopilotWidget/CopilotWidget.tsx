@@ -144,7 +144,7 @@ const CopilotWidget = () => {
             content: normalizeText(r.reply, 'Xin lỗi, tôi chưa có câu trả lời.'),
             token: r.token || null,
             trace: Array.isArray(r.steps)
-              ? r.steps.map(step => normalizeText((step as { detail?: unknown })?.detail, '')).filter(Boolean)
+              ? r.steps.map((step: unknown) => normalizeText((step as { detail?: unknown })?.detail, '')).filter(Boolean)
               : undefined,
           }]);
         } catch {
