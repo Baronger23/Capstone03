@@ -6,7 +6,7 @@ Nguyên tắc:
 
 - Chỉ thu thập inventory/evidence read-only.
 - Không apply tay, không sửa production trực tiếp.
-- Không claim Done chỉ từ baseline này; RDS drill result thật được ghi riêng trong `mandate-20-final-rds-pitr-evidence-20260729.md`.
+- Không claim Done chỉ từ baseline này; RDS drill result thật được ghi riêng trong [mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md).
 - RDS là store dùng để chứng minh PITR drill chính. Các tầng còn lại được ghi theo dạng coverage hoặc limitation để không claim quá tay.
 
 ## Metadata
@@ -18,15 +18,15 @@ AWS caller/account/region: arn:aws:iam::197826770971:user/cdo-2-admin-team / 197
 Git baseline: 74b8d8e / origin/main 74b8d8e
 Evidence source: AWS CLI read-only output captured before drill
 Related local/operator files:
-- docs/evidence/mandate-20/supporting-rds-pitr-preflight-20260729.md
-- docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md
+- [docs/evidence/mandate-20/supporting-rds-pitr-preflight-20260729.md](supporting-rds-pitr-preflight-20260729.md)
+- [docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md)
 ```
 
 ## Scope
 
 File này chỉ trả lời câu: trước khi chạy restore drill, production đang có backup/recovery baseline gì cho các stateful store trong scope Mandate 20.
 
-File này không ghi nhận nội dung video và không thay thế drill result. Drill result thật đã được ghi riêng tại `docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md`.
+File này không ghi nhận nội dung video và không thay thế drill result. Drill result thật đã được ghi riêng tại [docs/evidence/mandate-20/mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md).
 
 ## 1. RDS PostgreSQL
 
@@ -289,7 +289,7 @@ Requirement 3 - point-in-time restore proof:
 Passed for RDS. Drill restored to 2026-07-29T12:03:00Z and restored DB returned GOOD_BEFORE_CORRUPTION.
 
 Requirement 4 - tested restore drill:
-Done for RDS. Evidence record: mandate-20-final-rds-pitr-evidence-20260729.md. Video links are recorded in the final evidence file.
+Done for RDS. Evidence record: [mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md). Video links are recorded in the final evidence file.
 
 Requirement 5 - backup safety:
 Encryption and RDS deletion protection are present. Terraform state bucket versioning/encryption/public-block are present. Strong delete-authority separation is not proven; record accepted risk or attach IAM/SCP evidence.

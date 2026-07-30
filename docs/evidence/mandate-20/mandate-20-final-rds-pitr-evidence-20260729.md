@@ -23,9 +23,9 @@ This evidence covers the RDS/PostgreSQL PITR drill for Mandate 20.
 
 It does not by itself claim full backup coverage for Valkey, MSK, DynamoDB, EBS, or IAM delete-authority separation. Those are documented separately as coverage/limitation items in:
 
-- `docs/evidence/mandate-20/supporting-production-baseline-20260729.md`
-- `docs/evidence/mandate-20/supporting-scope-gap-analysis.md`
-- `docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md`
+- [docs/evidence/mandate-20/supporting-production-baseline-20260729.md](supporting-production-baseline-20260729.md)
+- [docs/evidence/mandate-20/supporting-scope-gap-analysis.md](supporting-scope-gap-analysis.md)
+- [docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md](../../adr/0016-mandate-20-backup-restore-drill-cdo02.md)
 
 ## Actors And Environment
 
@@ -93,14 +93,14 @@ Verdict: PASS for the RDS drill scope
 
 ## Video Evidence Index
 
-folder: `https://drive.google.com/drive/folders/1YDcvzsHzFiEpUJXlEGTD7mdm3MKT_926?usp=sharing`
+folder: [Drive folder](https://drive.google.com/drive/folders/1YDcvzsHzFiEpUJXlEGTD7mdm3MKT_926?usp=sharing)
 
 | Video | Purpose | Status | Drive link |
 |---|---|---|---|
-| 1 | Create GOOD marker and establish pre-corruption restore point | captured | `https://drive.google.com/file/d/1P_hZd6M3pE_DFKyKq8gbGEp_SCMs2hMH/view?usp=sharing` |
-| 2 | Controlled corruption after `LatestRestorableTime >= T_restore` | captured | `https://drive.google.com/file/d/1-QhUrofjCvp5rImVd-_TJH7Dbhkcruip/view?usp=sharing` |
-| 3 | Restore request / RTO completion | captured partially; terminal context issue occurred after RTO | `https://drive.google.com/file/d/168xyH6Z8iY6s3csFxJKhN5iQUKdAs2N0/view?usp=sharing` |
-| 4 | Correct drill endpoint verification on separate port/session | captured | `https://drive.google.com/file/d/1bU4Y8bP3ONEzHQcMQke8GYdfWVp01k7C/view?usp=sharing` |
+| 1 | Create GOOD marker and establish pre-corruption restore point | captured | [Video 1](https://drive.google.com/file/d/1P_hZd6M3pE_DFKyKq8gbGEp_SCMs2hMH/view?usp=sharing) |
+| 2 | Controlled corruption after `LatestRestorableTime >= T_restore` | captured | [Video 2](https://drive.google.com/file/d/1-QhUrofjCvp5rImVd-_TJH7Dbhkcruip/view?usp=sharing) |
+| 3 | Restore request / RTO completion | captured partially; terminal context issue occurred after RTO | [Video 3](https://drive.google.com/file/d/168xyH6Z8iY6s3csFxJKhN5iQUKdAs2N0/view?usp=sharing) |
+| 4 | Correct drill endpoint verification on separate port/session | captured | [Video 4](https://drive.google.com/file/d/1bU4Y8bP3ONEzHQcMQke8GYdfWVp01k7C/view?usp=sharing) |
 
 Video 3 incident note:
 

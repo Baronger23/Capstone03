@@ -6,19 +6,19 @@ Evidence index cho Mandate #20 Backup/Restore DR.
 
 | Loại | File | Vai trò |
 |---|---|---|
-| Final evidence | `mandate-20-final-rds-pitr-evidence-20260729.md` | Bằng chứng cuối của RDS PITR drill: GOOD -> CORRUPTED -> restored GOOD, RPO pass, RTO 23.83 phút, link 4 video |
-| Supporting evidence | `supporting-production-baseline-20260729.md` | Baseline production thật cho các data-tier/state trước drill |
-| Supporting evidence | `supporting-rds-pitr-preflight-20260729.md` | Preflight RDS/PITR read-only trước drill |
-| Supporting evidence | `supporting-scope-gap-analysis.md` | Matrix đối chiếu directive với scope đã claim, limitation, và phần cần accepted risk |
-| Template | `production-baseline-template.md` | Mẫu trống cho lần baseline sau; không phải evidence của drill 2026-07-29 |
+| Final evidence | [mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md) | Bằng chứng cuối của RDS PITR drill: GOOD -> CORRUPTED -> restored GOOD, RPO pass, RTO 23.83 phút, link 4 video |
+| Supporting evidence | [supporting-production-baseline-20260729.md](supporting-production-baseline-20260729.md) | Baseline production thật cho các data-tier/state trước drill |
+| Supporting evidence | [supporting-rds-pitr-preflight-20260729.md](supporting-rds-pitr-preflight-20260729.md) | Preflight RDS/PITR read-only trước drill |
+| Supporting evidence | [supporting-scope-gap-analysis.md](supporting-scope-gap-analysis.md) | Matrix đối chiếu directive với scope đã claim, limitation, và phần cần accepted risk |
+| Template | [production-baseline-template.md](production-baseline-template.md) | Mẫu trống cho lần baseline sau; không phải evidence của drill 2026-07-29 |
 
 ## Design / Runbook
 
 | File | Vai trò |
 |---|---|
-| `docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md` | ADR RPO/RTO, backup strategy/cadence, retention, delete-authority posture, restore drill approach |
-| `docs/runbooks/mandate-20-rds-pitr-drill.md` | Runbook chạy RDS PITR drill an toàn, restore sang DB tách biệt |
-| `docs/docx_cdo02/mandate-20-rds-pitr-restore-solution.md` | Solution note cho CDO02/mentor review |
+| [docs/adr/0016-mandate-20-backup-restore-drill-cdo02.md](../../adr/0016-mandate-20-backup-restore-drill-cdo02.md) | ADR RPO/RTO, backup strategy/cadence, retention, delete-authority posture, restore drill approach |
+| [docs/runbooks/mandate-20-rds-pitr-drill.md](../../runbooks/mandate-20-rds-pitr-drill.md) | Runbook chạy RDS PITR drill an toàn, restore sang DB tách biệt |
+| [docs/docx_cdo02/mandate-20-rds-pitr-restore-solution.md](../../docx_cdo02/mandate-20-rds-pitr-restore-solution.md) | Solution note cho CDO02/mentor review |
 
 ## Current Status
 
@@ -60,7 +60,7 @@ Witness mode: mentor/PM live hoặc recorded video
 
 | Store / state | RPO/RTO status | Backup/retention status | Evidence |
 |---|---|---|---|
-| RDS PostgreSQL | Target set: RPO <= 5 phút, RTO <= 45 phút; RPO passed with 0 row data loss; measured RTO 23.83 phút | Automated backup/PITR 7 ngày, RDS PITR drill passed | `mandate-20-final-rds-pitr-evidence-20260729.md` |
+| RDS PostgreSQL | Target set: RPO <= 5 phút, RTO <= 45 phút; RPO passed with 0 row data loss; measured RTO 23.83 phút | Automated backup/PITR 7 ngày, RDS PITR drill passed | [mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md) |
 | ElastiCache Valkey | Pending final target or accepted cart-state limitation | Snapshot retention observed as 3 ngày, needs verdict | Snapshot/restore evidence or accepted cart-state strategy |
 | MSK Kafka | Pending replay/reconciliation target; do not call PITR | Retention/replay strategy needs capture | Retention/replay or order reconciliation explanation |
 | DynamoDB lock | Pending exclusion/verdict | Exclude if Terraform lock only | Exclusion reason |
@@ -72,7 +72,7 @@ Witness mode: mentor/PM live hoặc recorded video
 
 Sau drill 2026-07-29, CDO02 nên:
 
-- Dùng `mandate-20-final-rds-pitr-evidence-20260729.md` làm file evidence cuối khi gửi mentor/client.
+- Dùng [mandate-20-final-rds-pitr-evidence-20260729.md](mandate-20-final-rds-pitr-evidence-20260729.md) làm file evidence cuối khi gửi mentor/client.
 - Dùng các file `supporting-*` để giải thích baseline, preflight, scope và limitation.
 - Cleanup drill DB tạm sau khi mentor/PM xác nhận đã lưu đủ evidence.
 - Chốt accepted-risk hoặc policy evidence cho phần backup delete-authority trước khi claim Mandate 20 full Done.
