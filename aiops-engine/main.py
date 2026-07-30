@@ -4,6 +4,7 @@ import logging
 import asyncio
 import json
 import subprocess
+from typing import Dict, List
 from fastapi import FastAPI, Request, BackgroundTasks
 from pydantic import BaseModel
 from anomaly_detector import AnomalyDetector
