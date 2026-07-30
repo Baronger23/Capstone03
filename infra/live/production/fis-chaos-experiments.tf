@@ -38,7 +38,12 @@ locals {
   fis_private_subnet_name = "techx-corp-tf3-vpc-private-${var.fis_target_az}"
 }
 
+# Scoped by vpc-id as well as the Name tag: aws_subnet errors out unless the filters match
+# exactly one subnet, and the VPC bound keeps that true even if another VPC in this account
+# ever reuses the naming convention.
 data "aws_subnet" "fis_target" {
+  vpc_id = module.network.vpc_id
+
   filter {
     name   = "tag:Name"
     values = [local.fis_private_subnet_name]
@@ -96,21 +101,12 @@ resource "aws_iam_role_policy_attachment" "fis_ec2" {
 # FIS impersonates. Granting the AWS-side policy without that wiring buys nothing and
 # widens the role, so it stays out until someone actually builds the pod-level experiment.
 
-# Stop conditions are evaluated against CloudWatch alarms; the role must be able to read
-# them. Read-only and scoped to alarms.
-resource "aws_iam_role_policy" "fis_read_alarms" {
-  name = "tf3-fis-read-stop-condition-alarms"
-  role = aws_iam_role.fis_experiment.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["cloudwatch:DescribeAlarms"]
-      Resource = "*"
-    }]
-  })
-}
+# No CloudWatch permissions are attached on purpose. The experiment role only needs to
+# reach the resources an action mutates; stop conditions are evaluated by the FIS service
+# itself, not through this role (AWS "IAM roles for AWS FIS experiments" lists no
+# CloudWatch permission). Granting cloudwatch:DescribeAlarms would also force a
+# Resource = "*" wildcard, because that API does not support resource-level permissions —
+# a needless tfsec AVD-AWS-0057 exception for a permission nothing uses.
 
 # ---------------------------------------------------------------------------
 # Stop condition — abort the experiment if customers start seeing errors
