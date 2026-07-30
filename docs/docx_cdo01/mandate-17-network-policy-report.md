@@ -245,6 +245,21 @@ Y nghia:
 - Deny-all da duoc dua ra GitOps path dung.
 - ArgoCD se quan ly policy nay sau khi PR merge vao branch duoc sync.
 
+### 7.3 Video demo evidence
+
+Video demo da duoc upload len Google Drive de mentor/teammate xem lai qua trinh kiem tra:
+
+```text
+https://drive.google.com/file/d/1wOt1NpBp8-0safAS_IicNqcmix2MAz_p/view?usp=sharing
+```
+
+Noi dung dung video lam bang chung:
+
+- `default-deny-all` da ton tai trong namespace `techx-tf3`.
+- Cac workload chinh van running sau khi policy duoc apply.
+- Mentor co the doi chieu lai cac lenh trong muc 12 voi video demo.
+- Video khong thay the log/evidence text, nhung la bang chung thao tac va ket qua demo truc tiep.
+
 ---
 
 ## 8. Quy trinh nghiem thu sau khi merge/apply
