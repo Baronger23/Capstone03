@@ -149,16 +149,20 @@ spec:
       terminationGracePeriodSeconds: {{ $gateway.terminationGracePeriodSeconds | default 45 }}
       securityContext:
         {{- toYaml $gateway.podSecurityContext | nindent 8 }}
-      # Mandate 13 elastic (batch 3, last/riskiest): opt-in NodePool flash-sale-spot
-      # + hard spread ca hostname va zone (minDomains:2), thay podAntiAffinity mem
-      # cu - cung pattern da fix o batch 1 (PR #319). otel-gateway khong dung co
-      # che schedulingRules chung (template rieng), nen sua truc tiep o day.
+      # Mandate 13 elastic: opt-in NodePool flash-sale-spot-arm64 + hard spread
+      # ca hostname va zone (minDomains:2). otel-gateway khong dung co che
+      # schedulingRules chung (template rieng), nen sua truc tiep o day.
       nodeSelector:
         techx.io/workload: elastic
+        techx.io/arch: arm64
       tolerations:
         - key: techx.io/workload
           operator: Equal
           value: elastic
+          effect: NoSchedule
+        - key: techx.io/arch
+          operator: Equal
+          value: arm64
           effect: NoSchedule
       topologySpreadConstraints:
         - maxSkew: 1

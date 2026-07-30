@@ -1,0 +1,68 @@
+# NetworkPolicy cho Job migration `copilot.user_memory`.
+#
+# VI SAO CAN: `default-deny-all` (gitops/infrastructure/network-policy-default-deny-all.yaml,
+# `podSelector: {}` = MOI pod trong namespace, ca Ingress+Egress) duoc promote ngay 29/07.
+# Pod cua Job khong khop policy allow nao -> MAT DNS -> psycopg2.connect() treo im lang,
+# khong in mot dong log nao (script chi in sau khi connect xong).
+#
+# Da do tren production: lan chay dau (Job …-r1) treo >5 phut, exec vao pod thi
+# `socket.gethostbyname(<rds-endpoint>)` tra `gaierror [Errno -3] Try again` sau 5,2s.
+#
+# Day dung la cai bay ma gitops/aiops-engine/cronjob.yaml da ghi lai: workload chay theo
+# lich/mot lan de bi bo sot khi default-deny duoc promote, vi no khong chay lien tuc nen
+# khong ai thay no dut mang. Job migration cung dung hang do.
+#
+# sync-wave: netpol "0" -> Job "1", de policy CO TRUOC khi pod cua Job start. Cac netpol
+# khac trong repo dung wave "2" vi chung phuc vu Deployment chay lien tuc (thu tu khong
+# quan trong); o day thu tu QUAN TRONG vi Job chi co mot lan chay.
+#
+# Pham vi: chi mo dung DNS + 5432 cho rieng pod cua Job nay. KHONG noi long
+# `default-deny-all` va khong dung tay vao policy nao cua CDO01.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: copilot-user-memory-migration-policy
+  namespace: techx-tf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    mandate-17.techx.io/service-clusterip-evidence: "2026-07-30:kube-dns=172.20.0.10"
+    mandate-17.techx.io/managed-datastore-evidence: "2026-07-30:rds=10.0.47.14:5432;stable-peers=10.0.0.0/20,10.0.16.0/20,10.0.32.0/20"
+    mandate-17.techx.io/public-egress-control: "no-public-egress; DNS + RDS 5432 only"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: copilot-user-memory-schema-migration
+  policyTypes:
+    - Ingress
+    - Egress
+  # Khong ai goi vao Job.
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock:
+            cidr: 172.20.0.10/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # RDS `techx-tf3-postgres` = 10.0.47.14 (trong 10.0.32.0/20). Mo ca 3 subnet /20 vi
+    # RDS la Multi-AZ: failover la IP doi sang subnet cua AZ khac. Dung `ipBlock` chu khong
+    # phai `podSelector` - day chinh la loi da gay outage 20/07 (postmortem 0012): managed
+    # datastore nam NGOAI cluster nen khong pod nao select duoc no.
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/20
+        - ipBlock:
+            cidr: 10.0.16.0/20
+        - ipBlock:
+            cidr: 10.0.32.0/20
+      ports:
+        - protocol: TCP
+          port: 5432

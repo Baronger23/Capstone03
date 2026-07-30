@@ -50,6 +50,62 @@ output "product_reviews_bedrock_role_arn" {
   value = module.eks_platform.product_reviews_bedrock_role_arn
 }
 
+output "product_reviews_sts_vpc_endpoint_id" {
+  description = "Private STS endpoint used by Product Reviews IRSA."
+  value       = aws_vpc_endpoint.product_reviews_sts.id
+}
+
+output "product_reviews_sts_vpc_endpoint_network_interface_ids" {
+  description = "STS endpoint ENIs used to derive exact NetworkPolicy ipBlocks after rollout."
+  value       = aws_vpc_endpoint.product_reviews_sts.network_interface_ids
+}
+
+output "product_reviews_sts_vpc_endpoint_dns_entries" {
+  description = "Explicit private STS hostnames for the Product Reviews runtime migration."
+  value       = aws_vpc_endpoint.product_reviews_sts.dns_entry
+}
+
+output "product_reviews_sts_vpc_endpoint_private_ips" {
+  description = "Static STS endpoint ENI IPs allowed by the staged Product Reviews NetworkPolicy."
+  value = [
+    for endpoint_subnet in values(local.product_reviews_ai_endpoint_subnets) :
+    endpoint_subnet.sts_ipv4
+  ]
+}
+
+output "product_reviews_sts_endpoint_url_parameter_name" {
+  description = "SSM parameter synchronized into the Product Reviews runtime Secret."
+  value       = aws_ssm_parameter.product_reviews_sts_endpoint_url.name
+}
+
+output "product_reviews_bedrock_runtime_vpc_endpoint_id" {
+  description = "Private Bedrock Runtime endpoint used by Product Reviews."
+  value       = aws_vpc_endpoint.product_reviews_bedrock_runtime.id
+}
+
+output "product_reviews_bedrock_runtime_vpc_endpoint_network_interface_ids" {
+  description = "Bedrock Runtime endpoint ENIs used to derive exact NetworkPolicy ipBlocks after rollout."
+  value       = aws_vpc_endpoint.product_reviews_bedrock_runtime.network_interface_ids
+}
+
+output "product_reviews_bedrock_runtime_vpc_endpoint_dns_entries" {
+  description = "Explicit private Bedrock Runtime hostnames for the Product Reviews runtime migration."
+  value       = aws_vpc_endpoint.product_reviews_bedrock_runtime.dns_entry
+}
+
+output "product_reviews_bedrock_runtime_vpc_endpoint_private_ips" {
+  description = "Static Bedrock Runtime endpoint ENI IPs allowed by the staged Product Reviews NetworkPolicy."
+  value = [
+    for endpoint_subnet in values(local.product_reviews_ai_endpoint_subnets) :
+    endpoint_subnet.bedrock_ipv4
+  ]
+}
+
+output "product_reviews_bedrock_runtime_endpoint_url_parameter_name" {
+  description = "SSM parameter synchronized into the Product Reviews runtime Secret."
+  value       = aws_ssm_parameter.product_reviews_bedrock_runtime_endpoint_url.name
+}
+
 output "flagd_sync_secret_name" {
   value = module.eks_platform.flagd_sync_secret_name
 }

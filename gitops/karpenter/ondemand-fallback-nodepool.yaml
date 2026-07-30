@@ -45,7 +45,7 @@ spec:
   limits:
     cpu: "4"
     memory: 16Gi
-    nodes: 2
+    nodes: 1
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 10m

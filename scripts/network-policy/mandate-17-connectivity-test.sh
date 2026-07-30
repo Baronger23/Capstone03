@@ -69,6 +69,9 @@ pod_for() {
     aiops-engine)
       selector="app=aiops-engine"
       ;;
+    shopping-copilot)
+      selector="app=shopping-copilot"
+      ;;
     *)
       selector="app.kubernetes.io/component=$service"
       ;;
@@ -138,6 +141,32 @@ https_test() {
   fi
 }
 
+proxy_https_deny_test() {
+  local policy="$1" name="$2" source="$3" destination="$4"
+  should_run "$policy" || return
+  local pod output rc
+  pod="$(pod_for "$source")"
+  if [[ -z "$pod" ]]; then
+    echo "BLOCKED [$policy] $name: no running pod for $source"
+    blocked=$((blocked + 1))
+    return
+  fi
+  output="$(kubectl exec -n "$NS" "$pod" -- curl -sS -I \
+    --connect-timeout "$TIMEOUT" "$destination" 2>&1)"
+  rc=$?
+  if exec_or_tool_unavailable "$output"; then
+    echo "BLOCKED [$policy] $name: exec or curl unavailable"
+    blocked=$((blocked + 1))
+  elif [[ "$rc" -eq 56 ]] && grep -Eqi \
+    'CONNECT tunnel failed[^[:digit:]]*403|CONNECT tunnel failed, response 403' \
+    <<<"$output"; then
+    echo "PASS [$policy] $name: denied explicitly by proxy HTTP 403"
+  else
+    echo "FAIL [$policy] $name: expected explicit proxy 403 rc=$rc output=$output"
+    failures=$((failures + 1))
+  fi
+}
+
 main() {
   if [[ "$MODE" != baseline && "$MODE" != policy && "$MODE" != full ]]; then
     usage
@@ -198,6 +227,12 @@ tcp 30-shipping checkout-to-quote checkout quote 8080 deny
 tcp 31-recommendation frontend-to-recommendation frontend recommendation 8080 allow
 tcp 31-recommendation recommendation-to-catalog recommendation product-catalog 8080 allow
 tcp 31-recommendation checkout-to-recommendation checkout recommendation 8080 deny
+tcp 32-product-reviews frontend-to-reviews frontend product-reviews 3551 allow
+tcp 32-product-reviews copilot-to-reviews shopping-copilot product-reviews 3551 allow
+tcp 32-product-reviews reviews-to-catalog product-reviews product-catalog 8080 allow
+tcp 32-product-reviews reviews-to-rds product-reviews techx-tf3-postgres.czwcs2ocww3q.ap-southeast-1.rds.amazonaws.com 5432 allow
+tcp 32-product-reviews reviews-to-valkey product-reviews master.techx-tf3-valkey.pkeslh.apse1.cache.amazonaws.com 6379 allow
+tcp 32-product-reviews checkout-to-reviews checkout product-reviews 3551 deny
 tcp 33-checkout frontend-to-checkout frontend checkout 8080 allow
 tcp 33-checkout checkout-to-payment checkout payment 8080 allow
 tcp 33-checkout checkout-to-quote checkout quote 8080 deny
@@ -225,6 +260,7 @@ tcp 06-cloudflared cloudflared-to-payment cloudflared payment 8080 deny
 tcp 07-aiops-engine aiops-to-prometheus aiops-engine prometheus 9090 allow
 tcp 07-aiops-engine aiops-to-payment aiops-engine payment 8080 deny
 https_test 32-product-reviews reviews-to-bedrock product-reviews https://bedrock-runtime.us-east-1.amazonaws.com allow
+proxy_https_deny_test 32-product-reviews reviews-to-unapproved-internet product-reviews https://example.com
 https_test 33-checkout checkout-to-internet checkout https://example.com deny
 https_test 90-default-deny-all cart-to-internet cart https://example.com deny
 

@@ -151,12 +151,8 @@ otel-node-agent:
   # Karpenter elastic migration moved load off the on-demand fleet.
   enabled: true
   # Without tolerations this DaemonSet skips nodes carrying the custom taint
-  # techx.io/workload=<elastic|stateful> - confirmed live: it only scheduled on
-  # 4/7 nodes, missing both Karpenter elastic Spot nodes (now running 11
-  # services from the batch 2/3 migration) and the stateful node (postgres/
-  # valkey). Old otel-collector-agent ran on all 7 nodes (no such taint existed
-  # when it was deployed), so this closes a real coverage gap vs what it's
-  # meant to replace.
+  # techx.io/workload=<elastic|stateful> or techx.io/arch=arm64. Cover every
+  # AMD64/ARM64 node so host/kubelet metrics do not have architecture gaps.
   tolerations:
     - key: techx.io/workload
       operator: Equal
@@ -165,6 +161,10 @@ otel-node-agent:
     - key: techx.io/workload
       operator: Equal
       value: stateful
+      effect: NoSchedule
+    - key: techx.io/arch
+      operator: Equal
+      value: arm64
       effect: NoSchedule
   resources:
     requests:
@@ -276,7 +276,7 @@ components:
       # build từ code fallback + postcss fix). Re-apply PR #448 - từng merge rồi bị revert (#450)
       # như biện pháp phòng ngừa trong lúc ổn định PM-129 (bug tooling trace-provenance đa-arch,
       # KHÔNG phải lỗi supply-chain); image đã qua Trivy + Cosign. Đừng revert lại.
-      digest: sha256:292d3e51367d5f809898e974e4798c5ebdb1145b925092983ed9e2055c226d3b
+      digest: sha256:eff696881cff97787df624be9c815f844b414ab7b08be998020f0ff81b2c9793
     # REL-03: tcpSocket probe (an toan - chi check port mo, khong false-fail vi thieu
     # grpc-health/sai HTTP path). liveness long hon readiness.
     readinessProbe:
@@ -479,6 +479,7 @@ components:
       # + PITR) truoc khi xoa kho cu, nen bo dual-write: khong con ghi vao valkey-cart, va cart
       # se khong loi khi kho cu bien mat.
   checkout:
+    replicasManagedExternally: true
     # Mandate 3: checkout is managed by Argo Rollouts, but the Rollout still reuses this
     # pod template through workloadRef. Keep the same graceful shutdown contract as the
     # other revenue services so drain/rollout does not cut an in-flight PlaceOrder.
@@ -866,6 +867,9 @@ components:
         maxSurge: 1
     # Mandate 13 elastic (batch 2): opt-in NodePool flash-sale-spot + hard spread
     # ca hostname va zone (minDomains:2) - pattern da fix o batch 1 (PR #319).
+    # Scheduling ARM cua product-reviews do values-mandate13.yaml quyet dinh (file #4,
+    # load SAU file nay nen no thang, va tolerations la list -> bi THAY THE hoan toan).
+    # Dung them toleration techx.io/arch o day: no se khong bao gio toi duoc output.
     schedulingRules:
       nodeSelector:
         techx.io/workload: elastic
@@ -891,8 +895,8 @@ components:
               opentelemetry.io/name: product-reviews
     replicas: 2        # đứng sau tính năng AI tóm tắt review
     imageOverride: # CDO02 fix database.py + product_reviews_server.py - xem comment imageOverride đầu components:
-      digest: sha256:35f413f43f8840039383f4fe64440e7f06415c6e5fb70591480451ee84d54067
-      tag: 177d7d1-30382089768-product-reviews
+      digest: sha256:be5cd78ae229ad036f5695c21c1575b2049931133fe19d25180393caaf6db5bc
+      tag: 0bf98e2-30427433465-product-reviews
     resources:
       requests:
         cpu: 150m
@@ -1276,7 +1280,10 @@ components:
         persistentVolumeClaim:
           claimName: valkey-cart
     persistence:
-      enabled: true            # chart tạo PVC 'valkey-cart' (valkey-cart-pvc.yaml). AOF ghi vào PVC
+      # Mandate #8 nghiệm thu XONG (26/07) → cleanup: tắt để chart NGỪNG render PVC `valkey-cart`.
+      # ArgoCD (techx-corp, prune:true) prune PVC → PV reclaimPolicy:Delete huỷ EBS. Managed
+      # ElastiCache là đường sống thật; Plan-B là snapshot `techx-tf3-valkey-pre-cleanup-20260721-2243`.
+      enabled: false
       size: 1Gi
       storageClassName: gp2
     strategy:                  # RWO PVC + Deployment -> Recreate tránh deadlock rolling update
@@ -1442,12 +1449,10 @@ components:
       failureThreshold: 3
     replicas: 2        # cổng vào DUY NHẤT (Envoy) — SPOF của toàn hệ thống
     imageOverride: # mandate-01: gỡ route Envoy - xem comment imageOverride đầu components:
-      digest: sha256:3067e404dceb58eb4eb4c50fe13c7206866867c7cf83987196c116e1390ef269
-      tag: ae6ac7f-30341306942-frontend-proxy
-    # Mandate #19 staged promotion knobs. Keep shadow (enforced=0) for the first
-    # rollout, then change only BROWSE_RATE_LIMIT_ENFORCED_PERCENT in reviewed
-    # stages 5 -> 25 -> 50 -> 100 after every gate passes. The global fallback
-    # remains shadow because protected routes use its non-binding 10k/s bucket.
+      digest: sha256:c0d5128e0fa7de17e9284ecc9776f85daadbde8d04d42a1b51347859981c3f07
+      tag: 8f38296-30506402359-frontend-proxy
+    # Mandate #19: browse shedding is enforced after staged route-validation
+    # gates. Protected routes remain non-binding via the global fallback bucket.
     envOverrides:
       - name: FRONTEND_HOST
         value: frontend-headless
@@ -1460,7 +1465,7 @@ components:
       - name: BROWSE_RATE_LIMIT_ENABLED_PERCENT
         value: "100"
       - name: BROWSE_RATE_LIMIT_ENFORCED_PERCENT
-        value: "0"
+        value: "100"
       - name: LOCAL_RATE_LIMIT_ENABLED_PERCENT
         value: "100"
       - name: LOCAL_RATE_LIMIT_ENFORCED_PERCENT
