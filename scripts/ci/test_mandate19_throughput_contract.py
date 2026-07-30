@@ -241,8 +241,13 @@ def test_rate_limit_promotion_knobs_are_explicit_and_build_validated():
     prod = VALUES.read_text(encoding="utf-8")
     proxy = prod[prod.index("  frontend-proxy:") :]
     expected_prod_values = {
-        "BROWSE_RATE_LIMIT_MAX_TOKENS": "100",
-        "BROWSE_RATE_LIMIT_TOKENS_PER_FILL": "50",
+        # Hiệu chỉnh 30/07: bucket là PER-REPLICA nên budget tổng = giá trị này x số
+        # replica proxy. PR #649 nới proxy 8 -> 12 đã nâng budget 400 -> 600 và làm
+        # MẤT khả năng shed ở 2400 user (baseline 3.641 x 429 -> tuned 0 x 429, thay
+        # bằng 1.713 x HTTP 500). 33 x 12 = 396 ~ 50 x 8 = 400: quay về đúng điểm bảo
+        # vệ đã kiểm chứng bằng thực nghiệm.
+        "BROWSE_RATE_LIMIT_MAX_TOKENS": "66",
+        "BROWSE_RATE_LIMIT_TOKENS_PER_FILL": "33",
         "BROWSE_RATE_LIMIT_FILL_INTERVAL": "1s",
         "BROWSE_RATE_LIMIT_ENABLED_PERCENT": "100",
         "BROWSE_RATE_LIMIT_ENFORCED_PERCENT": "100",
@@ -337,3 +342,72 @@ def test_cpu_requests_track_measured_usage_not_guesses():
     reco = _block(values, "\n  recommendation:", "\n  accounting:")
     assert _res(reco, "requests") == "150m"
     assert _res(reco, "limits") == "700m"
+
+
+GRPC_CHANNEL = (
+    ROOT
+    / "phase3 - information/techx-corp-platform/src/frontend/gateways/rpc/grpcChannel.ts"
+)
+GATEWAY_DIR = (
+    ROOT / "phase3 - information/techx-corp-platform/src/frontend/gateways/rpc"
+)
+HEADLESS = ROOT / "gitops/infrastructure/backend-headless-services.yaml"
+
+
+def test_frontend_grpc_hops_use_client_side_round_robin():
+    """Replica backend chỉ có ích nếu traffic tới được nó.
+
+    Đo 30/07 (`kubectl top pod`) khi product-catalog đang ở 11 replica:
+        xxhsp 353m · cw8nx 136m · pzcxg 11m · TÁM pod còn lại 1-2m
+    ClusterIP trả về một VIP, gRPC giữ một kết nối TCP dài hạn, kube-proxy ghim
+    kết nối đó vào một pod; pod do HPA sinh ra SAU đó không bao giờ nhận traffic.
+    Đó là lý do nới maxReplicas ở PR #649 không nâng nổi trần.
+
+    Cần CẢ HAI vế, nên test khoá cả hai — bỏ một vế là cơ chế chết lặng lẽ:
+      1. round_robin phía client (pick_first mặc định chỉ dùng IP đầu tiên)
+      2. địa chỉ `dns:///` + Service headless (ClusterIP chỉ trả một VIP)
+    """
+    channel = GRPC_CHANNEL.read_text(encoding="utf-8")
+    assert '"round_robin"' in channel or "round_robin" in channel
+    assert "grpc.service_config" in channel
+    assert "dns:///" in channel
+
+    missing = []
+    for gw in sorted(GATEWAY_DIR.glob("*.gateway.ts")):
+        text = gw.read_text(encoding="utf-8")
+        if "ChannelCredentials.createInsecure()" not in text:
+            continue
+        if "loadBalancedChannelOptions" not in text or "dnsTarget(" not in text:
+            missing.append(gw.name)
+    assert not missing, f"gateway chưa bật client-side LB: {missing}"
+
+
+def test_headless_services_back_every_load_balanced_address():
+    """Mỗi *_ADDR trỏ vào `-headless` phải có Service headless thật đứng sau.
+
+    Trỏ vào một tên không tồn tại thì DNS fail và frontend mất backend — nên ràng
+    buộc này quan trọng hơn vẻ ngoài của nó.
+    """
+    docs = [d for d in yaml.safe_load_all(HEADLESS.read_text(encoding="utf-8")) if d]
+    services = {d["metadata"]["name"]: d for d in docs}
+    for svc in services.values():
+        # YAML không coi `None` là null (chỉ `null`/`~`/rỗng), và Kubernetes cũng
+        # đọc clusterIP headless đúng là CHUỖI "None" — nên so với chuỗi mới đúng.
+        assert svc["spec"]["clusterIP"] == "None", (
+            f"{svc['metadata']['name']} phải headless"
+        )
+
+    # KHÔNG assert `referenced` khác rỗng. Service headless được merge TRƯỚC, còn
+    # values chuyển *_ADDR sang chúng ở PR sau — vì `techx-infrastructure-app` (tạo
+    # Service) và `techx-corp` (roll pod) là hai ArgoCD Application auto-sync ĐỘC LẬP,
+    # không có bảo đảm thứ tự. Trỏ địa chỉ vào Service chưa tồn tại = frontend không
+    # phân giải nổi backend = browse 500 hàng loạt. Ràng buộc đúng ở đây là một chiều:
+    # đã trỏ vào `-headless` thì Service đó PHẢI có thật.
+    values = VALUES.read_text(encoding="utf-8")
+    referenced = set(re.findall(r"value:\s*(?:http://)?([a-z-]+-headless):(\d+)", values))
+    for name, port in sorted(referenced):
+        if name == "frontend-headless":
+            continue  # do file riêng frontend-headless-service.yaml định nghĩa
+        assert name in services, f"{name} được tham chiếu nhưng không có Service"
+        ports = {str(p["port"]) for p in services[name]["spec"]["ports"]}
+        assert port in ports, f"{name}: cổng {port} không khớp {ports}"
