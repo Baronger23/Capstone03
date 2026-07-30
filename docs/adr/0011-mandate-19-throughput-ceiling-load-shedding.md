@@ -1,6 +1,7 @@
 # ADR 0011 — Mandate #19: Trần thông lượng, mật độ và cơ chế load-shedding
 
 **Trạng thái:** Đã chấp thuận · đo lại toàn bộ bằng thực nghiệm ngày 30/07/2026
+**Nghiệm thu Directive:** YC#1 ✅ · YC#3 ✅ · YC#4 ✅ · **YC#2 một phần** (throughput +29% trên cùng node, nhưng cổng 4/4 chưa qua — xem §"Kết quả sau khi sửa đúng nguyên nhân")
 **Ngày ra quyết định:** 23/07/2026 · **Đo lại và viết lại:** 30/07/2026
 **Chủ sở hữu / người ký:** CDO01 — TF3
 **Trụ liên quan:** Performance Efficiency · Cost Optimization · Reliability
@@ -206,6 +207,64 @@ lại đủ 8 stage: **trần không đổi**, vẫn 1000 user; RPS ở trần 2
 Lý do ở §3.2: replica thêm vào là dung lượng **traffic không tới được**. Nới trần replica là
 điều kiện cần, không phải điều kiện đủ; nó chỉ có giá trị sau khi đường đi của traffic được sửa.
 Tệ hơn, một mình nó còn làm **yếu** lớp shed (§4).
+
+## Kết quả sau khi sửa đúng nguyên nhân — arm `tuned3`
+
+Phân bố đã sửa được thật (`kubectl top pod`, cùng mức tải 600 user):
+
+| `product-catalog` | Trước | Sau |
+|---|---|---|
+| Phân bố CPU | `353m · 136m · 11m · **1m × 8**` | `55m · 31m · 20m · 15m` |
+| Lệch nóng/lạnh | **353×** | **3,7×** |
+| Pod nhận traffic | **2/11** | **4/4** |
+
+Log frontend xác nhận `remote_addr=10.0.39.121:8080` — IP pod trực tiếp, không còn ClusterIP.
+
+| Users | servedRPS base → tuned3 | checkout base → tuned3 | browse | 429 |
+|---:|---|---|---:|---:|
+| 1400 | 238,8 → **277,7** | 29,21% → **99,55%** | 97,390% | 0 |
+| 1800 | 298,2 → **355,7** | 7,12% → **99,18%** | 97,325% | 30 |
+| 2400 | 342,4 → **442,3** | 0,02% → **88,59%** | 95,872% | 186 |
+
+**Ba cải thiện đo được:** checkout ở 1800 user `7,12% → 99,18%`; throughput ở 2400 user
+**+29%** trên **cùng 9 node**; và lớp shed hoạt động trở lại (`tuned2` có **0 × 429** ở cùng
+mức tải, `tuned3` có 30 và 186).
+
+**Nhưng theo cổng 4/4 nghiêm ngặt, YC#2 CHƯA ĐẠT.** `browse` dính ~1–2% lỗi ở **mọi** mức tải,
+kể cả 400 user, nên chỉ stage 200 user qua được cả bốn cổng.
+
+Đây là một **đánh đổi có thật**, không phải lỗi triển khai: `pick_first` vô tình cung cấp
+**cách ly** — mỗi frontend ghim vào một backend riêng, backend quá tải chỉ ảnh hưởng phần
+frontend ghim vào nó. `round_robin` xoá cách ly để dùng hết dung lượng, nên khi backend chạm
+trần thì **mọi** request cùng chịu. Đổi lại là +29% RPS.
+
+Lỗi còn lại là `DEADLINE_EXCEEDED after 1.200s`, dồn thành burst ~8 giây **ngay trước** mỗi lần
+HPA scale-up (09:22:27→35 rồi scale 09:22:56; 09:28:51→58 rồi scale 09:29:11) — độ trễ phản
+ứng của HPA, giờ mới lộ ra vì tín hiệu CPU không còn bị pha loãng bởi 8 pod rỗng.
+
+## Trần cuối cùng KHÔNG còn nằm ở phần mềm
+
+Ở stage 2400 user: **13 pod Pending** (8 `frontend`, 2 `frontend-proxy`, 3 `product-catalog`).
+
+```
+0/9 nodes are available:
+  4 node(s) didn't match Pod's node affinity/selector   <- 4 node t3.large managed
+  1 Insufficient cpu                                    <- tầng elastic đã cạn
+node limits have been exhausted for nodepool (flash-sale-spot-arm64)
+label "techx.io/arch" does not have known values (typo of "kubernetes.io/arch"?)
+```
+
+CPU thật cùng lúc: node elastic `…5-127` **99%**, `…34-80` 62% — trong khi **bốn node
+`t3.large` managed ở 18–58%**.
+
+`values-mandate13.yaml` giam 10 workload hot path bằng
+`nodeSelector: { techx.io/workload: elastic, techx.io/arch: arm64 }`. Bốn node managed không
+mang label `techx.io/workload` nên **không bao giờ** nhận được pod hot-path.
+
+> **Đòn bẩy tiếp theo, và nó đúng nghĩa "nâng trần bằng hiệu suất, không thêm node": 8 vCPU
+> đã trả tiền đang nằm không.** Image đã multi-arch nên hot path chạy được trên `t3.large`.
+> **Chưa làm** vì nó sửa thiết kế Mandate #13 của CDO01 (ghim Graviton để tiết kiệm chi phí) —
+> cần thống nhất trước, không đơn phương.
 
 ## Khoảng trống quan sát phát hiện kèm (không chặn Mandate #19)
 

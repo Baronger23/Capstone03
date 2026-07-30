@@ -5,6 +5,9 @@
 **Trụ:** Performance Efficiency · chạm Cost Optimization · Reliability
 **ADR:** [`docs/adr/0011-mandate-19-throughput-ceiling-load-shedding.md`](adr/0011-mandate-19-throughput-ceiling-load-shedding.md)
 **Evidence canonical:** [`docs/evidence/mandate-19/real-2026-07-30/`](evidence/mandate-19/real-2026-07-30/)
+**Video demo xuống mềm:** [`shed-demo/timelapse.mp4`](evidence/mandate-19/real-2026-07-30/shed-demo/timelapse.mp4) · [`.gif`](evidence/mandate-19/real-2026-07-30/shed-demo/timelapse.gif)
+**Video vùng trần (arm tuned3):** [`tuned3-ceiling-video/timelapse.gif`](evidence/mandate-19/real-2026-07-30/tuned3-ceiling-video/timelapse.gif)
+**Postmortem kèm:** [0017 — product-catalog về 0 replica](postmortem/0017-product-catalog-replicas-zero-hpa-cannot-recover.md)
 **Harness tái lập:** [`scripts/mandate-19/`](../scripts/mandate-19/)
 
 > **Bản này thay thế hoàn toàn báo cáo cũ.** Số liệu cũ (trần "174,75 RPS @ 328 user")
@@ -221,13 +224,98 @@ Arm `tuned2` (PR #656):
 Checkout ở 1400 lên **98,18%** (từ 29,21%) — nút thắt §5.1 đã xử. Nhưng trần vẫn 1000 user
 vì **ràng buộc dịch sang browse**, đúng chỗ nút thắt §5.2 nằm.
 
-### 6.3. Trạng thái YC#2
+### 6.3. Sửa đúng nguyên nhân — arm `tuned3` (PR #660 + #664)
 
-**Chưa đạt.** Trần vẫn 1000 user qua ba arm. Đường đi đã xác định rõ và đã có PR:
-`#660` (client-side LB) là thứ chạm đúng nguyên nhân §5.2, nhưng cần rebuild image frontend
-nên chưa có số "sau" tại thời điểm viết. Không tuyên PASS khi chưa có số.
+Bật `round_robin` trên Service headless. **Phân bố đã sửa được thật**, đo bằng `kubectl top pod`
+cùng ngày, cùng mức tải 600 user:
 
-### 6.4. Ràng buộc "không thêm node" được tôn trọng
+| `product-catalog` | Trước (ClusterIP + `pick_first`) | Sau (headless + `round_robin`) |
+|---|---|---|
+| Phân bố CPU | `353m · 136m · 11m · **1m × 8**` | `55m · 31m · 20m · 15m` |
+| Tỉ lệ nóng/lạnh | **353×** | **3,7×** |
+| Pod nhận traffic | **2/11** | **4/4** |
+
+Log frontend xác nhận: `remote_addr=10.0.39.121:8080` — **IP pod trực tiếp**, không còn ClusterIP.
+
+Kết quả ladder `tuned3`:
+
+| Users | servedRPS base → tuned3 | checkout base → tuned3 | browse tuned3 | 429 |
+|---:|---|---|---:|---:|
+| 1000 | 202,4 → 173,2 | 99,89% → 99,67% | 98,583% | 0 |
+| 1400 | 238,8 → **277,7** | 29,21% → **99,55%** | 97,390% | 0 |
+| 1800 | 298,2 → **355,7** | 7,12% → **99,18%** | 97,325% | 30 |
+| 2400 | 342,4 → **442,3** | 0,02% → **88,59%** | 95,872% | 186 |
+
+**Ba thứ cải thiện rõ rệt:**
+
+1. **Checkout** — ở 1800 user: `7,12% → 99,18%`. Luồng tiền giờ sống sót ở mức tải mà trước
+   đây nó gần như chết hẳn.
+2. **Throughput ở tải cao** — 2400 user: `342,4 → 442,3 RPS` (**+29%**) trên **cùng 9 node**.
+3. **Xuống mềm hoạt động trở lại** — 429 xuất hiện ở 1800/2400 (30 và 186) sau khi hiệu chỉnh
+   budget (#658); arm `tuned2` có **0 × 429** ở cùng mức tải.
+
+### 6.4. Nhưng theo cổng 4/4 nghiêm ngặt thì YC#2 **CHƯA ĐẠT** — và vì sao
+
+`browse` dính **~1–2% lỗi ở MỌI mức tải**, kể cả 400 user. Cổng đòi ≥ 99,5%, nên chỉ stage
+200 user PASS. Xét thuần theo "stage cao nhất qua cả 4 cổng", trần **tụt** chứ không tăng.
+
+Không tô hồng: đây là một **đánh đổi có thật** mà bản vá tạo ra.
+
+`pick_first` vô tình cung cấp **cách ly**: mỗi pod frontend ghim vào một pod backend riêng, nên
+khi một backend quá tải thì chỉ phần frontend ghim vào nó bị ảnh hưởng — phần còn lại vẫn sạch.
+`round_robin` xoá cách ly đó: mọi frontend dùng chung toàn bộ backend, nên khi backend chạm
+trần thì **mọi** request cùng chịu. Đổi lại là dung lượng được dùng hết — thấy rõ ở +29% RPS.
+
+Lỗi còn lại là `DEADLINE_EXCEEDED after 1.200s` trên `/api/products/[id]`, dồn thành từng burst
+~8 giây **ngay trước mỗi lần HPA scale-up**:
+
+| Burst lỗi | HPA scale-up |
+|---|---|
+| 09:22:27 → 09:22:35 | **09:22:56** (3→4) |
+| 09:28:51 → 09:28:58 | **09:29:11** (4→5) |
+
+Tức pod hiện có bão hoà, đuôi vượt deadline, rồi ~25 giây sau HPA mới thêm pod. Đây là hệ quả
+*đúng* của việc sửa phân bố — HPA giờ nhận tín hiệu thật thay vì trung bình bị pha loãng bởi
+8 pod rỗng — nhưng nó phơi ra độ trễ phản ứng.
+
+### 6.5. Trần thật sự bị chặn bởi cái gì — đã xác định
+
+Ở stage 2400 user, **13 pod Pending** (8 `frontend`, 2 `frontend-proxy`, 3 `product-catalog`):
+
+```
+0/9 nodes are available:
+  4 node(s) didn't match Pod's node affinity/selector   <- 4 node t3.large managed
+  1 Insufficient cpu                                    <- tầng elastic đã cạn
+node limits have been exhausted for nodepool (flash-sale-spot-arm64)
+label "techx.io/arch" does not have known values (typo of "kubernetes.io/arch"?)
+```
+
+CPU thật từng node cùng lúc đó:
+
+| Node | CPU |
+|---|---|
+| `…5-127` (elastic) | **99%** |
+| `…34-80` (elastic) | 62% |
+| `…24-177` (**managed**) | 58% |
+| `…8-134` (**managed**) | 49% |
+| `…26-153` (**managed**) | 29% |
+| `…43-83` (**managed**) | 18% |
+
+`values-mandate13.yaml` giam 10 workload hot path bằng
+`nodeSelector: { techx.io/workload: elastic, techx.io/arch: arm64 }`. **Bốn node `t3.large`
+managed không mang label `techx.io/workload` nên không bao giờ nhận được pod hot-path** — chúng
+ngồi ở 18–58% CPU trong khi node elastic chạm 99% và 13 pod xếp hàng.
+
+Karpenter cũng không cấp thêm được node elastic: `limits` đã cạn **và** NodePool không khai báo
+`techx.io/arch` trong `requirements` nên nó không biết cách tạo node thoả nodeSelector.
+
+> **Đây là đòn bẩy tiếp theo, và nó đúng nghĩa "nâng trần bằng hiệu suất, không thêm node":
+> 8 vCPU đã trả tiền đang nằm không.** Image đã multi-arch (`build-push-ecr.yml` build
+> `linux/amd64,linux/arm64`) nên về kỹ thuật hot path chạy được trên `t3.large`.
+> Chưa làm vì nó sửa thiết kế Mandate #13 của CDO01 (ghim Graviton để tiết kiệm chi phí) —
+> cần thống nhất trước, không đơn phương.
+
+### 6.6. Ràng buộc "không thêm node" được tôn trọng
 
 Ở stage vượt trần, pod hot-path ở trạng thái `Pending` với lý do:
 
@@ -299,12 +387,21 @@ chung toàn cluster (`local_cluster_rate_limit`) — nằm trong image, phải r
 
 | YC | Trạng thái | Bằng chứng |
 |---|---|---|
-| 1. Tìm trần THẬT | ✅ **Đạt** | 1000 user / 202,4 RPS, 8 stage exact-window, node-set hash mỗi stage |
-| 2. Nâng trần không thêm node | ❌ **Chưa** | 3 arm đều dừng ở 1000 user. Nguyên nhân đã xác định (§5.2), PR #660 chưa có số sau |
-| 3. Xử nút thắt | ✅ **Đạt** cho `email` | checkout @1400: 29,21% → **98,18%**. Hai nút thắt còn lại đã định vị + có PR |
-| 4. Xuống mềm | ✅ **Đạt** cơ chế · ⚠️ cần merge #658 | 429 + header + counter Envoy trên đường public; regression budget đã tìm ra và có bản sửa |
+| **1. Tìm trần THẬT** | ✅ **Đạt** | **1000 user / 202,4 RPS**. 4 arm × 8 stage, cửa sổ đo 300s cuối, node-set hash mỗi stage, generator ngoài cluster. Cao hơn ~3× con số cũ |
+| **2. Nâng trần không thêm node** | 🟡 **Một phần** | Throughput ở tải cao **+29%** (342,4 → 442,3 RPS @2400) trên **cùng 9 node**, và checkout @1800 `7,12% → 99,18%`. **Nhưng** theo cổng 4/4 nghiêm ngặt thì trần **không tăng** — browse dính ~1–2% lỗi ở mọi mức tải. Không tuyên PASS |
+| **3. Xử nút thắt** | ✅ **Đạt** | Ba nút thắt tìm bằng số đo, hai trong ba là connection/queue. `email`: checkout @1400 **29,21% → 99,55%**. Phân bố `product-catalog`: **353× → 3,7×** lệch |
+| **4. Xuống mềm** | ✅ **Đạt** | 104.264 × 429 trên browse, luồng tiền **99,95%**, Envoy `rate_limited: 19.539` vs `0`. Regression budget đã tìm ra và sửa — 429 hoạt động trở lại ở `tuned3` (30 @1800, 186 @2400) sau khi `tuned2` có **0** |
 
----
+### Nói thẳng về YC#2
+
+Bản vá **chạm đúng nguyên nhân** — phân bố tải đã sửa được, và hệ phục vụ nhiều hơn 29% trên
+cùng số node. Nhưng nó tạo ra một **đánh đổi có thật**: `pick_first` vô tình cung cấp cách ly
+giữa các pod frontend, `round_robin` xoá cách ly đó để dùng hết dung lượng. Kết quả là browse
+chịu ~1% lỗi đều đặn thay vì lỗi dồn cục bộ.
+
+Và trần cuối cùng **không nằm ở phần mềm nữa**: 13 pod Pending vì hot path bị `nodeSelector`
+giam vào tầng elastic đã cạn, trong khi **4 node `t3.large` managed ngồi ở 18–58% CPU** và
+không bao giờ nhận được pod hot-path (§6.5).
 
 ## 10. Tái lập
 
@@ -327,15 +424,17 @@ Chi tiết: [`scripts/mandate-19/README.md`](../scripts/mandate-19/README.md).
 
 ---
 
-## 11. Việc còn mở
+## 11. Việc còn mở — xếp theo tác động
 
-1. Merge #658 (hiệu chỉnh shed) + #660 (client-side LB) → rebuild image frontend → bump digest
-   → chạy arm `tuned3` để có số YC#2.
-2. Bucket shed dùng chung toàn cluster (`local_cluster_rate_limit`).
-3. Sửa cAdvisor 7/8 node.
-4. Bổ sung `techx.io/arch` vào `requirements` của NodePool arm64.
-5. Bọc timeout riêng cho `checkout → email` để hàng đợi service phụ trợ không ăn được trọn
-   budget của luồng tiền.
+| # | Việc | Vì sao |
+|---|---|---|
+| **1** | **Cho hot path dùng được 4 node `t3.large` managed** — gỡ/nới `nodeSelector` trong `values-mandate13.yaml` | **8 vCPU đã trả tiền đang nằm không** trong khi node elastic chạm 99% và 13 pod xếp hàng. Đúng nghĩa "nâng trần bằng hiệu suất, không thêm node". Image đã multi-arch nên chạy được trên amd64. **Cần thống nhất với CDO01** vì sửa thiết kế Mandate #13 (ghim Graviton để tiết kiệm) |
+| **2** | Bổ sung `techx.io/arch` vào `requirements` của NodePool arm64 | Karpenter đang báo `label "techx.io/arch" does not have known values` — nó **không biết cách** tạo node thoả nodeSelector của hot path, nên tầng elastic không co giãn được |
+| 3 | Giảm độ trễ HPA cho `product-catalog` (nâng `minReplicas` hoặc hạ target) | Burst lỗi ~8s xảy ra đều đặn ~25 giây **trước** mỗi lần scale-up |
+| 4 | Bucket shed dùng chung toàn cluster (`local_cluster_rate_limit`) | Budget hiện vẫn trôi theo số replica proxy — cần rebuild image |
+| 5 | Sửa cAdvisor 7/8 node | Panel *"Pod count"* chết, không có metric container toàn cụm |
+| 6 | Bọc timeout riêng cho `checkout → email` | Hàng đợi service phụ trợ không được phép ăn trọn budget luồng tiền |
+| 7 | Xem lại `replicasManagedExternally` (postmortem 0017) | 10 service có lỗ hổng "về 0 là kẹt vĩnh viễn"; `frontend` rơi vào đó là mất storefront |
 
 ---
 

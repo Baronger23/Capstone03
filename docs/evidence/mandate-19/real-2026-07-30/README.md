@@ -1,4 +1,4 @@
-# Mandate #19 — evidence đo thật, 30/07/2026
+# Mandate #19 — evidence đo thật, 30/07/2026 (4 arm)
 
 Bộ này **thay thế** `docs/evidence/mandate-19/pm-152/` và `docs/evidence/mandate-19/after/`
 làm nguồn số liệu cho Mandate #19. Lý do loại hai bộ cũ ở mục 5.
@@ -12,7 +12,11 @@ Tái lập: [`scripts/mandate-19/`](../../../../scripts/mandate-19/) — `README
 | `baseline/` + `baseline-client-truth.json` | arm **baseline** — cấu hình production trước mọi tuning của mandate này |
 | `tuned/` + `tuned-client-truth.json` | arm **tuned** — sau PR #649 (chỉ nới `maxReplicas`). **Không nâng được trần** |
 | `tuned2/` + `tuned2-client-truth.json` | arm **tuned2** — sau PR #656 (nới nút thắt `email`). Checkout @1400 lên **98,18%** |
-| `shed-demo/` | demo YC#4: probe qua CloudFront + counter Envoy + **video** + ảnh mốc |
+| `tuned3/` + `tuned3-client-truth.json` | arm **tuned3** — sau PR #660+#664 (client-side LB). Throughput @2400 **+29%**, checkout @1800 **99,18%** |
+| `roundrobin-proof/` | bằng chứng phân bố tải: **353× → 3,7×** lệch |
+| `ceiling-root-cause.txt` | vì sao trần bị chặn: 13 pod Pending, 4 node managed rảnh không dùng được |
+| `shed-demo/` | demo YC#4: probe qua CloudFront + counter Envoy + **video MP4/GIF** + ảnh mốc |
+| `tuned3-ceiling-video/` | video vùng trần của arm cuối |
 
 Mỗi `u<N>/` có: `sli.json` (cổng SLO), `infra.txt` (node-set hash + HPA + top nodes),
 `window.txt` (cửa sổ đo chính xác), `locust_stats.csv`, `locust_failures.csv`, `locust_agg.json`.
@@ -26,15 +30,24 @@ Mỗi `u<N>/` có: `sli.json` (cổng SLO), `infra.txt` (node-set hash + HPA + t
 
 ## 0b. Kết quả ba arm (client-side, cổng SLO của `SLO.md`)
 
-| Users | baseline | tuned (#649) | tuned2 (#656) |
-|---:|---|---|---|
-| 800 | PASS | PASS | PASS |
-| **1000** | **PASS ← trần** | **PASS ← trần** | **PASS ← trần** |
-| 1400 | FAIL — checkout **29,21%** | FAIL — checkout **36,62%** | FAIL — browse 96,47%, checkout **98,18%** |
+| Users | baseline | tuned (#649) | tuned2 (#656) | tuned3 (#660+#664) |
+|---:|---|---|---|---|
+| **1000** | **PASS ← trần** | **PASS ← trần** | **PASS ← trần** | browse 98,58% |
+| 1400 | checkout **29,21%** | checkout **36,62%** | checkout **98,18%** | checkout **99,55%** |
+| 1800 | checkout **7,12%** · 298,2 RPS | — | — | checkout **99,18%** · **355,7 RPS** |
+| 2400 | checkout **0,02%** · 342,4 RPS | — | — | checkout **88,59%** · **442,3 RPS** |
 
-Nới `maxReplicas` một mình (**tuned**) không đổi trần. Nới nút thắt `email` (**tuned2**) cứu
-được checkout nhưng ràng buộc dịch sang browse — nguyên nhân là kết nối gRPC bị ghim vào một
-pod (ADR 0011 §3.2), PR #660 xử.
+Đọc bảng này theo hai chiều:
+
+- **Chiều tốt lên:** checkout ở 1800 user đi từ `7,12%` lên `99,18%`; throughput ở 2400 user
+  tăng **+29%** (342,4 → 442,3 RPS) trên **cùng 9 node**.
+- **Chiều chưa đạt:** `tuned3` dính ~1–2% lỗi browse ở mọi mức tải nên **không stage nào trên
+  200 user qua được cả 4 cổng**. Đây là đánh đổi có thật của client-side LB, không phải lỗi
+  triển khai — xem báo cáo §6.4.
+
+Trần cuối cùng không còn nằm ở phần mềm: 13 pod Pending vì hot path bị `nodeSelector` giam vào
+tầng elastic đã cạn, trong khi 4 node `t3.large` managed ngồi ở 18–58% CPU. Xem
+`ceiling-root-cause.txt`.
 
 ## 1. Điều kiện đo
 
