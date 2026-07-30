@@ -1,0 +1,48 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shopping-copilot-egress-proxy-policy
+  namespace: techx-tf3
+  annotations:
+    mandate-17.techx.io/service-clusterip-evidence: "2026-07-30:kube-dns=172.20.0.10,shopping-copilot-egress-proxy=172.20.255.152"
+    mandate-17.techx.io/public-egress-control: "chokepoint; CONNECT allowlist enforced by the proxy's Envoy RBAC (see gitops/shopping-copilot/egress-proxy.yaml)"
+    mandate-17.techx.io/allowed-external-authorities: "bedrock-runtime.ap-southeast-1.amazonaws.com:443,bedrock-runtime.us-east-1.amazonaws.com:443,bedrock-agent-runtime.us-east-1.amazonaws.com:443,sts.ap-southeast-1.amazonaws.com:443,sts.amazonaws.com:443"
+spec:
+  # Mirrors aiops-egress-proxy-policy. This is the one place the copilot's traffic is allowed
+  # to leave the VPC, and only for the authorities the proxy's RBAC permits - the copilot pod
+  # itself has no public egress.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: shopping-copilot-egress-proxy
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: shopping-copilot
+      ports:
+        - { protocol: TCP, port: 3128 }
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock: { cidr: 172.20.0.10/32 }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - { protocol: TCP, port: 443 }
