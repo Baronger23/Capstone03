@@ -248,21 +248,52 @@ frontend nói chuyện với đúng một pod backend; giờ mọi pod frontend 
 Nhưng toàn bộ tham số điều chỉnh hiện tại — `minReplicas`, ngưỡng HPA 65%, hạn chờ gRPC 1200ms —
 đều được hiệu chỉnh cho **chế độ cũ**. Chúng chưa từng được đo lại trong chế độ mới.
 
-Bằng chứng cho thấy đây là **nợ hiệu chỉnh chứ không phải cạn dung lượng**: lỗi không rải đều
-theo thời gian mà **dồn thành từng burst ~8 giây, đều đặn ngay TRƯỚC mỗi lần HPA thêm pod**:
+Bằng chứng cho thấy đây **không phải cạn dung lượng**: lỗi không rải đều theo thời gian mà **dồn
+thành từng cụm ngắn rồi tự tắt**, trong khi tài nguyên còn thừa.
 
-| Burst lỗi | HPA scale-up |
-|---|---|
-| 09:22:27 → 09:22:35 | **09:22:56** (3→4 pod) |
-| 09:28:51 → 09:28:58 | **09:29:11** (4→5 pod) |
+| Stage | Cụm lỗi | Dài | Vị trí trong cửa sổ đo 300s |
+|---|---|---:|---|
+| u400 | 09:22:27 → 09:22:35 | **8s** | +263s |
+| u600 | 09:28:51 → 09:29:56 | 65s | +204s |
+| u800 | 09:34:12 → 09:37:02 | 170s | +90s |
+| u1000 | 09:43:58 → 09:44:12 | **14s** | +240s |
 
-Đọc chuỗi này: pod hiện có bão hoà → phần đuôi vượt hạn chờ → sinh lỗi → **~25 giây sau** HPA
-mới phản ứng → lỗi dừng. Nếu là cạn dung lượng thật thì lỗi phải **liên tục**, không phải tắt
-ngay sau khi thêm một pod.
+Hai điều loại trừ được giả thuyết "hết sức":
 
-Nói cách khác: hệ **thừa sức** phục vụ, chỉ là phản ứng chậm hơn tốc độ tải dâng. Đó là thứ sửa
-bằng `minReplicas` cao hơn hoặc ngưỡng HPA thấp hơn — **một vòng hiệu chỉnh nữa**, không phải
-thêm phần cứng.
+**(a) Tài nguyên còn thừa nhiều** đúng lúc đó — ảnh HPA tại u1000:
+
+```
+frontend-hpa          cpu:  79%/65%    10/16 replica   (còn 6)
+product-catalog-hpa   cpu:  61%/65%     8/12 replica   (DƯỚI cả ngưỡng)
+```
+
+**(b) Cụm lỗi ở +90s đến +263s vào giữa cửa sổ đo** — đã qua giai đoạn ổn định từ lâu, nên không
+đổ cho "nhiễu lúc tăng tải" được.
+
+> #### ⚠️ Đính chính một suy luận sai của bản đầu
+> Bản đầu viết: *"pod bão hoà → sinh lỗi → ~25 giây sau HPA thêm pod → lỗi dừng"*. **Chuỗi nhân
+> quả này mâu thuẫn với chính bảng số của nó:** cụm lỗi u400 **tắt lúc 09:22:35**, còn HPA scale-up
+> mãi **09:22:56** — tức lỗi đã hết **21 giây TRƯỚC** khi có pod mới. Pod mới không thể là thứ
+> chữa lỗi đã tự tắt trước đó.
+
+**Cơ chế đúng — và đây là chỗ bản vá của chúng tôi còn thiếu một mảnh:**
+
+`round_robin` được ship **mà không kèm `retryPolicy`**. Xem `grpcChannel.ts`: service config chỉ
+có `loadBalancingConfig`, không có `methodConfig`.
+
+| | `pick_first` (trước) | `round_robin` (nay) |
+|---|---|---|
+| Client giữ kết nối tới | **1** pod | **tất cả** pod |
+| Một pod bị thay | chỉ client ghim vào nó dính | **mọi** client dính một phần |
+| Cửa sổ dính lỗi | tới khi hết backoff (~60s) | tới khi phân giải lại DNS |
+
+`dns_min_time_between_resolutions_ms: 5000` ⇒ sau khi một pod biến mất, client còn gửi vào địa chỉ
+chết **tới 5 giây**. **Cụm lỗi 8 giây ở u400 khớp đúng con số này.** Không có `retryPolicy`, mỗi
+lần như vậy là lỗi 500 tới thẳng người dùng.
+
+Nói gọn: bản vá đổi *"một pod chịu toàn bộ rủi ro"* thành *"mọi pod chia nhau rủi ro"* — đúng ý đồ
+về dung lượng, nhưng **thiếu lớp đệm bắt buộc đi kèm**. Đây là thứ sửa được bằng một vòng nữa, xem
+👉 **[kế hoạch đóng YC#2](mandate-19-ke-hoach-yc2.md)**.
 
 #### Lý do 2 — Cơ chế cũ vô tình được "che" bởi chính khuyết điểm của nó
 
@@ -312,8 +343,8 @@ tuning — nó là một quyết định kiến trúc thuộc về Mandate #13 c
 | Bản vá có sai không? | Không. Nó chạm đúng nguyên nhân, và phân bố tải đã sửa được thật: **353× → 3,7×** |
 | Có làm hệ tệ đi không? | Không, ở tải cao: **+29% RPS**, checkout `7,12% → 99,18%` |
 | Vậy sao chưa PASS? | Tham số HPA/hạn chờ vẫn là bộ hiệu chỉnh cho chế độ cũ; cần **một vòng đo lại** trong chế độ mới |
-| Cần bao lâu để chốt? | Ước tính **~1,5 giờ**: chỉnh `minReplicas` + hạn chờ, chạy lại 4 stage quyết định |
-| Chắc chắn qua không? | **Không dám chắc — ước lượng ~65–70%.** Nếu trượt thì nguyên nhân gần như chắc chắn là tầng elastic hết chỗ, và lối ra là mục 6 |
+| Cần bao lâu để chốt? | **~2,5–3 giờ** — chi tiết từng việc ở 👉 **[kế hoạch đóng YC#2](mandate-19-ke-hoach-yc2.md)** |
+| Chắc chắn qua không? | **Không dám chắc.** ~55% nếu chỉ thêm `retryPolicy` + giảm churn; **~70%** nếu nới được `product-reviews`; **~85%** nếu CDO01 đồng ý mở 4 node `t3.large`. Qua được u1800 thì **<25%** nếu không mở node |
 
 ## 6. Trần cuối cùng **không còn nằm ở phần mềm**
 
