@@ -74,21 +74,36 @@ static_resources:
                           name: product_detail_protected
                           route: { cluster: frontend }
                         # Shopping Copilot (AIO02) — public storefront integration.
-                        # /api/copilot/<x> -> shopping-copilot /api/<x> (chat, confirm, cart).
-                        # PUBLIC + unauthenticated LLM endpoint: per-route local rate limit
-                        # bounds how many requests reach Bedrock, capping worst-case token
-                        # cost from anonymous/bot abuse (app-level user_id limit is spoofable).
+                        #
+                        # ALLOWLIST, not a blanket prefix. The copilot serves a much wider
+                        # /api surface than the storefront widget needs, including
+                        # UNAUTHENTICATED admin/destructive endpoints:
+                        #   GET    /api/v1/users                    (enumerate every user)
+                        #   GET    /api/v1/user/<id>/sessions       (read anyone's sessions)
+                        #   DELETE /api/v1/user/<id>/memory         (wipe anyone's memory)
+                        #   DELETE /api/v1/session/<id>
+                        #   POST   /api/v1/cache/clear | /invalidate
+                        #   POST   /api/traces/trigger-error
+                        # A single `prefix: /api/copilot/` + rewrite to `/api/` would publish
+                        # all of them to the internet. Only the widget's endpoints are routed;
+                        # everything else under /api/copilot/ gets a direct 404 below.
+                        #
+                        # Each allowed route carries its own local rate limit: the endpoint is
+                        # public and unauthenticated and the app's user_id limit is spoofable,
+                        # so this is what actually bounds Bedrock spend from bot abuse.
                         # timeout 20s covers the app's 15s hard fallback.
-                        - match: { prefix: "/api/copilot/" }
-                          name: copilot
+                        #
+                        # `prefix: .../chat` also covers .../chat/stream (streaming replies).
+                        - match: { prefix: "/api/copilot/chat" }
+                          name: copilot_chat
                           route:
                             cluster: shopping-copilot
-                            prefix_rewrite: "/api/"
+                            prefix_rewrite: "/api/chat"
                             timeout: 20s
                           typed_per_filter_config:
                             envoy.filters.http.local_ratelimit:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
-                              stat_prefix: copilot_rate_limiter
+                              stat_prefix: copilot_chat_rate_limiter
                               # ~2 req/s sustained per proxy (burst 120). With >=2 proxies the
                               # aggregate cap bounds Bedrock spend. Tune via the values below.
                               token_bucket:
@@ -96,18 +111,42 @@ static_resources:
                                 tokens_per_fill: 120
                                 fill_interval: 60s
                               filter_enabled:
-                                default_value:
-                                  numerator: 100
-                                  denominator: HUNDRED
+                                default_value: { numerator: 100, denominator: HUNDRED }
                               filter_enforced:
-                                default_value:
-                                  numerator: 100
-                                  denominator: HUNDRED
+                                default_value: { numerator: 100, denominator: HUNDRED }
                               response_headers_to_add:
-                                - header:
-                                    key: x-techx-rate-limit
-                                    value: copilot
+                                - header: { key: x-techx-rate-limit, value: copilot }
                                   keep_empty_value: true
+                        - match: { prefix: "/api/copilot/confirm" }
+                          name: copilot_confirm
+                          route:
+                            cluster: shopping-copilot
+                            prefix_rewrite: "/api/confirm"
+                            timeout: 20s
+                          typed_per_filter_config:
+                            envoy.filters.http.local_ratelimit:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                              stat_prefix: copilot_confirm_rate_limiter
+                              token_bucket:
+                                max_tokens: 120
+                                tokens_per_fill: 120
+                                fill_interval: 60s
+                              filter_enabled:
+                                default_value: { numerator: 100, denominator: HUNDRED }
+                              filter_enforced:
+                                default_value: { numerator: 100, denominator: HUNDRED }
+                              response_headers_to_add:
+                                - header: { key: x-techx-rate-limit, value: copilot }
+                                  keep_empty_value: true
+                        # Everything else under /api/copilot/ is refused at the edge, so new
+                        # endpoints the AI team adds are never published by accident. Add an
+                        # explicit route above only after reviewing the endpoint.
+                        - match: { prefix: "/api/copilot/" }
+                          name: copilot_denied
+                          direct_response:
+                            status: 404
+                            body:
+                              inline_string: "not found\n"
                         # PM-154 (load-shedding): browse/homepage catch-all — SHADOW.
                         # Requests above the calibrated per-proxy token bucket increment
                         # counters but are not rejected. Promote enforcement gradually
