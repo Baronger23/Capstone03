@@ -18,6 +18,12 @@ locals {
   copilot_inference_profile_id = "apac.amazon.nova-lite-v1:0"
   copilot_foundation_model_id  = "amazon.nova-lite-v1:0"
 
+  # Mandate-23 GenAI semantic cache (added in the AIE2 copilot update): on a Tier-1 miss the
+  # app embeds the query with Titan Text Embeddings V2 and compares vectors. TITAN_SEMANTIC_CACHE
+  # defaults to "true" in the code, so without this the cache calls InvokeModel on Titan and gets
+  # AccessDenied on every miss - the cache silently never works. Embeddings only, no generation.
+  copilot_embed_model_id = "amazon.titan-embed-text-v2:0"
+
   # Guardrail AND the Knowledge Base both live in us-east-1 (verified 2026-07-27:
   # KB UCTITOWFHE / techx-products-kb-v2 is ACTIVE in us-east-1, not ap-southeast-1). The
   # app's kb_client defaults BEDROCK_KB_REGION to us-east-1, so Retrieve() targets us-east-1.
@@ -82,6 +88,8 @@ resource "aws_iam_role_policy" "shopping_copilot_bedrock" {
         Resource = [
           "arn:aws:bedrock:${local.copilot_bedrock_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${local.copilot_inference_profile_id}",
           "arn:aws:bedrock:*::foundation-model/${local.copilot_foundation_model_id}",
+          # Titan embeddings for the semantic cache (embed-only; not a generation model).
+          "arn:aws:bedrock:*::foundation-model/${local.copilot_embed_model_id}",
         ]
       },
       {
