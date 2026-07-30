@@ -43,19 +43,19 @@ The run is invalid if the two node hashes or node counts differ.
 
 | Measure | Before | After |
 |---|---:|---:|
-| Highest offered users | 328 | 410 observed |
-| Peak served RPS holding SLO | 174.75 reported | Not established |
-| Highest current RPS observed | N/A | 81.8 at 410 users |
+| Highest offered users | 400 observed | 410 observed |
+| Peak served RPS holding SLO | Not established | Not established |
+| Highest current RPS observed | 76.2 at 400 users | 81.8 at 410 users |
 | Node count | Not comparable | 9 -> 11 |
 | Served RPS/node | Not comparable | Not valid: node set changed |
 | Checkout success | Missing raw evidence | 7,914/7,915 in cumulative snapshot (99.987%) |
 | Checkout p99 | Missing raw evidence | 490 ms cumulative at final snapshot |
 | Unexpected 5xx/timeout | Missing raw evidence | One checkout failure shown; cause/status missing |
 
-The 81.8 RPS value is a point-in-time Locust value, not a proven sustained
-SLO-holding ceiling. It is lower than the reported old value of 174.75 RPS and
-was measured while extra nodes had joined, so no before/after improvement or
-density improvement can be calculated.
+The 76.2 and 81.8 RPS values are point-in-time Locust values, not proven
+sustained SLO-holding ceilings. The after value was also measured while extra
+nodes had joined, so no before/after throughput or density improvement can be
+calculated.
 
 ## Bottleneck removal
 
