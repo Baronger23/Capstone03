@@ -370,8 +370,7 @@ def _upload_to_s3(content: str, local_path: str):
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from config import S3_BUCKET_NAME
 
-        # Dưới IRSA không có biến AWS_ACCESS_KEY_ID — phải để boto3 tự phân giải.
-        if boto3.Session().get_credentials() is None:
+        if not os.getenv("AWS_ACCESS_KEY_ID"):
             logger.info("No AWS credentials — skipping S3 upload.")
             return
 
