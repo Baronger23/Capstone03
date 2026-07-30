@@ -38,11 +38,23 @@ locals {
   fis_private_subnet_name = "techx-corp-tf3-vpc-private-${var.fis_target_az}"
 }
 
+# The VPC is looked up by tag rather than read from module.network.vpc_id ON PURPOSE.
+# terraform-apply runs scoped applies with -target, and -target pulls in the target's
+# dependencies: taking the module output would drag all of module.network into an
+# FIS-scoped apply, which is exactly the unrelated pending drift the scope mechanism
+# exists to avoid. A tag lookup keeps this file self-contained.
+data "aws_vpc" "fis_target" {
+  filter {
+    name   = "tag:Name"
+    values = ["${var.cluster_name}-vpc"]
+  }
+}
+
 # Scoped by vpc-id as well as the Name tag: aws_subnet errors out unless the filters match
 # exactly one subnet, and the VPC bound keeps that true even if another VPC in this account
 # ever reuses the naming convention.
 data "aws_subnet" "fis_target" {
-  vpc_id = module.network.vpc_id
+  vpc_id = data.aws_vpc.fis_target.id
 
   filter {
     name   = "tag:Name"
