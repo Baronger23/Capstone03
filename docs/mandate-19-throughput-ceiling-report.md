@@ -9,6 +9,7 @@
 **Video vùng trần (arm tuned3):** [`tuned3-ceiling-video/timelapse.gif`](evidence/mandate-19/real-2026-07-30/tuned3-ceiling-video/timelapse.gif)
 **Postmortem kèm:** [0017 — product-catalog về 0 replica](postmortem/0017-product-catalog-replicas-zero-hpa-cannot-recover.md)
 **Harness tái lập:** [`scripts/mandate-19/`](../scripts/mandate-19/)
+**📖 Bản tóm tắt dễ đọc (ảnh + video nhúng):** [`mandate-19-bao-cao-tom-tat.md`](mandate-19-bao-cao-tom-tat.md)
 
 > **Bản này thay thế hoàn toàn báo cáo cũ.** Số liệu cũ (trần "174,75 RPS @ 328 user")
 > đã bị loại — lý do ở §2. Mọi con số dưới đây có artifact thô đi kèm và tái lập được
