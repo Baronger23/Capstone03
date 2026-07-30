@@ -30,17 +30,20 @@ HOST=${HOST:-https://d2tn71186d7ilz.cloudfront.net}
 NS=techx-tf3
 mkdir -p "$OUT"; ABS="$(cd "$OUT" && pwd)"
 
+# Phải lọc Running: dưới overload, HPA sinh pod mới mà Karpenter không cấp nổi node
+# (NodePool limits) nên .items[0] rất dễ trúng một pod Pending -> port-forward chết.
 proxy_pod() { kubectl -n $NS get pod -l app.kubernetes.io/name=frontend-proxy \
-  -o jsonpath='{.items[0].metadata.name}'; }
+  --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'; }
 
 # Envoy là image distroless (không shell, không curl) nên đọc counter qua admin
 # port bằng port-forward, không phải `kubectl exec`.
 counters() {
   local pod; pod=$(proxy_pod)
-  kubectl -n $NS port-forward "pod/$pod" 29901:9901 >/dev/null 2>&1 &
+  # Admin port của Envoy ở đây là 10000 (ENVOY_ADMIN_PORT), KHÔNG phải 9901 mặc định.
+  # Dùng 9901 thì port-forward dựng được nhưng curl trả rỗng -> tưởng "không có counter".
+  kubectl -n $NS port-forward "pod/$pod" 29901:"${ENVOY_ADMIN_PORT:-10000}" >/dev/null 2>&1 &
   local pf=$!; sleep 4
-  curl -s "http://localhost:29901/stats" \
-    | grep -E "browse_rate_limiter\.(rate_limited|enforced|ok)|http_local_rate_limiter\.(rate_limited|enforced|ok)|local_rate_limiter\.rate_limited" \
+  curl -s --max-time 12 "http://localhost:29901/stats?filter=rate_limit" \
     || echo "  (không đọc được stats)"
   kill $pf 2>/dev/null
 }
